@@ -13,9 +13,17 @@ struct MonitoringPopoverView: View {
 
             Divider()
 
-            Text("No provider data configured yet.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("No provider data configured yet.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                SettingsLink {
+                    Text("Settings")
+                }
+            }
         }
         .padding(20)
         .frame(width: 320, alignment: .leading)

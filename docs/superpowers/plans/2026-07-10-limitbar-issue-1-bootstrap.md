@@ -22,7 +22,6 @@
 ## File Structure
 
 - `LimitBarCore/Package.swift` defines the standalone core package and test target.
-- `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift` keeps the SwiftPM target non-empty before feature code exists.
 - `LimitBarCore/Sources/LimitBarCore/AppStatus.swift` defines the initial status model used by the app shell.
 - `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift` tests the initial status label, symbol, and accessibility description.
 - `LimitBar/LimitBarApp.swift` defines the SwiftUI app entry point, menu bar item, popover, and settings scene.
@@ -37,7 +36,6 @@
 
 **Files:**
 - Create: `LimitBarCore/Package.swift`
-- Create: `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift`
 - Create: `LimitBarCore/Sources/LimitBarCore/AppStatus.swift`
 - Create: `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift`
 
@@ -81,15 +79,7 @@ let package = Package(
 )
 ```
 
-- [ ] **Step 3: Add a package marker source file**
-
-Create `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift`:
-
-```swift
-// Package marker file. Feature code is added test-first.
-```
-
-- [ ] **Step 4: Write the failing test**
+- [ ] **Step 3: Write the failing test**
 
 Create `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift`:
 
@@ -110,13 +100,13 @@ struct AppStatusTests {
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it fails**
+- [ ] **Step 4: Run the test to verify it fails**
 
 Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore`
 
 Expected: FAIL because `AppStatus` is not defined.
 
-- [ ] **Step 6: Implement the minimal core model**
+- [ ] **Step 5: Implement the minimal core model**
 
 Create `LimitBarCore/Sources/LimitBarCore/AppStatus.swift`:
 
@@ -144,7 +134,7 @@ public struct AppStatus: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [ ] **Step 6: Run the test to verify it passes**
 
 Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore`
 
