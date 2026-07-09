@@ -22,6 +22,7 @@
 ## File Structure
 
 - `LimitBarCore/Package.swift` defines the standalone core package and test target.
+- `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift` keeps the SwiftPM target non-empty before feature code exists.
 - `LimitBarCore/Sources/LimitBarCore/AppStatus.swift` defines the initial status model used by the app shell.
 - `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift` tests the initial status label, symbol, and accessibility description.
 - `LimitBar/LimitBarApp.swift` defines the SwiftUI app entry point, menu bar item, popover, and settings scene.
@@ -36,6 +37,7 @@
 
 **Files:**
 - Create: `LimitBarCore/Package.swift`
+- Create: `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift`
 - Create: `LimitBarCore/Sources/LimitBarCore/AppStatus.swift`
 - Create: `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift`
 
@@ -79,7 +81,15 @@ let package = Package(
 )
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [ ] **Step 3: Add a package marker source file**
+
+Create `LimitBarCore/Sources/LimitBarCore/LimitBarCore.swift`:
+
+```swift
+// Package marker file. Feature code is added test-first.
+```
+
+- [ ] **Step 4: Write the failing test**
 
 Create `LimitBarCore/Tests/LimitBarCoreTests/AppStatusTests.swift`:
 
@@ -100,13 +110,13 @@ struct AppStatusTests {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it fails**
+- [ ] **Step 5: Run the test to verify it fails**
 
-Run: `swift test --package-path LimitBarCore`
+Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore`
 
 Expected: FAIL because `AppStatus` is not defined.
 
-- [ ] **Step 5: Implement the minimal core model**
+- [ ] **Step 6: Implement the minimal core model**
 
 Create `LimitBarCore/Sources/LimitBarCore/AppStatus.swift`:
 
@@ -134,9 +144,9 @@ public struct AppStatus: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [ ] **Step 7: Run the test to verify it passes**
 
-Run: `swift test --package-path LimitBarCore`
+Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore`
 
 Expected: PASS with 1 test and 0 failures.
 
@@ -673,13 +683,13 @@ Expected: `LimitBar.xcodeproj/project.pbxproj: OK`.
 
 - [ ] **Step 8: Verify the scheme file parses**
 
-Run: `plutil -lint LimitBar.xcodeproj/xcshareddata/xcschemes/LimitBar.xcscheme`
+Run: `xmllint --noout LimitBar.xcodeproj/xcshareddata/xcschemes/LimitBar.xcscheme`
 
-Expected: `LimitBar.xcodeproj/xcshareddata/xcschemes/LimitBar.xcscheme: OK`.
+Expected: no output and exit code 0.
 
 - [ ] **Step 9: Verify the native app target when full Xcode is available**
 
-Run: `xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build`
+Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build`
 
 Expected with full Xcode selected: BUILD SUCCEEDED.
 
@@ -720,13 +730,13 @@ LimitBar is a private macOS 14+ menu bar utility for monitoring AI provider usag
 ## Test Core Package
 
 ```sh
-swift test --package-path LimitBarCore
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
 ```
 
 ## Build Native App
 
 ```sh
-xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
 ```
 
 ## Run The App
@@ -741,13 +751,13 @@ This bootstrap does not add provider integrations, persistence, credentials, not
 
 - [ ] **Step 2: Verify core test command from README**
 
-Run: `swift test --package-path LimitBarCore`
+Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore`
 
 Expected: PASS with 1 test and 0 failures.
 
 - [ ] **Step 3: Verify native build command behavior**
 
-Run: `xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build`
+Run: `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build`
 
 Expected with full Xcode selected: BUILD SUCCEEDED.
 
@@ -757,9 +767,9 @@ Expected in the current Command Line Tools-only environment: `xcode-select: erro
 
 ## Final Verification
 
-- Run `swift test --package-path LimitBarCore` and require passing output.
+- Run `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore` and require passing output.
 - Run `plutil -lint LimitBar.xcodeproj/project.pbxproj` and require `OK` output.
-- Run `xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build` if full Xcode is installed.
+- Run `DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build` if full Xcode is installed.
 - Run `git status --short` and review all changed files before committing.
 - Run the code review workflow against `main` before pushing.
 - Run `no-mistakes axi` and then `no-mistakes axi run --intent "Bootstrap LimitBar issue #1 as a native macOS 14+ menu bar app shell with a separate testable core package, README commands, no provider integrations, no persistence, no credentials, no notifications, no sounds, and no urgent alerts."` before pushing if the repo is initialized for no-mistakes.
