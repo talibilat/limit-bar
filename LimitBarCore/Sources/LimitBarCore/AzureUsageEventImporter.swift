@@ -128,7 +128,7 @@ public enum AzureUsageEventImporter {
         calendar: Calendar
     ) throws -> AzureUsageImportResult {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            try store.replaceMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows, with: [])
+            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: importedWindows, with: [])
             return .empty(fileURL: fileURL)
         }
 
@@ -149,7 +149,6 @@ public enum AzureUsageEventImporter {
 
         try store.replaceMetrics(
             provider: .azureOpenAI,
-            accountLabel: importedAccountLabel,
             timeWindows: importedWindows,
             with: metrics(from: validEvents, now: now, calendar: calendar)
         )

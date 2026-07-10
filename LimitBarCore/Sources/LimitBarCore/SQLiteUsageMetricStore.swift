@@ -117,27 +117,26 @@ public final class SQLiteUsageMetricStore {
     }
 
     @discardableResult
-    public func deleteMetrics(provider: ProviderKind, accountLabel: String, timeWindows: [TimeWindow]) throws -> Int {
+    public func deleteMetrics(provider: ProviderKind, timeWindows: [TimeWindow]) throws -> Int {
         guard !timeWindows.isEmpty else {
             return 0
         }
 
         let placeholders = Array(repeating: "?", count: timeWindows.count).joined(separator: ", ")
-        let statement = try prepare("DELETE FROM usage_metrics WHERE provider = ? AND account_label = ? AND time_window IN (\(placeholders));")
+        let statement = try prepare("DELETE FROM usage_metrics WHERE provider = ? AND time_window IN (\(placeholders));")
         defer { sqlite3_finalize(statement) }
         bind(provider.rawValue, at: 1, in: statement)
-        bind(accountLabel, at: 2, in: statement)
         for (index, window) in timeWindows.enumerated() {
-            bind(window.rawValue, at: Int32(index + 3), in: statement)
+            bind(window.rawValue, at: Int32(index + 2), in: statement)
         }
         try stepDone(statement)
         return Int(sqlite3_changes(database))
     }
 
-    public func replaceMetrics(provider: ProviderKind, accountLabel: String, timeWindows: [TimeWindow], with metrics: [UsageMetric]) throws {
+    public func replaceMetrics(provider: ProviderKind, timeWindows: [TimeWindow], with metrics: [UsageMetric]) throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
-            try deleteMetrics(provider: provider, accountLabel: accountLabel, timeWindows: timeWindows)
+            try deleteMetrics(provider: provider, timeWindows: timeWindows)
             try save(metrics)
             try execute("COMMIT;")
         } catch {

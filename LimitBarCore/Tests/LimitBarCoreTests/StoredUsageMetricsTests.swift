@@ -56,6 +56,24 @@ struct StoredUsageMetricsTests {
         #expect(snapshot.metrics == DemoUsageData.metrics)
     }
 
+    @Test("JSONL import replaces seeded Azure demo metrics")
+    func jsonlImportReplacesSeededAzureDemoMetrics() throws {
+        let applicationSupport = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileManager = TemporaryApplicationSupportFileManager(applicationSupport: applicationSupport)
+        let limitBarDirectory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
+        try FileManager.default.createDirectory(at: limitBarDirectory, withIntermediateDirectories: true)
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        try #"{"provider":"azureOpenAI","timestamp":"\#(timestamp)","model":"imported-model","inputTokens":10,"outputTokens":5}"#
+            .write(to: limitBarDirectory.appendingPathComponent("usage-events.jsonl"), atomically: true, encoding: .utf8)
+
+        let snapshot = StoredUsageMetrics.loadFromApplicationSupport(fileManager: fileManager)
+        let azureMetrics = snapshot.metrics.filter { $0.provider == .azureOpenAI }
+
+        #expect(!azureMetrics.isEmpty)
+        #expect(azureMetrics.allSatisfy { $0.modelLabel == "imported-model" })
+    }
+
     private func metric(modelLabel: String, refreshedAt: Date) -> UsageMetric {
         UsageMetric(
             provider: .anthropic,
