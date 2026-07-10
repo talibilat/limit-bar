@@ -48,6 +48,7 @@ struct AzureUsageEventImporterTests {
         let jsonl = [
             #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":120,"outputTokens":45}"#,
             #"{"provider":"azureOpenAI","timestamp":"2026-07-10T12:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":80,"outputTokens":5}"#,
+            #"{"provider":"azureOpenAI","timestamp":"2026-07-10T13:30:00Z","model":"gpt-4.1","deployment":"batch-review","inputTokens":20,"outputTokens":10}"#,
             "bad-json"
         ].joined(separator: "\n")
         let fileURL = try temporaryFile(contents: jsonl)
@@ -58,18 +59,18 @@ struct AzureUsageEventImporterTests {
 
         let result = try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
 
-        #expect(result.validEventCount == 2)
+        #expect(result.validEventCount == 3)
         #expect(result.malformedEvents.count == 1)
 
         let today = try #require(try store.metrics(for: .today).first { $0.provider == .azureOpenAI })
         #expect(today.modelLabel == "gpt-4.1")
-        #expect(today.deploymentLabel == "team-tools")
-        #expect(today.tokenUsage.inputTokens == 200)
-        #expect(today.tokenUsage.outputTokens == 50)
+        #expect(today.deploymentLabel == "batch-review, team-tools")
+        #expect(today.tokenUsage.inputTokens == 220)
+        #expect(today.tokenUsage.outputTokens == 60)
         #expect(today.limitStatus == .unsupportedByProviderAPI)
 
         let week = try #require(try store.metrics(for: .currentWeek).first { $0.provider == .azureOpenAI })
-        #expect(week.tokenUsage.totalTokens == 250)
+        #expect(week.tokenUsage.totalTokens == 280)
     }
 
     @Test("missing JSONL file is a successful empty import")

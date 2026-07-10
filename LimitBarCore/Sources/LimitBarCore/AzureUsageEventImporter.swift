@@ -136,18 +136,17 @@ public enum AzureUsageEventImporter {
     }
 
     private static func aggregate(_ events: [AzureUsageEvent], timeWindow: TimeWindow) -> [UsageMetric] {
-        let groups = Dictionary(grouping: events) { event in
-            [event.model, event.deployment ?? ""].joined(separator: "|")
-        }
+        let groups = Dictionary(grouping: events, by: \.model)
 
         return groups.values.map { groupedEvents in
             let first = groupedEvents[0]
+            let deployments = Set(groupedEvents.compactMap(\.deployment)).sorted()
             return UsageMetric(
                 provider: .azureOpenAI,
                 accountLabel: "Azure OpenAI",
                 projectLabel: nil,
                 modelLabel: first.model,
-                deploymentLabel: first.deployment,
+                deploymentLabel: deployments.isEmpty ? nil : deployments.joined(separator: ", "),
                 timeWindow: timeWindow,
                 tokenUsage: TokenUsage(
                     inputTokens: groupedEvents.reduce(0) { $0 + $1.inputTokens },
@@ -160,9 +159,6 @@ public enum AzureUsageEventImporter {
             )
         }
         .sorted { lhs, rhs in
-            if lhs.modelLabel == rhs.modelLabel {
-                return (lhs.deploymentLabel ?? "") < (rhs.deploymentLabel ?? "")
-            }
             return lhs.modelLabel < rhs.modelLabel
         }
     }

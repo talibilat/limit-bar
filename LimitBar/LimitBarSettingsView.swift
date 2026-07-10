@@ -111,6 +111,9 @@ struct LimitBarSettingsView: View {
         }
         let directory = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
