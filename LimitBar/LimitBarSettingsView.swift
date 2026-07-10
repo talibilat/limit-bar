@@ -1,9 +1,11 @@
 import SwiftUI
 import LimitBarCore
+import AppKit
 
 struct LimitBarSettingsView: View {
-    private let storeHealth = StoredUsageMetrics.loadFromApplicationSupport().health
+    private let storedMetrics = StoredUsageMetrics.loadFromApplicationSupport()
     private let pricingStore = PricingSettingsStore()
+    private let azureJSONLPath = (try? AzureUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
     @State private var provider = ProviderKind.openAI
     @State private var modelLabel = "gpt-5.1-codex"
@@ -33,7 +35,18 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Diagnostics") {
-                LabeledContent("Usage database", value: storeHealth.message)
+                LabeledContent("Usage database", value: storedMetrics.health.message)
+                LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
+                LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEvents.count)")
+            }
+
+            Section("Azure OpenAI Integration") {
+                Text(azureJSONLPath)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                Button("Reveal JSONL in Finder") {
+                    revealAzureJSONLPath()
+                }
             }
 
             Section("Pricing") {
@@ -90,6 +103,15 @@ struct LimitBarSettingsView: View {
         if pricingStore.add(entry) {
             pricingEntries = pricingStore.entries
         }
+    }
+
+    private func revealAzureJSONLPath() {
+        guard let url = try? AzureUsageEventImporter.usageEventsURL() else {
+            return
+        }
+        let directory = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 

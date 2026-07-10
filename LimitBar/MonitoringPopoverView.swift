@@ -5,6 +5,7 @@ struct MonitoringPopoverView: View {
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
+    @State private var azureImport = AzureUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
 
     private var cards: [ProviderUsageCard] {
@@ -66,6 +67,9 @@ struct MonitoringPopoverView: View {
             Text(storeHealth.message)
                 .font(.caption)
                 .foregroundStyle(storeHealth.isOpen ? Color.secondary : Color.orange)
+            Text("Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEvents.count) malformed")
+                .font(.caption)
+                .foregroundStyle(azureImport.malformedEvents.isEmpty ? Color.secondary : Color.orange)
         }
     }
 
@@ -73,6 +77,7 @@ struct MonitoringPopoverView: View {
         let snapshot = StoredUsageMetrics.loadFromApplicationSupport()
         metrics = snapshot.metrics
         storeHealth = snapshot.health
+        azureImport = snapshot.azureImport
     }
 }
 
