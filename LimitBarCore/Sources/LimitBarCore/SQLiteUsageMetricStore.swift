@@ -32,6 +32,7 @@ public final class SQLiteUsageMetricStore {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
             throw UsageMetricStoreError.openFailed(Self.message(from: database))
         }
+        sqlite3_busy_timeout(database, 5_000)
 
         try createSchema()
     }
@@ -297,7 +298,9 @@ public final class SQLiteUsageMetricStore {
             sqlite3_bind_null(statement, index)
             return
         }
-        sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+        _ = value.utf8CString.withUnsafeBufferPointer { bytes in
+            sqlite3_bind_text(statement, index, bytes.baseAddress, Int32(bytes.count - 1), SQLITE_TRANSIENT)
+        }
     }
 
     private func bind(_ value: Double?, at index: Int32, in statement: OpaquePointer?) {
@@ -316,7 +319,8 @@ public final class SQLiteUsageMetricStore {
         guard let text = sqlite3_column_text(statement, index) else {
             return nil
         }
-        return String(cString: text)
+        let count = Int(sqlite3_column_bytes(statement, index))
+        return String(decoding: UnsafeBufferPointer(start: text, count: count), as: UTF8.self)
     }
 
     private func metricID(_ metric: UsageMetric) -> String {

@@ -6,6 +6,16 @@ public struct StoredUsageMetricsSnapshot: Equatable, Sendable {
     public let azureImport: AzureUsageImportResult
 }
 
+public actor StoredUsageMetricsLoader {
+    public static let shared = StoredUsageMetricsLoader()
+
+    private init() {}
+
+    public func loadFromApplicationSupport() -> StoredUsageMetricsSnapshot {
+        StoredUsageMetrics.loadFromApplicationSupport()
+    }
+}
+
 public enum StoredUsageMetrics {
     public static func load(from store: SQLiteUsageMetricStore, now: Date = Date()) throws -> StoredUsageMetricsSnapshot {
         try store.deleteMetrics(olderThan: now.addingTimeInterval(-(90 * 24 * 60 * 60)))

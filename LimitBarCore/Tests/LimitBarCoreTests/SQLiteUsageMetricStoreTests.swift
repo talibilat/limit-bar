@@ -138,6 +138,17 @@ struct SQLiteUsageMetricStoreTests {
         #expect(try store.allMetrics() == [first, second])
     }
 
+    @Test("metric identity and labels preserve embedded NUL characters")
+    func metricIdentityAndLabelsPreserveEmbeddedNULCharacters() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let first = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "model\0a", deploymentLabel: "deployment")
+        let second = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "model\0b", deploymentLabel: "deployment")
+
+        try store.save([first, second])
+
+        #expect(try store.allMetrics() == [first, second])
+    }
+
     @Test("schema stores normalized fields and excludes sensitive fields")
     func schemaStoresNormalizedFieldsAndExcludesSensitiveFields() throws {
         let store = try SQLiteUsageMetricStore.inMemory()

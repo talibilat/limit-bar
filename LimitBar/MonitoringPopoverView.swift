@@ -81,9 +81,7 @@ struct MonitoringPopoverView: View {
     }
 
     private func loadStoredMetrics() async {
-        let snapshot = await Task.detached(priority: .utility) {
-            StoredUsageMetrics.loadFromApplicationSupport()
-        }.value
+        let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
         metrics = snapshot.metrics
         storeHealth = snapshot.health
         azureImport = snapshot.azureImport

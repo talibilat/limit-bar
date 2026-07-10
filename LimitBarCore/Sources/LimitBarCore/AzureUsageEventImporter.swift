@@ -15,6 +15,7 @@ public enum AzureUsageEventError: Error, Equatable {
     case missingRequiredField(String)
     case negativeTokenCount
     case tokenCountOverflow
+    case lineTooLong
 }
 
 public struct MalformedAzureUsageEvent: Equatable, Sendable {
@@ -130,6 +131,7 @@ public enum AzureUsageEventImporter {
 
     private static let importedAccountLabel = "Azure OpenAI"
     private static let importedWindows: [TimeWindow] = [.today, .currentWeek]
+    private static let maximumLineByteCount = 1_048_576
 
     public static func usageEventsURL(applicationSupportDirectory: URL) -> URL {
         applicationSupportDirectory
@@ -169,29 +171,40 @@ public enum AzureUsageEventImporter {
         var malformed: [MalformedAzureUsageEvent] = []
         var buffer = Data()
         var lineNumber = 1
+        var discardingOverlongLine = false
 
         while let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            buffer.append(chunk)
-            var consumedThrough = buffer.startIndex
-            while let newline = buffer[consumedThrough...].firstIndex(of: 0x0A) {
-                try process(
-                    lineData: buffer[consumedThrough..<newline],
-                    lineNumber: lineNumber,
-                    now: now,
-                    calendar: calendar,
-                    aggregates: &aggregates,
-                    validEventCount: &validEventCount,
-                    malformedEventCount: &malformedEventCount,
-                    malformed: &malformed
-                )
-                lineNumber += 1
-                consumedThrough = buffer.index(after: newline)
-            }
-            if consumedThrough > buffer.startIndex {
-                buffer.removeSubrange(buffer.startIndex..<consumedThrough)
+            for byte in chunk {
+                if discardingOverlongLine {
+                    if byte == 0x0A {
+                        discardingOverlongLine = false
+                        lineNumber += 1
+                    }
+                    continue
+                }
+                if byte == 0x0A {
+                    try process(
+                        lineData: buffer[...],
+                        lineNumber: lineNumber,
+                        now: now,
+                        calendar: calendar,
+                        aggregates: &aggregates,
+                        validEventCount: &validEventCount,
+                        malformedEventCount: &malformedEventCount,
+                        malformed: &malformed
+                    )
+                    buffer.removeAll(keepingCapacity: true)
+                    lineNumber += 1
+                } else if buffer.count == maximumLineByteCount {
+                    recordMalformed(AzureUsageEventError.lineTooLong, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+                    buffer.removeAll(keepingCapacity: true)
+                    discardingOverlongLine = true
+                } else {
+                    buffer.append(byte)
+                }
             }
         }
-        if !buffer.isEmpty {
+        if !discardingOverlongLine, !buffer.isEmpty {
             try process(
                 lineData: buffer[...],
                 lineNumber: lineNumber,

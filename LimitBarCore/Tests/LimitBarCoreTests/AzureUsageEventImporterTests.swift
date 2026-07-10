@@ -211,6 +211,27 @@ struct AzureUsageEventImporterTests {
         #expect(result.malformedEvents.map(\.lineNumber) == Array(1...20))
     }
 
+    @Test("overlong line is discarded without preventing the next event")
+    func overlongLineIsDiscardedWithoutPreventingNextEvent() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let oversizedModel = String(repeating: "a", count: 1_048_576)
+        let oversized = #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"\#(oversizedModel)","inputTokens":1,"outputTokens":2}"#
+        let valid = #"{"provider":"azureOpenAI","timestamp":"2026-07-10T11:30:00Z","model":"valid","inputTokens":3,"outputTokens":4}"#
+        let fileURL = try temporaryFile(contents: oversized + "\n" + valid)
+
+        let result = try AzureUsageEventImporter.importEvents(
+            from: fileURL,
+            to: store,
+            now: try date("2026-07-10T18:00:00Z"),
+            calendar: try utcCalendar()
+        )
+
+        #expect(result.validEventCount == 1)
+        #expect(result.malformedEventCount == 1)
+        #expect(result.malformedEvents == [MalformedAzureUsageEvent(lineNumber: 1, reason: String(describing: AzureUsageEventError.lineTooLong))])
+        #expect(try store.metrics(for: .today).map(\.modelLabel) == ["valid"])
+    }
+
     @Test("event at the end of today is excluded from today")
     func eventAtEndOfTodayIsExcludedFromToday() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
