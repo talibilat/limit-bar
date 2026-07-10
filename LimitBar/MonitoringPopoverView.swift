@@ -3,9 +3,11 @@ import LimitBarCore
 
 struct MonitoringPopoverView: View {
     @State private var selectedWindow = TimeWindow.defaultSelection
+    @State private var metrics: [UsageMetric] = []
+    @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
 
     private var cards: [ProviderUsageCard] {
-        ProviderUsageCard.cards(from: DemoUsageData.metrics, timeWindow: selectedWindow)
+        ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow)
     }
 
     var body: some View {
@@ -44,6 +46,9 @@ struct MonitoringPopoverView: View {
         }
         .padding(20)
         .frame(width: 420, height: 540, alignment: .topLeading)
+        .task {
+            loadStoredMetrics()
+        }
     }
 
     private var header: some View {
@@ -53,7 +58,16 @@ struct MonitoringPopoverView: View {
             Text("Confirmed demo usage by provider")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Text(storeHealth.message)
+                .font(.caption)
+                .foregroundStyle(storeHealth.isOpen ? Color.secondary : Color.orange)
         }
+    }
+
+    private func loadStoredMetrics() {
+        let snapshot = StoredUsageMetrics.loadFromApplicationSupport()
+        metrics = snapshot.metrics
+        storeHealth = snapshot.health
     }
 }
 

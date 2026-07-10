@@ -4,6 +4,11 @@ import SQLite3
 public struct UsageStoreHealth: Equatable, Sendable {
     public let isOpen: Bool
     public let message: String
+
+    public init(isOpen: Bool, message: String) {
+        self.isOpen = isOpen
+        self.message = message
+    }
 }
 
 public enum UsageMetricStoreError: Error, Equatable {
@@ -30,6 +35,18 @@ public final class SQLiteUsageMetricStore {
 
     public static func inMemory() throws -> SQLiteUsageMetricStore {
         try SQLiteUsageMetricStore(path: ":memory:")
+    }
+
+    public static func applicationSupportStore(fileManager: FileManager = .default) throws -> SQLiteUsageMetricStore {
+        let applicationSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try SQLiteUsageMetricStore(path: directory.appendingPathComponent("usage-metrics.sqlite").path)
     }
 
     public func health() -> UsageStoreHealth {
