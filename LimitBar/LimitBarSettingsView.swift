@@ -3,10 +3,10 @@ import LimitBarCore
 import AppKit
 
 struct LimitBarSettingsView: View {
-    private let storedMetrics = StoredUsageMetrics.loadFromApplicationSupport()
     private let pricingStore = PricingSettingsStore()
     private let azureJSONLPath = (try? AzureUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
+    @State private var storedMetrics: StoredUsageMetricsSnapshot?
     @State private var provider = ProviderKind.openAI
     @State private var modelLabel = "gpt-5.1-codex"
     @State private var inputPrice = ""
@@ -36,16 +36,20 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Diagnostics") {
-                LabeledContent("Usage database", value: storedMetrics.health.message)
-                LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
-                LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
-                if let failureMessage = storedMetrics.azureImport.failureMessage {
-                    LabeledContent("Azure import status", value: failureMessage)
-                }
-                ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
-                    Text("Line \(event.lineNumber): \(event.reason)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if let storedMetrics {
+                    LabeledContent("Usage database", value: storedMetrics.health.message)
+                    LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
+                    LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
+                    if let failureMessage = storedMetrics.azureImport.failureMessage {
+                        LabeledContent("Azure import status", value: failureMessage)
+                    }
+                    ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
+                        Text("Line \(event.lineNumber): \(event.reason)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ProgressView("Loading diagnostics")
                 }
             }
 
@@ -97,6 +101,11 @@ struct LimitBarSettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 520, height: 520)
+        .task {
+            storedMetrics = await Task.detached(priority: .utility) {
+                StoredUsageMetrics.loadFromApplicationSupport()
+            }.value
+        }
     }
 
     private func savePricing() {

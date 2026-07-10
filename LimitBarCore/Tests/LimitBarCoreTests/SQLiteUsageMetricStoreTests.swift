@@ -99,6 +99,20 @@ struct SQLiteUsageMetricStoreTests {
         #expect(try store.allMetrics() == [existing])
     }
 
+    @Test("provider replacement rejects metrics outside replacement windows")
+    func providerReplacementRejectsMetricsOutsideReplacementWindows() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let existing = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "existing")
+        let wrongWindow = metric(provider: .azureOpenAI, timeWindow: .currentWeek, modelLabel: "wrong-window")
+        try store.save([existing])
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [wrongWindow])
+        }
+
+        #expect(try store.allMetrics() == [existing])
+    }
+
     @Test("provider replacement preserves other providers")
     func providerReplacementPreservesOtherProviders() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
@@ -111,6 +125,17 @@ struct SQLiteUsageMetricStoreTests {
         try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [newAzure])
 
         #expect(try store.allMetrics() == [anthropic, openAI, newAzure])
+    }
+
+    @Test("metric identity distinguishes separator characters in labels")
+    func metricIdentityDistinguishesSeparatorCharactersInLabels() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let first = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "a|", deploymentLabel: "b")
+        let second = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "a", deploymentLabel: "|b")
+
+        try store.save([first, second])
+
+        #expect(try store.allMetrics() == [first, second])
     }
 
     @Test("schema stores normalized fields and excludes sensitive fields")
@@ -142,6 +167,7 @@ struct SQLiteUsageMetricStoreTests {
         provider: ProviderKind,
         timeWindow: TimeWindow,
         modelLabel: String,
+        deploymentLabel: String? = nil,
         refreshedAt: Date = Date(timeIntervalSince1970: 1_783_728_000),
         inputTokens: Int = 10,
         outputTokens: Int = 5,
@@ -154,7 +180,7 @@ struct SQLiteUsageMetricStoreTests {
             accountLabel: "Account",
             projectLabel: "Project",
             modelLabel: modelLabel,
-            deploymentLabel: provider == .azureOpenAI ? "deployment" : nil,
+            deploymentLabel: deploymentLabel ?? (provider == .azureOpenAI ? "deployment" : nil),
             timeWindow: timeWindow,
             tokenUsage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
             cost: cost,

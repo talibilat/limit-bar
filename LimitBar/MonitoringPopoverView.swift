@@ -53,7 +53,7 @@ struct MonitoringPopoverView: View {
         .padding(20)
         .frame(width: 420, height: 540, alignment: .topLeading)
         .task {
-            loadStoredMetrics()
+            await loadStoredMetrics()
         }
     }
 
@@ -80,8 +80,10 @@ struct MonitoringPopoverView: View {
         return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEventCount) malformed"
     }
 
-    private func loadStoredMetrics() {
-        let snapshot = StoredUsageMetrics.loadFromApplicationSupport()
+    private func loadStoredMetrics() async {
+        let snapshot = await Task.detached(priority: .utility) {
+            StoredUsageMetrics.loadFromApplicationSupport()
+        }.value
         metrics = snapshot.metrics
         storeHealth = snapshot.health
         azureImport = snapshot.azureImport

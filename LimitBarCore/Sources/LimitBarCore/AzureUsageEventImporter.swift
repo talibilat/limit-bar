@@ -117,8 +117,15 @@ public enum AzureUsageEventParser {
 
 public enum AzureUsageEventImporter {
     private struct AggregateKey: Hashable {
+        let timeWindow: TimeWindow
         let model: String
         let deployment: String?
+    }
+
+    private struct AggregateValue {
+        var inputTokens: Int
+        var outputTokens: Int
+        var latestTimestamp: Date
     }
 
     private static let importedAccountLabel = "Azure OpenAI"
@@ -154,84 +161,146 @@ public enum AzureUsageEventImporter {
             return .empty(fileURL: fileURL)
         }
 
-        let contents = try Data(contentsOf: fileURL)
-        var validEvents: [AzureUsageEvent] = []
+        let fileHandle = try FileHandle(forReadingFrom: fileURL)
+        defer { try? fileHandle.close() }
+        var aggregates: [AggregateKey: AggregateValue] = [:]
+        var validEventCount = 0
+        var malformedEventCount = 0
         var malformed: [MalformedAzureUsageEvent] = []
+        var buffer = Data()
+        var lineNumber = 1
 
-        for (offset, lineData) in contents.split(separator: 0x0A, omittingEmptySubsequences: false).enumerated() {
-            guard let line = String(data: lineData, encoding: .utf8) else {
-                malformed.append(MalformedAzureUsageEvent(lineNumber: offset + 1, reason: String(describing: AzureUsageEventError.malformedJSON)))
-                continue
+        while let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            buffer.append(chunk)
+            var consumedThrough = buffer.startIndex
+            while let newline = buffer[consumedThrough...].firstIndex(of: 0x0A) {
+                try process(
+                    lineData: buffer[consumedThrough..<newline],
+                    lineNumber: lineNumber,
+                    now: now,
+                    calendar: calendar,
+                    aggregates: &aggregates,
+                    validEventCount: &validEventCount,
+                    malformedEventCount: &malformedEventCount,
+                    malformed: &malformed
+                )
+                lineNumber += 1
+                consumedThrough = buffer.index(after: newline)
             }
-            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
+            if consumedThrough > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<consumedThrough)
             }
-            do {
-                validEvents.append(try AzureUsageEventParser.parseLine(line))
-            } catch {
-                malformed.append(MalformedAzureUsageEvent(lineNumber: offset + 1, reason: String(describing: error)))
-            }
+        }
+        if !buffer.isEmpty {
+            try process(
+                lineData: buffer[...],
+                lineNumber: lineNumber,
+                now: now,
+                calendar: calendar,
+                aggregates: &aggregates,
+                validEventCount: &validEventCount,
+                malformedEventCount: &malformedEventCount,
+                malformed: &malformed
+            )
         }
 
         try store.replaceMetrics(
             provider: .azureOpenAI,
             timeWindows: importedWindows,
-            with: try metrics(from: validEvents, now: now, calendar: calendar)
+            with: metrics(from: aggregates)
         )
 
         return AzureUsageImportResult(
             fileURL: fileURL,
-            validEventCount: validEvents.count,
-            malformedEventCount: malformed.count,
-            malformedEvents: Array(malformed.prefix(20)),
+            validEventCount: validEventCount,
+            malformedEventCount: malformedEventCount,
+            malformedEvents: malformed,
             failureMessage: nil
         )
     }
 
-    private static func metrics(from events: [AzureUsageEvent], now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        var metrics: [UsageMetric] = []
-        for window in importedWindows {
-            let interval = window.interval(containing: now, calendar: calendar)
-            metrics += try aggregate(
-                events.filter { $0.timestamp >= interval.start && $0.timestamp < interval.end },
-                timeWindow: window
-            )
+    private static func process(
+        lineData: Data.SubSequence,
+        lineNumber: Int,
+        now: Date,
+        calendar: Calendar,
+        aggregates: inout [AggregateKey: AggregateValue],
+        validEventCount: inout Int,
+        malformedEventCount: inout Int,
+        malformed: inout [MalformedAzureUsageEvent]
+    ) throws {
+        guard let line = String(data: lineData, encoding: .utf8) else {
+            recordMalformed(AzureUsageEventError.malformedJSON, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+            return
         }
-        return metrics
+        guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        do {
+            let event = try AzureUsageEventParser.parseLine(line)
+            validEventCount += 1
+            try add(event, now: now, calendar: calendar, to: &aggregates)
+        } catch let error as AzureUsageEventError where error != .tokenCountOverflow {
+            recordMalformed(error, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+        }
     }
 
-    private static func aggregate(_ events: [AzureUsageEvent], timeWindow: TimeWindow) throws -> [UsageMetric] {
-        let groups = Dictionary(grouping: events) { event in
-            AggregateKey(model: event.model, deployment: event.deployment)
+    private static func recordMalformed(
+        _ error: AzureUsageEventError,
+        lineNumber: Int,
+        count: inout Int,
+        events: inout [MalformedAzureUsageEvent]
+    ) {
+        count += 1
+        if events.count < 20 {
+            events.append(MalformedAzureUsageEvent(lineNumber: lineNumber, reason: String(describing: error)))
         }
+    }
 
-        return try groups.map { key, groupedEvents in
-            var inputTokens = 0
-            var outputTokens = 0
-            for event in groupedEvents {
-                inputTokens = try checkedSum(inputTokens, event.inputTokens)
-                outputTokens = try checkedSum(outputTokens, event.outputTokens)
+    private static func add(
+        _ event: AzureUsageEvent,
+        now: Date,
+        calendar: Calendar,
+        to aggregates: inout [AggregateKey: AggregateValue]
+    ) throws {
+        for window in importedWindows {
+            let interval = window.interval(containing: now, calendar: calendar)
+            guard event.timestamp >= interval.start, event.timestamp < interval.end else {
+                continue
             }
-            _ = try checkedSum(inputTokens, outputTokens)
-            return UsageMetric(
+            let key = AggregateKey(timeWindow: window, model: event.model, deployment: event.deployment)
+            var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
+            value.inputTokens = try checkedSum(value.inputTokens, event.inputTokens)
+            value.outputTokens = try checkedSum(value.outputTokens, event.outputTokens)
+            _ = try checkedSum(value.inputTokens, value.outputTokens)
+            value.latestTimestamp = max(value.latestTimestamp, event.timestamp)
+            aggregates[key] = value
+        }
+    }
+
+    private static func metrics(from aggregates: [AggregateKey: AggregateValue]) -> [UsageMetric] {
+        aggregates.map { key, value in
+            UsageMetric(
                 provider: .azureOpenAI,
                 accountLabel: importedAccountLabel,
                 projectLabel: nil,
                 modelLabel: key.model,
                 deploymentLabel: key.deployment,
-                timeWindow: timeWindow,
+                timeWindow: key.timeWindow,
                 tokenUsage: TokenUsage(
-                    inputTokens: inputTokens,
-                    outputTokens: outputTokens
+                    inputTokens: value.inputTokens,
+                    outputTokens: value.outputTokens
                 ),
                 cost: nil,
                 limitStatus: .unsupportedByProviderAPI,
-                refreshedAt: groupedEvents.map(\.timestamp).max(),
+                refreshedAt: value.latestTimestamp,
                 freshness: .fresh
             )
         }
         .sorted { lhs, rhs in
-            (lhs.modelLabel, lhs.deploymentLabel ?? "") < (rhs.modelLabel, rhs.deploymentLabel ?? "")
+            let lhsWindow = importedWindows.firstIndex(of: lhs.timeWindow) ?? importedWindows.endIndex
+            let rhsWindow = importedWindows.firstIndex(of: rhs.timeWindow) ?? importedWindows.endIndex
+            return (lhsWindow, lhs.modelLabel, lhs.deploymentLabel ?? "") < (rhsWindow, rhs.modelLabel, rhs.deploymentLabel ?? "")
         }
     }
 

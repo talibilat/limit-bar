@@ -320,14 +320,18 @@ public final class SQLiteUsageMetricStore {
     }
 
     private func metricID(_ metric: UsageMetric) -> String {
-        [
+        let components = [
             metric.provider.rawValue,
             metric.timeWindow.rawValue,
             metric.accountLabel ?? "",
             metric.projectLabel ?? "",
             metric.modelLabel,
             metric.deploymentLabel ?? ""
-        ].joined(separator: "|")
+        ]
+        guard components.contains(where: { $0.contains("|") }) else {
+            return components.joined(separator: "|")
+        }
+        return "v2|" + components.map { "\($0.utf8.count):\($0)" }.joined()
     }
 
     private func encode(_ limitStatus: LimitStatus) -> (status: String, used: Double?, limit: Double?) {

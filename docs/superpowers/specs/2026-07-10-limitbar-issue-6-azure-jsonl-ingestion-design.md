@@ -36,6 +36,7 @@ It aggregates token counts by time window, model, and optional deployment, creat
 The latest included event timestamp becomes the aggregate refresh timestamp.
 
 `AzureUsageEventImporter` resolves the Application Support path and reads the file.
+It streams the file in bounded chunks and aggregates events as they are parsed rather than retaining the complete file or event list in memory.
 A missing file is a healthy empty integration result.
 Other file read failures become safe diagnostics and leave existing stored metrics unchanged.
 
@@ -52,6 +53,7 @@ No prompt, response, request body, terminal output, source code, or raw JSON is 
 ## App Integration
 
 Application loading opens the existing Application Support SQLite store, applies retention and existing empty-store seeding, resolves the Azure JSONL path, replaces Azure rows from available events, and then loads the metrics shown in the popover.
+The app performs file ingestion and SQLite work away from the main actor before publishing the resulting snapshot to SwiftUI.
 The replacement removes Azure demo rows even when the integration file is missing or empty, while other demo behavior remains unchanged until later provider issues remove it.
 Calculated Azure cost continues to use the existing `CostCalculator` and configured provider/model pricing.
 
