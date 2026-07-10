@@ -346,7 +346,7 @@ private struct MetricRowView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(10)
-        .background(metric.freshness.isStale ? .orange.opacity(0.08) : .quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(metric.freshness.isStale ? .orange.opacity(0.08) : .secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
