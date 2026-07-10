@@ -11,18 +11,7 @@ struct ProviderSettingsStore {
     }
 
     var settings: [ProviderSettings] {
-        let stored: [ProviderSettings]
-        if let data = defaults.data(forKey: Self.storageKey),
-           let decoded = try? JSONDecoder().decode([ProviderSettings].self, from: data) {
-            stored = decoded
-        } else {
-            stored = []
-        }
-
-        let byProvider = Dictionary(stored.map { ($0.provider, $0) }, uniquingKeysWith: { _, latest in latest })
-        return ProviderKind.orderedCases.compactMap { provider in
-            byProvider[provider] ?? ProviderSettings.defaultSettings.first { $0.provider == provider }
-        }
+        ProviderSettingsPersistence.decode(defaults.data(forKey: Self.storageKey))
     }
 
     func update(_ setting: ProviderSettings) {
@@ -32,7 +21,7 @@ struct ProviderSettingsStore {
             (ProviderKind.orderedCases.firstIndex(of: lhs.provider) ?? ProviderKind.orderedCases.endIndex)
                 < (ProviderKind.orderedCases.firstIndex(of: rhs.provider) ?? ProviderKind.orderedCases.endIndex)
         }
-        if let data = try? JSONEncoder().encode(updated) {
+        if let data = try? ProviderSettingsPersistence.encode(updated) {
             defaults.set(data, forKey: Self.storageKey)
         }
     }

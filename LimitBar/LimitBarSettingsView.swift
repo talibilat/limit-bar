@@ -52,8 +52,8 @@ struct LimitBarSettingsView: View {
                     LabeledContent("Usage database", value: storedMetrics.health.message)
                     LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
                     LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
-                    if let failureMessage = storedMetrics.azureImport.failureMessage {
-                        LabeledContent("Azure import status", value: failureMessage)
+                    if storedMetrics.azureImport.failureMessage != nil {
+                        LabeledContent("Azure import status", value: AzureImportDiagnosticState.failed.displayText)
                     }
                     ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
                         Text("Line \(event.lineNumber): \(event.reason)")

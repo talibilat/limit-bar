@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import LimitBarCore
 
@@ -72,6 +73,40 @@ struct CredentialStoreTests {
         #expect(KeychainCredentialStore.service == "com.talibilat.LimitBar.credentials")
         _ = store
     }
+
+    @Test("Keychain save retries update after a concurrent duplicate add")
+    func keychainSaveRetriesConcurrentDuplicate() throws {
+        let operations = FakeKeychainOperations(
+            updateStatuses: [errSecItemNotFound, errSecSuccess],
+            addStatuses: [errSecDuplicateItem]
+        )
+        let store = KeychainCredentialStore(operations: operations)
+
+        try store.save(Data("secret".utf8), for: CredentialKey(provider: .anthropic, kind: .apiKey))
+
+        #expect(operations.updateCallCount == 2)
+        #expect(operations.addCallCount == 1)
+    }
+
+    @Test("credential reconciliation downgrades missing items and preserves validated states")
+    func credentialReconciliationUsesActualPresence() throws {
+        let fake = InMemoryCredentialStore()
+        let reconciler = ProviderCredentialStateReconciler(credentialService: CredentialService(store: fake))
+        var connected = ProviderSettings.defaultSettings[0]
+        connected.state = .connected
+
+        let missing = try reconciler.reconcile(connected)
+        #expect(missing.state == .missing)
+
+        try fake.save(Data("secret".utf8), for: CredentialKey(provider: .anthropic, kind: .apiKey))
+        let retained = try reconciler.reconcile(connected)
+        #expect(retained.state == .connected)
+
+        var initiallyMissing = connected
+        initiallyMissing.state = .missing
+        let configured = try reconciler.reconcile(initiallyMissing)
+        #expect(configured.state == .configured)
+    }
 }
 
 private final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
@@ -100,5 +135,39 @@ private final class InMemoryCredentialStore: CredentialStore, @unchecked Sendabl
     func remove(_ key: CredentialKey) throws {
         if let error { throw error }
         values.removeValue(forKey: key)
+    }
+}
+
+private final class FakeKeychainOperations: KeychainOperations, @unchecked Sendable {
+    private var updateStatuses: [OSStatus]
+    private var addStatuses: [OSStatus]
+    private(set) var updateCallCount = 0
+    private(set) var addCallCount = 0
+
+    init(updateStatuses: [OSStatus], addStatuses: [OSStatus]) {
+        self.updateStatuses = updateStatuses
+        self.addStatuses = addStatuses
+    }
+
+    func update(_ data: Data, service: String, account: String) -> OSStatus {
+        updateCallCount += 1
+        return updateStatuses.removeFirst()
+    }
+
+    func add(_ data: Data, service: String, account: String) -> OSStatus {
+        addCallCount += 1
+        return addStatuses.removeFirst()
+    }
+
+    func read(service: String, account: String) -> (OSStatus, Data?) {
+        (errSecItemNotFound, nil)
+    }
+
+    func contains(service: String, account: String) -> OSStatus {
+        errSecItemNotFound
+    }
+
+    func remove(service: String, account: String) -> OSStatus {
+        errSecItemNotFound
     }
 }

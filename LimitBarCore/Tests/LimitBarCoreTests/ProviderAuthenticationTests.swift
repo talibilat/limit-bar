@@ -62,10 +62,10 @@ struct ProviderAuthenticationTests {
                     updatedAt: Date(timeIntervalSince1970: 100)
                 )
             ],
-            usageDatabaseSummary: "SQLite store opened",
+            usageDatabaseState: .opened,
             azureAcceptedEventCount: 3,
             azureRejectedEventCount: 1,
-            azureFailureSummary: nil
+            azureImportState: .healthy
         )
 
         let json = try #require(String(data: JSONEncoder().encode(report), encoding: .utf8))
@@ -75,5 +75,29 @@ struct ProviderAuthenticationTests {
         for forbidden in ["apiKey", "accessToken", "refreshToken", "prompt", "response", "requestBody", "terminalOutput", "sourceCode", "rawProviderResponse"] {
             #expect(!json.contains(forbidden))
         }
+    }
+
+    @Test("diagnostic health states have fixed summaries")
+    func diagnosticHealthStatesHaveFixedSummaries() {
+        #expect(UsageDatabaseDiagnosticState.opened.displayText == "SQLite store opened")
+        #expect(UsageDatabaseDiagnosticState.unavailable.displayText == "SQLite store unavailable")
+        #expect(AzureImportDiagnosticState.healthy.displayText == "Import healthy")
+        #expect(AzureImportDiagnosticState.failed.displayText == "Import failed")
+    }
+
+    @Test("provider settings persistence normalizes and excludes secret fields")
+    func providerSettingsPersistenceNormalizesAndExcludesSecretFields() throws {
+        var duplicate = ProviderSettings.defaultSettings[0]
+        duplicate.state = .connected
+        let encoded = try ProviderSettingsPersistence.encode([ProviderSettings.defaultSettings[2], ProviderSettings.defaultSettings[0], duplicate])
+        let decoded = ProviderSettingsPersistence.decode(encoded)
+
+        #expect(decoded.map(\.provider) == ProviderKind.orderedCases)
+        #expect(decoded[0].state == .connected)
+        let json = try #require(String(data: encoded, encoding: .utf8))
+        for forbidden in ["apiKey", "accessToken", "refreshToken", "secret", "rawProviderResponse"] {
+            #expect(!json.contains(forbidden))
+        }
+        #expect(ProviderSettingsPersistence.decode(Data("invalid".utf8)) == ProviderSettings.defaultSettings)
     }
 }

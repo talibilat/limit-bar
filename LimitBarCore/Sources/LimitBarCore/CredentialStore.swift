@@ -68,18 +68,94 @@ public struct CredentialService: Sendable {
     }
 }
 
+public struct ProviderCredentialStateReconciler: Sendable {
+    public let credentialService: CredentialService
+
+    public init(credentialService: CredentialService) {
+        self.credentialService = credentialService
+    }
+
+    public func reconcile(_ settings: ProviderSettings) throws -> ProviderSettings {
+        var reconciled = settings
+        let key = CredentialKey(provider: settings.provider, kind: settings.authMethod.credentialKind)
+        if try credentialService.hasCredential(for: key) {
+            if reconciled.state == .missing {
+                reconciled.state = .configured
+            }
+        } else {
+            reconciled.state = .missing
+            reconciled.failureReason = nil
+        }
+        return reconciled
+    }
+}
+
+protocol KeychainOperations: Sendable {
+    func update(_ data: Data, service: String, account: String) -> OSStatus
+    func add(_ data: Data, service: String, account: String) -> OSStatus
+    func read(service: String, account: String) -> (OSStatus, Data?)
+    func contains(service: String, account: String) -> OSStatus
+    func remove(service: String, account: String) -> OSStatus
+}
+
+private struct SecurityKeychainOperations: KeychainOperations {
+    func update(_ data: Data, service: String, account: String) -> OSStatus {
+        SecItemUpdate(baseQuery(service: service, account: account) as CFDictionary, [kSecValueData: data] as CFDictionary)
+    }
+
+    func add(_ data: Data, service: String, account: String) -> OSStatus {
+        var item = baseQuery(service: service, account: account)
+        item[kSecValueData] = data
+        return SecItemAdd(item as CFDictionary, nil)
+    }
+
+    func read(service: String, account: String) -> (OSStatus, Data?) {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return (status, result as? Data)
+    }
+
+    func contains(service: String, account: String) -> OSStatus {
+        var query = baseQuery(service: service, account: account)
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        return SecItemCopyMatching(query as CFDictionary, nil)
+    }
+
+    func remove(service: String, account: String) -> OSStatus {
+        SecItemDelete(baseQuery(service: service, account: account) as CFDictionary)
+    }
+
+    private func baseQuery(service: String, account: String) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account
+        ]
+    }
+}
+
 public struct KeychainCredentialStore: CredentialStore {
     public static let service = "com.talibilat.LimitBar.credentials"
+    private let operations: any KeychainOperations
 
-    public init() {}
+    public init() {
+        operations = SecurityKeychainOperations()
+    }
+
+    init(operations: any KeychainOperations) {
+        self.operations = operations
+    }
 
     public func save(_ data: Data, for key: CredentialKey) throws {
-        let query = baseQuery(for: key)
-        var status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
+        var status = operations.update(data, service: Self.service, account: key.accountIdentifier)
         if status == errSecItemNotFound {
-            var item = query
-            item[kSecValueData] = data
-            status = SecItemAdd(item as CFDictionary, nil)
+            status = operations.add(data, service: Self.service, account: key.accountIdentifier)
+            if status == errSecDuplicateItem {
+                status = operations.update(data, service: Self.service, account: key.accountIdentifier)
+            }
         }
         guard status == errSecSuccess else {
             throw CredentialStoreError.keychainFailure(operation: .save)
@@ -87,24 +163,18 @@ public struct KeychainCredentialStore: CredentialStore {
     }
 
     public func data(for key: CredentialKey) throws -> Data? {
-        var query = baseQuery(for: key)
-        query[kSecReturnData] = true
-        query[kSecMatchLimit] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, result) = operations.read(service: Self.service, account: key.accountIdentifier)
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let data = result as? Data else {
+        guard status == errSecSuccess, let data = result else {
             throw CredentialStoreError.keychainFailure(operation: .read)
         }
         return data
     }
 
     public func contains(_ key: CredentialKey) throws -> Bool {
-        var query = baseQuery(for: key)
-        query[kSecMatchLimit] = kSecMatchLimitOne
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        let status = operations.contains(service: Self.service, account: key.accountIdentifier)
         if status == errSecItemNotFound {
             return false
         }
@@ -115,17 +185,10 @@ public struct KeychainCredentialStore: CredentialStore {
     }
 
     public func remove(_ key: CredentialKey) throws {
-        let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+        let status = operations.remove(service: Self.service, account: key.accountIdentifier)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw CredentialStoreError.keychainFailure(operation: .remove)
         }
     }
 
-    private func baseQuery(for key: CredentialKey) -> [CFString: Any] {
-        [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Self.service,
-            kSecAttrAccount: key.accountIdentifier
-        ]
-    }
 }

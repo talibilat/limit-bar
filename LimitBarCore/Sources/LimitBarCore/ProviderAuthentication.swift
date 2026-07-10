@@ -31,6 +31,15 @@ public enum ProviderAuthMethod: String, Codable, CaseIterable, Equatable, Sendab
         }
     }
 
+    public var credentialKind: CredentialKind {
+        switch self {
+        case .anthropicAdminAPIKey, .azureAPIKey, .openAIAdminAPIKey:
+            .apiKey
+        case .anthropicOAuth, .openAIOAuth:
+            .accessToken
+        }
+    }
+
     public static func methods(for provider: ProviderKind) -> [ProviderAuthMethod] {
         allCases.filter { $0.provider == provider }
     }
@@ -163,24 +172,73 @@ public struct ProviderDiagnostic: Codable, Equatable, Sendable {
     }
 }
 
+public enum UsageDatabaseDiagnosticState: String, Codable, Equatable, Sendable {
+    case opened
+    case unavailable
+
+    public var displayText: String {
+        switch self {
+        case .opened:
+            "SQLite store opened"
+        case .unavailable:
+            "SQLite store unavailable"
+        }
+    }
+}
+
+public enum AzureImportDiagnosticState: String, Codable, Equatable, Sendable {
+    case healthy
+    case failed
+
+    public var displayText: String {
+        switch self {
+        case .healthy:
+            "Import healthy"
+        case .failed:
+            "Import failed"
+        }
+    }
+}
+
 public struct DiagnosticsReport: Codable, Equatable, Sendable {
     public let providerDiagnostics: [ProviderDiagnostic]
-    public let usageDatabaseSummary: String
+    public let usageDatabaseState: UsageDatabaseDiagnosticState
     public let azureAcceptedEventCount: Int
     public let azureRejectedEventCount: Int
-    public let azureFailureSummary: String?
+    public let azureImportState: AzureImportDiagnosticState
 
     public init(
         providerDiagnostics: [ProviderDiagnostic],
-        usageDatabaseSummary: String,
+        usageDatabaseState: UsageDatabaseDiagnosticState,
         azureAcceptedEventCount: Int,
         azureRejectedEventCount: Int,
-        azureFailureSummary: String?
+        azureImportState: AzureImportDiagnosticState
     ) {
         self.providerDiagnostics = providerDiagnostics
-        self.usageDatabaseSummary = usageDatabaseSummary
+        self.usageDatabaseState = usageDatabaseState
         self.azureAcceptedEventCount = azureAcceptedEventCount
         self.azureRejectedEventCount = azureRejectedEventCount
-        self.azureFailureSummary = azureFailureSummary
+        self.azureImportState = azureImportState
+    }
+}
+
+public enum ProviderSettingsPersistence {
+    public static func encode(_ settings: [ProviderSettings]) throws -> Data {
+        try JSONEncoder().encode(normalized(settings))
+    }
+
+    public static func decode(_ data: Data?) -> [ProviderSettings] {
+        guard let data,
+              let decoded = try? JSONDecoder().decode([ProviderSettings].self, from: data) else {
+            return ProviderSettings.defaultSettings
+        }
+        return normalized(decoded)
+    }
+
+    private static func normalized(_ settings: [ProviderSettings]) -> [ProviderSettings] {
+        let byProvider = Dictionary(settings.map { ($0.provider, $0) }, uniquingKeysWith: { _, latest in latest })
+        return ProviderKind.orderedCases.compactMap { provider in
+            byProvider[provider] ?? ProviderSettings.defaultSettings.first { $0.provider == provider }
+        }
     }
 }

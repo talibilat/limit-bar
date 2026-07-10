@@ -7,6 +7,10 @@ struct ProviderSettingsView: View {
     private let settingsStore = ProviderSettingsStore()
     private let credentialService = CredentialService(store: KeychainCredentialStore())
 
+    private var stateReconciler: ProviderCredentialStateReconciler {
+        ProviderCredentialStateReconciler(credentialService: credentialService)
+    }
+
     @State private var anthropicAPIKey = ""
     @State private var azureAPIKey = ""
     @State private var openAIAdminAPIKey = ""
@@ -39,7 +43,7 @@ struct ProviderSettingsView: View {
             }
         }
         .task {
-            for index in settings.indices where settings[index].state == .missing || settings[index].state == .configured {
+            for index in settings.indices {
                 refreshCredentialState(index: index)
                 persist(index: index)
             }
@@ -157,25 +161,11 @@ struct ProviderSettingsView: View {
     }
 
     private func refreshCredentialState(index: Int) {
-        guard let kind = requiredCredentialKind(for: settings[index].authMethod) else {
-            settings[index].state = .missing
-            return
-        }
         do {
-            let key = CredentialKey(provider: settings[index].provider, kind: kind)
-            settings[index].state = try credentialService.hasCredential(for: key) ? .configured : .missing
+            settings[index] = try stateReconciler.reconcile(settings[index])
             keychainMessage = nil
         } catch {
             keychainMessage = "Could not update Keychain."
-        }
-    }
-
-    private func requiredCredentialKind(for method: ProviderAuthMethod) -> CredentialKind? {
-        switch method {
-        case .anthropicAdminAPIKey, .azureAPIKey, .openAIAdminAPIKey:
-            .apiKey
-        case .anthropicOAuth, .openAIOAuth:
-            nil
         }
     }
 
