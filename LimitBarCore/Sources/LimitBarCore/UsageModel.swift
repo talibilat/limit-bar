@@ -89,11 +89,15 @@ public enum LimitStatus: Codable, Equatable, Sendable {
     case unavailable
 
     public var confirmedUsagePercentage: Int? {
+        confirmedUsageRatio.map { Int(($0 * 100).rounded(.down)) }
+    }
+
+    public var confirmedUsageRatio: Double? {
         guard case let .confirmed(used, limit) = self, limit > 0 else {
             return nil
         }
 
-        return Int(((used / limit) * 100).rounded())
+        return used / limit
     }
 }
 
@@ -167,22 +171,24 @@ public struct MenuBarStatus: Codable, Equatable, Sendable {
     }
 
     public static func from(metrics: [UsageMetric]) -> MenuBarStatus {
-        let percentages = metrics.compactMap(\.limitStatus.confirmedUsagePercentage)
-        let worstPercentage = percentages.max()
+        let ratios = metrics.compactMap(\.limitStatus.confirmedUsageRatio)
+        let worstRatio = ratios.max()
 
-        guard let worstPercentage else {
+        guard let worstRatio else {
             return MenuBarStatus(color: .gray, confirmedUsagePercentage: nil)
         }
+
+        let worstPercentage = Int((worstRatio * 100).rounded(.down))
 
         if metrics.contains(where: { $0.freshness.isStale }) {
             return MenuBarStatus(color: .gray, confirmedUsagePercentage: worstPercentage)
         }
 
-        if worstPercentage >= 90 {
+        if worstRatio >= 0.9 {
             return MenuBarStatus(color: .red, confirmedUsagePercentage: worstPercentage)
         }
 
-        if worstPercentage >= 70 {
+        if worstRatio >= 0.7 {
             return MenuBarStatus(color: .yellow, confirmedUsagePercentage: worstPercentage)
         }
 

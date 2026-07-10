@@ -73,6 +73,14 @@ struct UsageModelTests {
         #expect(MenuBarStatus.from(metrics: [metric(used: 40), metric(used: 82)]).confirmedUsagePercentage == 82)
     }
 
+    @Test("menu bar thresholds compare raw usage before display rounding")
+    func menuBarThresholdsCompareRawUsageBeforeDisplayRounding() {
+        #expect(MenuBarStatus.from(metrics: [metric(used: 69.6)]).color == .green)
+        #expect(MenuBarStatus.from(metrics: [metric(used: 69.6)]).confirmedUsagePercentage == 69)
+        #expect(MenuBarStatus.from(metrics: [metric(used: 89.6)]).color == .yellow)
+        #expect(MenuBarStatus.from(metrics: [metric(used: 89.6)]).confirmedUsagePercentage == 89)
+    }
+
     @Test("menu bar status is gray for stale or unsupported data")
     func menuBarStatusIsGrayForStaleOrUnsupportedData() {
         let stale = metric(used: 80, freshness: .stale(missedRefreshes: 2))
