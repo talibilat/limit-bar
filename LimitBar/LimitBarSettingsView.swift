@@ -7,6 +7,7 @@ struct LimitBarSettingsView: View {
     private let azureJSONLPath = (try? AzureUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
     @State private var storedMetrics: StoredUsageMetricsSnapshot?
+    @State private var providerSettings = ProviderSettingsStore().settings
     @State private var provider = ProviderKind.openAI
     @State private var modelLabel = "gpt-5.1-codex"
     @State private var inputPrice = ""
@@ -30,18 +31,29 @@ struct LimitBarSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Setup") {
-                Text("Provider settings will be configured in a later issue.")
-                    .foregroundStyle(.secondary)
+            Section("Provider Authentication") {
+                ProviderSettingsView(settings: $providerSettings)
             }
 
             Section("Diagnostics") {
+                ForEach(providerSettings, id: \.provider) { setting in
+                    LabeledContent(setting.provider.displayName) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(setting.state.displayText)
+                            if let reason = setting.failureReason {
+                                Text(reason.displayText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
                 if let storedMetrics {
                     LabeledContent("Usage database", value: storedMetrics.health.message)
                     LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
                     LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
-                    if let failureMessage = storedMetrics.azureImport.failureMessage {
-                        LabeledContent("Azure import status", value: failureMessage)
+                    if storedMetrics.azureImport.failureMessage != nil {
+                        LabeledContent("Azure import status", value: AzureImportDiagnosticState.failed.displayText)
                     }
                     ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
                         Text("Line \(event.lineNumber): \(event.reason)")

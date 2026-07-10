@@ -74,8 +74,8 @@ struct MonitoringPopoverView: View {
     }
 
     private var azureImportStatusText: String {
-        if let failureMessage = azureImport.failureMessage {
-            return "Azure JSONL: \(failureMessage)"
+        if azureImport.failureMessage != nil {
+            return "Azure JSONL: Import failed"
         }
         return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEventCount) malformed"
     }
