@@ -39,6 +39,23 @@ struct StoredUsageMetricsTests {
         #expect(snapshot.metrics == [retained])
     }
 
+    @Test("JSONL import failure does not hide healthy SQLite store")
+    func jsonlImportFailureDoesNotHideHealthySQLiteStore() throws {
+        let applicationSupport = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileManager = TemporaryApplicationSupportFileManager(applicationSupport: applicationSupport)
+        let limitBarDirectory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
+        try FileManager.default.createDirectory(at: limitBarDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: limitBarDirectory.appendingPathComponent("usage-events.jsonl"), withIntermediateDirectories: true)
+
+        let snapshot = StoredUsageMetrics.loadFromApplicationSupport(fileManager: fileManager)
+
+        #expect(snapshot.health.isOpen)
+        #expect(snapshot.health.message == "SQLite store opened")
+        #expect(snapshot.azureImport.failureMessage == "Azure JSONL import failed")
+        #expect(snapshot.metrics == DemoUsageData.metrics)
+    }
+
     private func metric(modelLabel: String, refreshedAt: Date) -> UsageMetric {
         UsageMetric(
             provider: .anthropic,
@@ -53,5 +70,23 @@ struct StoredUsageMetricsTests {
             refreshedAt: refreshedAt,
             freshness: .fresh
         )
+    }
+}
+
+private final class TemporaryApplicationSupportFileManager: FileManager, @unchecked Sendable {
+    private let applicationSupport: URL
+
+    init(applicationSupport: URL) {
+        self.applicationSupport = applicationSupport
+        super.init()
+    }
+
+    override func url(
+        for directory: FileManager.SearchPathDirectory,
+        in domain: FileManager.SearchPathDomainMask,
+        appropriateFor url: URL?,
+        create shouldCreate: Bool
+    ) throws -> URL {
+        applicationSupport
     }
 }

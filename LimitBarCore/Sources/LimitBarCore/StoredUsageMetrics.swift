@@ -17,7 +17,7 @@ public enum StoredUsageMetrics {
         return StoredUsageMetricsSnapshot(
             metrics: try store.allMetrics(),
             health: store.health(),
-            azureImport: .empty(fileURL: try AzureUsageEventImporter.usageEventsURL())
+            azureImport: .empty(fileURL: URL(fileURLWithPath: ""))
         )
     }
 
@@ -29,13 +29,18 @@ public enum StoredUsageMetrics {
                 try store.save(DemoUsageData.metrics)
             }
             let azureURL = try AzureUsageEventImporter.usageEventsURL(fileManager: fileManager)
-            let importResult = try AzureUsageEventImporter.importEvents(from: azureURL, to: store, now: Date(), calendar: .current)
+            let importResult: AzureUsageImportResult
+            do {
+                importResult = try AzureUsageEventImporter.importEvents(from: azureURL, to: store, now: Date(), calendar: .current)
+            } catch {
+                importResult = .failed(fileURL: azureURL, message: "Azure JSONL import failed")
+            }
             return StoredUsageMetricsSnapshot(metrics: try store.allMetrics(), health: store.health(), azureImport: importResult)
         } catch {
             return StoredUsageMetricsSnapshot(
                 metrics: DemoUsageData.metrics,
                 health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable"),
-                azureImport: .empty(fileURL: (try? AzureUsageEventImporter.usageEventsURL(fileManager: fileManager)) ?? URL(fileURLWithPath: ""))
+                azureImport: .empty(fileURL: URL(fileURLWithPath: ""))
             )
         }
     }

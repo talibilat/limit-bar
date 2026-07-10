@@ -14,6 +14,7 @@ struct LimitBarSettingsView: View {
     @State private var currencyCode = "USD"
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
+    @State private var azureRevealMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -38,6 +39,9 @@ struct LimitBarSettingsView: View {
                 LabeledContent("Usage database", value: storedMetrics.health.message)
                 LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
                 LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEvents.count)")
+                if let failureMessage = storedMetrics.azureImport.failureMessage {
+                    LabeledContent("Azure import status", value: failureMessage)
+                }
             }
 
             Section("Azure OpenAI Integration") {
@@ -46,6 +50,11 @@ struct LimitBarSettingsView: View {
                     .textSelection(.enabled)
                 Button("Reveal JSONL in Finder") {
                     revealAzureJSONLPath()
+                }
+                if let azureRevealMessage {
+                    Text(azureRevealMessage)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
 
@@ -107,14 +116,21 @@ struct LimitBarSettingsView: View {
 
     private func revealAzureJSONLPath() {
         guard let url = try? AzureUsageEventImporter.usageEventsURL() else {
+            azureRevealMessage = "Could not resolve the Azure JSONL path."
             return
         }
         let directory = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: url.path), !FileManager.default.createFile(atPath: url.path, contents: nil) {
+                azureRevealMessage = "Could not create the Azure JSONL file."
+                return
+            }
+            azureRevealMessage = nil
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            azureRevealMessage = "Could not create the Azure JSONL directory."
         }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 

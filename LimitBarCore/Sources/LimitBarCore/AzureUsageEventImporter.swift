@@ -25,9 +25,14 @@ public struct AzureUsageImportResult: Equatable, Sendable {
     public let fileURL: URL
     public let validEventCount: Int
     public let malformedEvents: [MalformedAzureUsageEvent]
+    public let failureMessage: String?
 
     public static func empty(fileURL: URL) -> AzureUsageImportResult {
-        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEvents: [])
+        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEvents: [], failureMessage: nil)
+    }
+
+    public static func failed(fileURL: URL, message: String) -> AzureUsageImportResult {
+        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEvents: [], failureMessage: message)
     }
 }
 
@@ -83,6 +88,9 @@ public enum AzureUsageEventParser {
 }
 
 public enum AzureUsageEventImporter {
+    private static let importedAccountLabel = "Azure OpenAI"
+    private static let importedWindows: [TimeWindow] = [.today, .currentWeek]
+
     public static func usageEventsURL(applicationSupportDirectory: URL) -> URL {
         applicationSupportDirectory
             .appendingPathComponent("LimitBar", isDirectory: true)
@@ -109,6 +117,7 @@ public enum AzureUsageEventImporter {
         calendar: Calendar
     ) throws -> AzureUsageImportResult {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            try store.deleteMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows)
             return .empty(fileURL: fileURL)
         }
 
@@ -116,17 +125,21 @@ public enum AzureUsageEventImporter {
         var validEvents: [AzureUsageEvent] = []
         var malformed: [MalformedAzureUsageEvent] = []
 
-        for (offset, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+        for (offset, line) in contents.components(separatedBy: .newlines).enumerated() {
+            guard !line.isEmpty else {
+                continue
+            }
             do {
-                validEvents.append(try AzureUsageEventParser.parseLine(String(line)))
+                validEvents.append(try AzureUsageEventParser.parseLine(line))
             } catch {
                 malformed.append(MalformedAzureUsageEvent(lineNumber: offset + 1, reason: String(describing: error)))
             }
         }
 
+        try store.deleteMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows)
         try store.save(metrics(from: validEvents, now: now, calendar: calendar))
 
-        return AzureUsageImportResult(fileURL: fileURL, validEventCount: validEvents.count, malformedEvents: malformed)
+        return AzureUsageImportResult(fileURL: fileURL, validEventCount: validEvents.count, malformedEvents: malformed, failureMessage: nil)
     }
 
     private static func metrics(from events: [AzureUsageEvent], now: Date, calendar: Calendar) -> [UsageMetric] {
@@ -143,7 +156,7 @@ public enum AzureUsageEventImporter {
             let deployments = Set(groupedEvents.compactMap(\.deployment)).sorted()
             return UsageMetric(
                 provider: .azureOpenAI,
-                accountLabel: "Azure OpenAI",
+                accountLabel: importedAccountLabel,
                 projectLabel: nil,
                 modelLabel: first.model,
                 deploymentLabel: deployments.isEmpty ? nil : deployments.joined(separator: ", "),

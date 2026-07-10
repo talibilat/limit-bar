@@ -39,7 +39,7 @@ struct MonitoringPopoverView: View {
             Divider()
 
             HStack {
-                Text("Demo data only. Provider integrations arrive in later issues.")
+                Text("Demo data plus local Azure JSONL imports.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -67,10 +67,17 @@ struct MonitoringPopoverView: View {
             Text(storeHealth.message)
                 .font(.caption)
                 .foregroundStyle(storeHealth.isOpen ? Color.secondary : Color.orange)
-            Text("Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEvents.count) malformed")
+            Text(azureImportStatusText)
                 .font(.caption)
-                .foregroundStyle(azureImport.malformedEvents.isEmpty ? Color.secondary : Color.orange)
+                .foregroundStyle(azureImport.failureMessage == nil && azureImport.malformedEvents.isEmpty ? Color.secondary : Color.orange)
         }
+    }
+
+    private var azureImportStatusText: String {
+        if let failureMessage = azureImport.failureMessage {
+            return "Azure JSONL: \(failureMessage)"
+        }
+        return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEvents.count) malformed"
     }
 
     private func loadStoredMetrics() {

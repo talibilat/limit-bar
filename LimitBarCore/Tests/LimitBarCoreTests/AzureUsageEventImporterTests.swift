@@ -84,6 +84,77 @@ struct AzureUsageEventImporterTests {
         #expect(result.malformedEvents.isEmpty)
     }
 
+    @Test("repeated import replaces the previous JSONL snapshot")
+    func repeatedImportReplacesThePreviousJSONLSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":120,"outputTokens":45}"#)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try #"{"provider":"azureOpenAI","timestamp":"2026-07-10T13:30:00Z","model":"gpt-4.1-mini","deployment":"batch-review","inputTokens":20,"outputTokens":10}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI && $0.accountLabel == "Azure OpenAI" }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1-mini" })
+        #expect(imported.allSatisfy { $0.tokenUsage.totalTokens == 30 })
+    }
+
+    @Test("missing JSONL file clears the previous JSONL snapshot")
+    func missingJSONLFileClearsThePreviousJSONLSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":120,"outputTokens":45}"#)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try FileManager.default.removeItem(at: fileURL)
+
+        let result = try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        #expect(result.validEventCount == 0)
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI && $0.accountLabel == "Azure OpenAI" }
+        #expect(imported.isEmpty)
+    }
+
+    @Test("blank lines do not shift malformed line diagnostics")
+    func blankLinesDoNotShiftMalformedLineDiagnostics() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let jsonl = [
+            "",
+            "bad-json",
+            #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":1,"outputTokens":2}"#
+        ].joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+
+        let result = try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+
+        #expect(result.validEventCount == 1)
+        #expect(result.malformedEvents.map(\.lineNumber) == [2])
+    }
+
+    @Test("file-level import failure preserves the previous JSONL snapshot")
+    func fileLevelImportFailurePreservesThePreviousJSONLSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":120,"outputTokens":45}"#)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.createDirectory(at: fileURL, withIntermediateDirectories: true)
+
+        #expect(throws: Error.self) {
+            try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI && $0.accountLabel == "Azure OpenAI" }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1" })
+    }
+
     private func temporaryFile(contents: String) throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -92,5 +163,12 @@ struct AzureUsageEventImporterTests {
 
     private func date(_ iso8601: String) throws -> Date {
         try #require(ISO8601DateFormatter().date(from: iso8601))
+    }
+
+    private func utcCalendar() throws -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.firstWeekday = 2
+        return calendar
     }
 }
