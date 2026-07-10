@@ -85,11 +85,14 @@ struct UsageModelTests {
     func menuBarStatusIsGrayForStaleOrUnsupportedData() {
         let stale = metric(used: 80, freshness: .stale(missedRefreshes: 2))
         let unsupported = metric(limitStatus: .unsupportedByProviderAPI)
+        let disconnected = metric(limitStatus: .disconnected)
 
         #expect(MenuBarStatus.from(metrics: [stale]).color == .gray)
         #expect(MenuBarStatus.from(metrics: [stale]).confirmedUsagePercentage == 80)
         #expect(MenuBarStatus.from(metrics: [unsupported]).color == .gray)
         #expect(MenuBarStatus.from(metrics: [unsupported]).confirmedUsagePercentage == nil)
+        #expect(MenuBarStatus.from(metrics: [disconnected]).color == .gray)
+        #expect(MenuBarStatus.from(metrics: [disconnected]).confirmedUsagePercentage == nil)
     }
 
     @Test("usage metric excludes sensitive content by shape")
