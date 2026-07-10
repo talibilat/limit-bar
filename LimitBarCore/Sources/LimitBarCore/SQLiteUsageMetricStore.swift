@@ -160,6 +160,19 @@ public final class SQLiteUsageMetricStore {
         try stepDone(statement)
     }
 
+    public func markMetricsStale(provider: ProviderKind, timeWindows: [TimeWindow], missedRefreshes: Int) throws {
+        guard !timeWindows.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: timeWindows.count).joined(separator: ", ")
+        let statement = try prepare("UPDATE usage_metrics SET freshness_status = 'stale', missed_refreshes = ? WHERE provider = ? AND time_window IN (\(placeholders));")
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, Int64(missedRefreshes))
+        bind(provider.rawValue, at: 2, in: statement)
+        for (index, window) in timeWindows.enumerated() {
+            bind(window.rawValue, at: Int32(index + 3), in: statement)
+        }
+        try stepDone(statement)
+    }
+
     func schemaColumnNames() throws -> Set<String> {
         let statement = try prepare("PRAGMA table_info(usage_metrics);")
         defer { sqlite3_finalize(statement) }
