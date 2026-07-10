@@ -21,6 +21,12 @@ public enum UsageMetricStoreError: Error, Equatable {
 public final class SQLiteUsageMetricStore {
     private var database: OpaquePointer?
 
+    private let selectColumns = """
+    id, provider, account_label, project_label, model_label, deployment_label, time_window,
+    input_tokens, output_tokens, cost_amount, cost_currency_code, cost_source,
+    limit_status, limit_used, limit_value, refreshed_at, freshness_status, missed_refreshes
+    """
+
     public init(path: String) throws {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
             throw UsageMetricStoreError.openFailed(Self.message(from: database))
@@ -94,11 +100,11 @@ public final class SQLiteUsageMetricStore {
     }
 
     public func metrics(for timeWindow: TimeWindow) throws -> [UsageMetric] {
-        try readMetrics(sql: "SELECT * FROM usage_metrics WHERE time_window = ? ORDER BY rowid;", bindings: [timeWindow.rawValue])
+        try readMetrics(sql: "SELECT \(selectColumns) FROM usage_metrics WHERE time_window = ? ORDER BY rowid;", bindings: [timeWindow.rawValue])
     }
 
     public func allMetrics() throws -> [UsageMetric] {
-        try readMetrics(sql: "SELECT * FROM usage_metrics ORDER BY rowid;", bindings: [])
+        try readMetrics(sql: "SELECT \(selectColumns) FROM usage_metrics ORDER BY rowid;", bindings: [])
     }
 
     @discardableResult
@@ -118,7 +124,7 @@ public final class SQLiteUsageMetricStore {
         try stepDone(statement)
     }
 
-    public func schemaColumnNames() throws -> Set<String> {
+    func schemaColumnNames() throws -> Set<String> {
         let statement = try prepare("PRAGMA table_info(usage_metrics);")
         defer { sqlite3_finalize(statement) }
 
@@ -285,8 +291,7 @@ public final class SQLiteUsageMetricStore {
             metric.accountLabel ?? "",
             metric.projectLabel ?? "",
             metric.modelLabel,
-            metric.deploymentLabel ?? "",
-            metric.refreshedAt.map { String($0.timeIntervalSince1970) } ?? ""
+            metric.deploymentLabel ?? ""
         ].joined(separator: "|")
     }
 

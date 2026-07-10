@@ -30,6 +30,34 @@ struct SQLiteUsageMetricStoreTests {
         #expect(try store.allMetrics() == metrics)
     }
 
+    @Test("saving same logical metric updates the retained row")
+    func savingSameLogicalMetricUpdatesTheRetainedRow() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let first = metric(provider: .anthropic, timeWindow: .today, modelLabel: "Claude Sonnet", refreshedAt: Date(timeIntervalSince1970: 100))
+        let updated = metric(provider: .anthropic, timeWindow: .today, modelLabel: "Claude Sonnet", refreshedAt: Date(timeIntervalSince1970: 200), inputTokens: 42, outputTokens: 12)
+
+        try store.save([first])
+        try store.save([updated])
+
+        #expect(try store.allMetrics() == [updated])
+    }
+
+    @Test("round trip preserves cost and confirmed limit fields")
+    func roundTripPreservesCostAndConfirmedLimitFields() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let stored = metric(
+            provider: .openAI,
+            timeWindow: .today,
+            modelLabel: "gpt-5.1-codex",
+            cost: Cost(amount: Decimal(string: "12.34")!, currencyCode: "USD", source: .providerReported),
+            limitStatus: .confirmed(used: 72, limit: 100)
+        )
+
+        try store.save([stored])
+
+        #expect(try store.metrics(for: .today) == [stored])
+    }
+
     @Test("deletes metrics older than retention cutoff")
     func deletesMetricsOlderThanRetentionCutoff() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
@@ -87,7 +115,11 @@ struct SQLiteUsageMetricStoreTests {
         timeWindow: TimeWindow,
         modelLabel: String,
         refreshedAt: Date = Date(timeIntervalSince1970: 1_783_728_000),
-        freshness: Freshness = .fresh
+        inputTokens: Int = 10,
+        outputTokens: Int = 5,
+        freshness: Freshness = .fresh,
+        cost: Cost? = nil,
+        limitStatus: LimitStatus = .unsupportedByProviderAPI
     ) -> UsageMetric {
         UsageMetric(
             provider: provider,
@@ -96,9 +128,9 @@ struct SQLiteUsageMetricStoreTests {
             modelLabel: modelLabel,
             deploymentLabel: provider == .azureOpenAI ? "deployment" : nil,
             timeWindow: timeWindow,
-            tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 5),
-            cost: nil,
-            limitStatus: .unsupportedByProviderAPI,
+            tokenUsage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
+            cost: cost,
+            limitStatus: limitStatus,
             refreshedAt: refreshedAt,
             freshness: freshness
         )

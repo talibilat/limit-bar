@@ -6,7 +6,9 @@ public struct StoredUsageMetricsSnapshot: Equatable, Sendable {
 }
 
 public enum StoredUsageMetrics {
-    public static func load(from store: SQLiteUsageMetricStore) throws -> StoredUsageMetricsSnapshot {
+    public static func load(from store: SQLiteUsageMetricStore, now: Date = Date()) throws -> StoredUsageMetricsSnapshot {
+        try store.deleteMetrics(olderThan: now.addingTimeInterval(-(90 * 24 * 60 * 60)))
+
         if try store.allMetrics().isEmpty {
             try store.save(DemoUsageData.metrics)
         }
@@ -21,7 +23,7 @@ public enum StoredUsageMetrics {
         } catch {
             return StoredUsageMetricsSnapshot(
                 metrics: DemoUsageData.metrics,
-                health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable: \(error)")
+                health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable")
             )
         }
     }
