@@ -4,7 +4,7 @@ private func displayPercentage(for ratio: Double) -> Int {
     Int((ratio * 100).rounded(.down))
 }
 
-public enum ProviderKind: String, CaseIterable, Codable, Equatable, Sendable {
+public enum ProviderKind: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case anthropic
     case azureOpenAI
     case openAI
@@ -23,7 +23,7 @@ public enum ProviderKind: String, CaseIterable, Codable, Equatable, Sendable {
     }
 }
 
-public enum TimeWindow: String, CaseIterable, Codable, Equatable, Sendable {
+public enum TimeWindow: String, CaseIterable, Codable, Equatable, Hashable, Sendable {
     case today
     case currentWeek
 
@@ -46,6 +46,10 @@ public enum TimeWindow: String, CaseIterable, Codable, Equatable, Sendable {
             return calendar.dateInterval(of: .weekOfYear, for: date) ?? DateInterval(start: date, end: date)
         }
     }
+}
+
+public extension TimeWindow {
+    static let defaultSelection: TimeWindow = .today
 }
 
 public struct TokenUsage: Codable, Equatable, Sendable {
@@ -102,6 +106,21 @@ public enum LimitStatus: Codable, Equatable, Sendable {
         }
 
         return used / limit
+    }
+}
+
+public extension LimitStatus {
+    var displayText: String {
+        switch self {
+        case .confirmed:
+            confirmedUsagePercentage.map { "\($0)%" } ?? "Unavailable"
+        case .unsupportedByProviderAPI:
+            "Unsupported by provider API"
+        case .disconnected:
+            "Disconnected"
+        case .unavailable:
+            "Unavailable"
+        }
     }
 }
 
