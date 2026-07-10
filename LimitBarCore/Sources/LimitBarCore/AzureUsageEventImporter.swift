@@ -14,6 +14,7 @@ public enum AzureUsageEventError: Error, Equatable {
     case unsupportedProvider
     case missingRequiredField(String)
     case negativeTokenCount
+    case tokenCountOverflow
 }
 
 public struct MalformedAzureUsageEvent: Equatable, Sendable {
@@ -150,24 +151,36 @@ public enum AzureUsageEventImporter {
         try store.replaceMetrics(
             provider: .azureOpenAI,
             timeWindows: importedWindows,
-            with: metrics(from: validEvents, now: now, calendar: calendar)
+            with: try metrics(from: validEvents, now: now, calendar: calendar)
         )
 
         return AzureUsageImportResult(fileURL: fileURL, validEventCount: validEvents.count, malformedEvents: malformed, failureMessage: nil)
     }
 
-    private static func metrics(from events: [AzureUsageEvent], now: Date, calendar: Calendar) -> [UsageMetric] {
-        [TimeWindow.today, .currentWeek].flatMap { window in
-            aggregate(events.filter { window.interval(containing: now, calendar: calendar).contains($0.timestamp) }, timeWindow: window)
+    private static func metrics(from events: [AzureUsageEvent], now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        var metrics: [UsageMetric] = []
+        for window in importedWindows {
+            metrics += try aggregate(
+                events.filter { window.interval(containing: now, calendar: calendar).contains($0.timestamp) },
+                timeWindow: window
+            )
         }
+        return metrics
     }
 
-    private static func aggregate(_ events: [AzureUsageEvent], timeWindow: TimeWindow) -> [UsageMetric] {
+    private static func aggregate(_ events: [AzureUsageEvent], timeWindow: TimeWindow) throws -> [UsageMetric] {
         let groups = Dictionary(grouping: events, by: \.model)
 
-        return groups.values.map { groupedEvents in
+        return try groups.values.map { groupedEvents in
             let first = groupedEvents[0]
             let deployments = Set(groupedEvents.compactMap(\.deployment)).sorted()
+            var inputTokens = 0
+            var outputTokens = 0
+            for event in groupedEvents {
+                inputTokens = try checkedSum(inputTokens, event.inputTokens)
+                outputTokens = try checkedSum(outputTokens, event.outputTokens)
+            }
+            _ = try checkedSum(inputTokens, outputTokens)
             return UsageMetric(
                 provider: .azureOpenAI,
                 accountLabel: importedAccountLabel,
@@ -176,8 +189,8 @@ public enum AzureUsageEventImporter {
                 deploymentLabel: deployments.isEmpty ? nil : deployments.joined(separator: ", "),
                 timeWindow: timeWindow,
                 tokenUsage: TokenUsage(
-                    inputTokens: groupedEvents.reduce(0) { $0 + $1.inputTokens },
-                    outputTokens: groupedEvents.reduce(0) { $0 + $1.outputTokens }
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens
                 ),
                 cost: nil,
                 limitStatus: .unsupportedByProviderAPI,
@@ -188,5 +201,13 @@ public enum AzureUsageEventImporter {
         .sorted { lhs, rhs in
             return lhs.modelLabel < rhs.modelLabel
         }
+    }
+
+    private static func checkedSum(_ lhs: Int, _ rhs: Int) throws -> Int {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else {
+            throw AzureUsageEventError.tokenCountOverflow
+        }
+        return sum
     }
 }

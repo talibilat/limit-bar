@@ -193,6 +193,28 @@ struct AzureUsageEventImporterTests {
         #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1" })
     }
 
+    @Test("token aggregation overflow fails without replacing the previous snapshot")
+    func tokenAggregationOverflowFailsWithoutReplacingPreviousSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        let overflowing = [
+            #"{"provider":"azureOpenAI","timestamp":"2026-07-10T11:30:00Z","model":"overflow","inputTokens":\#(Int.max),"outputTokens":0}"#,
+            #"{"provider":"azureOpenAI","timestamp":"2026-07-10T12:30:00Z","model":"overflow","inputTokens":1,"outputTokens":0}"#
+        ].joined(separator: "\n")
+        try overflowing.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        #expect(throws: AzureUsageEventError.self) {
+            try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "existing" })
+    }
+
     private func temporaryFile(contents: String) throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try contents.write(to: url, atomically: true, encoding: .utf8)
