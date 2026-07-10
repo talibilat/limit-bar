@@ -72,6 +72,8 @@ struct StoredUsageMetricsTests {
 
         #expect(!azureMetrics.isEmpty)
         #expect(azureMetrics.allSatisfy { $0.modelLabel == "imported-model" })
+        #expect(snapshot.metrics.contains { $0.provider == .anthropic })
+        #expect(snapshot.metrics.contains { $0.provider == .openAI })
     }
 
     private func metric(modelLabel: String, refreshedAt: Date) -> UsageMetric {

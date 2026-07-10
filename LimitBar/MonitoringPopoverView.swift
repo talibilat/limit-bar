@@ -77,7 +77,7 @@ struct MonitoringPopoverView: View {
         if let failureMessage = azureImport.failureMessage {
             return "Azure JSONL: \(failureMessage)"
         }
-        return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEvents.count) malformed"
+        return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEventCount) malformed"
     }
 
     private func loadStoredMetrics() {

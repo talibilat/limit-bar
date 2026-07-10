@@ -85,6 +85,34 @@ struct SQLiteUsageMetricStoreTests {
         #expect(retained.freshness == .stale(missedRefreshes: 2))
     }
 
+    @Test("provider replacement rejects mismatched metrics before deletion")
+    func providerReplacementRejectsMismatchedMetricsBeforeDeletion() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let existing = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "existing")
+        let mismatched = metric(provider: .openAI, timeWindow: .today, modelLabel: "wrong-provider")
+        try store.save([existing])
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [mismatched])
+        }
+
+        #expect(try store.allMetrics() == [existing])
+    }
+
+    @Test("provider replacement preserves other providers")
+    func providerReplacementPreservesOtherProviders() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let anthropic = metric(provider: .anthropic, timeWindow: .today, modelLabel: "claude")
+        let oldAzure = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "old")
+        let openAI = metric(provider: .openAI, timeWindow: .today, modelLabel: "gpt")
+        let newAzure = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "new")
+        try store.save([anthropic, oldAzure, openAI])
+
+        try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [newAzure])
+
+        #expect(try store.allMetrics() == [anthropic, openAI, newAzure])
+    }
+
     @Test("schema stores normalized fields and excludes sensitive fields")
     func schemaStoresNormalizedFieldsAndExcludesSensitiveFields() throws {
         let store = try SQLiteUsageMetricStore.inMemory()

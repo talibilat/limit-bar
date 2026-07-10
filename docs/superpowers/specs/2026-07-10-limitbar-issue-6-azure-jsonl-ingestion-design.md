@@ -31,11 +31,11 @@ Malformed JSON, incorrect provider values, missing required fields, invalid time
 `AzureUsageEventParser` parses JSONL data and returns valid typed events plus line-numbered diagnostics.
 Diagnostics contain only a line number and safe validation reason; they never include raw event contents.
 
-`AzureUsageImporter` filters valid events into Today and Current Week using an injected calendar and current date.
+`AzureUsageEventImporter` filters valid events into Today and Current Week using an injected calendar and current date.
 It aggregates token counts by time window, model, and optional deployment, creates fresh Azure OpenAI `UsageMetric` values, and sets every limit to `.unsupportedByProviderAPI`.
 The latest included event timestamp becomes the aggregate refresh timestamp.
 
-`AzureUsageEventFile` resolves the Application Support path and reads the file.
+`AzureUsageEventImporter` resolves the Application Support path and reads the file.
 A missing file is a healthy empty integration result.
 Other file read failures become safe diagnostics and leave existing stored metrics unchanged.
 

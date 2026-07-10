@@ -38,9 +38,14 @@ struct LimitBarSettingsView: View {
             Section("Diagnostics") {
                 LabeledContent("Usage database", value: storedMetrics.health.message)
                 LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
-                LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEvents.count)")
+                LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
                 if let failureMessage = storedMetrics.azureImport.failureMessage {
                     LabeledContent("Azure import status", value: failureMessage)
+                }
+                ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
+                    Text("Line \(event.lineNumber): \(event.reason)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -122,12 +127,12 @@ struct LimitBarSettingsView: View {
         let directory = url.deletingLastPathComponent()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            if !FileManager.default.fileExists(atPath: url.path), !FileManager.default.createFile(atPath: url.path, contents: nil) {
-                azureRevealMessage = "Could not create the Azure JSONL file."
-                return
-            }
             azureRevealMessage = nil
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else {
+                NSWorkspace.shared.open(directory)
+            }
         } catch {
             azureRevealMessage = "Could not create the Azure JSONL directory."
         }

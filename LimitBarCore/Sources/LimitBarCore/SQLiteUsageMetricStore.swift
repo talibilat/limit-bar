@@ -16,6 +16,7 @@ public enum UsageMetricStoreError: Error, Equatable {
     case prepareFailed(String)
     case executeFailed(String)
     case decodeFailed(String)
+    case providerMismatch
 }
 
 public final class SQLiteUsageMetricStore {
@@ -134,6 +135,11 @@ public final class SQLiteUsageMetricStore {
     }
 
     public func replaceMetrics(provider: ProviderKind, timeWindows: [TimeWindow], with metrics: [UsageMetric]) throws {
+        let allowedWindows = Set(timeWindows)
+        guard metrics.allSatisfy({ $0.provider == provider && allowedWindows.contains($0.timeWindow) }) else {
+            throw UsageMetricStoreError.providerMismatch
+        }
+
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             try deleteMetrics(provider: provider, timeWindows: timeWindows)

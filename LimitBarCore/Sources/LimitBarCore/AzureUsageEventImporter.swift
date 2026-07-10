@@ -25,15 +25,16 @@ public struct MalformedAzureUsageEvent: Equatable, Sendable {
 public struct AzureUsageImportResult: Equatable, Sendable {
     public let fileURL: URL
     public let validEventCount: Int
+    public let malformedEventCount: Int
     public let malformedEvents: [MalformedAzureUsageEvent]
     public let failureMessage: String?
 
     public static func empty(fileURL: URL) -> AzureUsageImportResult {
-        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEvents: [], failureMessage: nil)
+        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil)
     }
 
     public static func failed(fileURL: URL, message: String) -> AzureUsageImportResult {
-        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEvents: [], failureMessage: message)
+        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message)
     }
 }
 
@@ -61,8 +62,23 @@ public enum AzureUsageEventParser {
             throw AzureUsageEventError.missingRequiredField("timestamp")
         }
 
-        guard let model = raw.model, !model.isEmpty else {
+        guard let rawModel = raw.model else {
             throw AzureUsageEventError.missingRequiredField("model")
+        }
+        let model = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else {
+            throw AzureUsageEventError.missingRequiredField("model")
+        }
+
+        let deployment: String?
+        if let rawDeployment = raw.deployment {
+            let trimmedDeployment = rawDeployment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedDeployment.isEmpty else {
+                throw AzureUsageEventError.missingRequiredField("deployment")
+            }
+            deployment = trimmedDeployment
+        } else {
+            deployment = nil
         }
 
         guard let inputTokens = raw.inputTokens else {
@@ -81,7 +97,7 @@ public enum AzureUsageEventParser {
             provider: .azureOpenAI,
             timestamp: timestamp,
             model: model,
-            deployment: raw.deployment,
+            deployment: deployment,
             inputTokens: inputTokens,
             outputTokens: outputTokens
         )
@@ -100,6 +116,11 @@ public enum AzureUsageEventParser {
 }
 
 public enum AzureUsageEventImporter {
+    private struct AggregateKey: Hashable {
+        let model: String
+        let deployment: String?
+    }
+
     private static let importedAccountLabel = "Azure OpenAI"
     private static let importedWindows: [TimeWindow] = [.today, .currentWeek]
 
@@ -133,12 +154,16 @@ public enum AzureUsageEventImporter {
             return .empty(fileURL: fileURL)
         }
 
-        let contents = try String(contentsOf: fileURL, encoding: .utf8)
+        let contents = try Data(contentsOf: fileURL)
         var validEvents: [AzureUsageEvent] = []
         var malformed: [MalformedAzureUsageEvent] = []
 
-        for (offset, line) in contents.components(separatedBy: .newlines).enumerated() {
-            guard !line.isEmpty else {
+        for (offset, lineData) in contents.split(separator: 0x0A, omittingEmptySubsequences: false).enumerated() {
+            guard let line = String(data: lineData, encoding: .utf8) else {
+                malformed.append(MalformedAzureUsageEvent(lineNumber: offset + 1, reason: String(describing: AzureUsageEventError.malformedJSON)))
+                continue
+            }
+            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue
             }
             do {
@@ -154,14 +179,21 @@ public enum AzureUsageEventImporter {
             with: try metrics(from: validEvents, now: now, calendar: calendar)
         )
 
-        return AzureUsageImportResult(fileURL: fileURL, validEventCount: validEvents.count, malformedEvents: malformed, failureMessage: nil)
+        return AzureUsageImportResult(
+            fileURL: fileURL,
+            validEventCount: validEvents.count,
+            malformedEventCount: malformed.count,
+            malformedEvents: Array(malformed.prefix(20)),
+            failureMessage: nil
+        )
     }
 
     private static func metrics(from events: [AzureUsageEvent], now: Date, calendar: Calendar) throws -> [UsageMetric] {
         var metrics: [UsageMetric] = []
         for window in importedWindows {
+            let interval = window.interval(containing: now, calendar: calendar)
             metrics += try aggregate(
-                events.filter { window.interval(containing: now, calendar: calendar).contains($0.timestamp) },
+                events.filter { $0.timestamp >= interval.start && $0.timestamp < interval.end },
                 timeWindow: window
             )
         }
@@ -169,11 +201,11 @@ public enum AzureUsageEventImporter {
     }
 
     private static func aggregate(_ events: [AzureUsageEvent], timeWindow: TimeWindow) throws -> [UsageMetric] {
-        let groups = Dictionary(grouping: events, by: \.model)
+        let groups = Dictionary(grouping: events) { event in
+            AggregateKey(model: event.model, deployment: event.deployment)
+        }
 
-        return try groups.values.map { groupedEvents in
-            let first = groupedEvents[0]
-            let deployments = Set(groupedEvents.compactMap(\.deployment)).sorted()
+        return try groups.map { key, groupedEvents in
             var inputTokens = 0
             var outputTokens = 0
             for event in groupedEvents {
@@ -185,8 +217,8 @@ public enum AzureUsageEventImporter {
                 provider: .azureOpenAI,
                 accountLabel: importedAccountLabel,
                 projectLabel: nil,
-                modelLabel: first.model,
-                deploymentLabel: deployments.isEmpty ? nil : deployments.joined(separator: ", "),
+                modelLabel: key.model,
+                deploymentLabel: key.deployment,
                 timeWindow: timeWindow,
                 tokenUsage: TokenUsage(
                     inputTokens: inputTokens,
@@ -199,7 +231,7 @@ public enum AzureUsageEventImporter {
             )
         }
         .sorted { lhs, rhs in
-            return lhs.modelLabel < rhs.modelLabel
+            (lhs.modelLabel, lhs.deploymentLabel ?? "") < (rhs.modelLabel, rhs.deploymentLabel ?? "")
         }
     }
 
