@@ -1,5 +1,9 @@
 import Foundation
 
+private func displayPercentage(for ratio: Double) -> Int {
+    Int((ratio * 100).rounded(.down))
+}
+
 public enum ProviderKind: String, CaseIterable, Codable, Equatable, Sendable {
     case anthropic
     case azureOpenAI
@@ -89,7 +93,7 @@ public enum LimitStatus: Codable, Equatable, Sendable {
     case unavailable
 
     public var confirmedUsagePercentage: Int? {
-        confirmedUsageRatio.map { Int(($0 * 100).rounded(.down)) }
+        confirmedUsageRatio.map(displayPercentage)
     }
 
     public var confirmedUsageRatio: Double? {
@@ -178,7 +182,7 @@ public struct MenuBarStatus: Codable, Equatable, Sendable {
             return MenuBarStatus(color: .gray, confirmedUsagePercentage: nil)
         }
 
-        let worstPercentage = Int((worstRatio * 100).rounded(.down))
+        let worstPercentage = displayPercentage(for: worstRatio)
 
         if metrics.contains(where: { $0.freshness.isStale }) {
             return MenuBarStatus(color: .gray, confirmedUsagePercentage: worstPercentage)
