@@ -56,7 +56,7 @@ public enum AzureUsageEventParser {
             throw AzureUsageEventError.unsupportedProvider
         }
 
-        guard let timestampText = raw.timestamp, let timestamp = ISO8601DateFormatter().date(from: timestampText) else {
+        guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
             throw AzureUsageEventError.missingRequiredField("timestamp")
         }
 
@@ -84,6 +84,17 @@ public enum AzureUsageEventParser {
             inputTokens: inputTokens,
             outputTokens: outputTokens
         )
+    }
+
+    private static func parseTimestamp(_ timestampText: String) -> Date? {
+        let standardFormatter = ISO8601DateFormatter()
+        if let timestamp = standardFormatter.date(from: timestampText) {
+            return timestamp
+        }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractionalFormatter.date(from: timestampText)
     }
 }
 
@@ -117,7 +128,7 @@ public enum AzureUsageEventImporter {
         calendar: Calendar
     ) throws -> AzureUsageImportResult {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            try store.deleteMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows)
+            try store.replaceMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows, with: [])
             return .empty(fileURL: fileURL)
         }
 
@@ -136,8 +147,12 @@ public enum AzureUsageEventImporter {
             }
         }
 
-        try store.deleteMetrics(provider: .azureOpenAI, accountLabel: importedAccountLabel, timeWindows: importedWindows)
-        try store.save(metrics(from: validEvents, now: now, calendar: calendar))
+        try store.replaceMetrics(
+            provider: .azureOpenAI,
+            accountLabel: importedAccountLabel,
+            timeWindows: importedWindows,
+            with: metrics(from: validEvents, now: now, calendar: calendar)
+        )
 
         return AzureUsageImportResult(fileURL: fileURL, validEventCount: validEvents.count, malformedEvents: malformed, failureMessage: nil)
     }

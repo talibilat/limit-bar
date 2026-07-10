@@ -33,7 +33,7 @@ public enum StoredUsageMetrics {
             do {
                 importResult = try AzureUsageEventImporter.importEvents(from: azureURL, to: store, now: Date(), calendar: .current)
             } catch {
-                importResult = .failed(fileURL: azureURL, message: "Azure JSONL import failed")
+                importResult = .failed(fileURL: azureURL, message: "Azure JSONL import failed: \(error.localizedDescription)")
             }
             return StoredUsageMetricsSnapshot(metrics: try store.allMetrics(), health: store.health(), azureImport: importResult)
         } catch {

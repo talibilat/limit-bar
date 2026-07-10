@@ -99,7 +99,7 @@ private struct ProviderUsageCardView: View {
                 Text(card.provider.displayName)
                     .font(.headline)
                 Spacer()
-                Text(card.isEmpty ? "Empty" : "Demo")
+                Text(card.isEmpty ? "Empty" : "Usage")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)

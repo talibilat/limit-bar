@@ -134,6 +134,18 @@ public final class SQLiteUsageMetricStore {
         return Int(sqlite3_changes(database))
     }
 
+    public func replaceMetrics(provider: ProviderKind, accountLabel: String, timeWindows: [TimeWindow], with metrics: [UsageMetric]) throws {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try deleteMetrics(provider: provider, accountLabel: accountLabel, timeWindows: timeWindows)
+            try save(metrics)
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
     public func markMetricsStale(timeWindow: TimeWindow, missedRefreshes: Int) throws {
         let statement = try prepare("UPDATE usage_metrics SET freshness_status = 'stale', missed_refreshes = ? WHERE time_window = ?;")
         defer { sqlite3_finalize(statement) }

@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import LimitBarCore
 
@@ -24,6 +25,16 @@ struct AzureUsageEventImporterTests {
         #expect(event.deployment == "team-tools")
         #expect(event.inputTokens == 120)
         #expect(event.outputTokens == 45)
+    }
+
+    @Test("parses fractional second timestamps")
+    func parsesFractionalSecondTimestamps() throws {
+        let line = #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00.123Z","model":"gpt-4.1","inputTokens":120,"outputTokens":45}"#
+
+        let event = try AzureUsageEventParser.parseLine(line)
+        let expectedDate = try date("2026-07-10T10:30:00.123Z")
+
+        #expect(event.timestamp == expectedDate)
     }
 
     @Test("rejects malformed events")
@@ -155,14 +166,62 @@ struct AzureUsageEventImporterTests {
         #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1" })
     }
 
+    @Test("insert failure rolls back JSONL snapshot replacement")
+    func insertFailureRollsBackJSONLSnapshotReplacement() throws {
+        let databasePath = temporaryDatabasePath()
+        let store = try SQLiteUsageMetricStore(path: databasePath)
+        let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":120,"outputTokens":45}"#)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+
+        try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try executeSQLite(databasePath: databasePath, sql: """
+        CREATE TRIGGER fail_jsonl_insert BEFORE INSERT ON usage_metrics
+        WHEN NEW.provider = 'azureOpenAI' AND NEW.account_label = 'Azure OpenAI'
+        BEGIN
+            SELECT RAISE(ABORT, 'blocked imported metric insert');
+        END;
+        """)
+        try #"{"provider":"azureOpenAI","timestamp":"2026-07-10T13:30:00Z","model":"gpt-4.1-mini","inputTokens":20,"outputTokens":10}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        #expect(throws: Error.self) {
+            try AzureUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI && $0.accountLabel == "Azure OpenAI" }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1" })
+    }
+
     private func temporaryFile(contents: String) throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try contents.write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
+    private func temporaryDatabasePath() -> String {
+        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
+    }
+
+    private func executeSQLite(databasePath: String, sql: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(databasePath, &database) == SQLITE_OK else {
+            throw UsageMetricStoreError.openFailed("Could not open test database")
+        }
+        defer { sqlite3_close(database) }
+        guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+            throw UsageMetricStoreError.executeFailed("Could not execute test SQL")
+        }
+    }
+
     private func date(_ iso8601: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: iso8601))
+        let standardFormatter = ISO8601DateFormatter()
+        if let date = standardFormatter.date(from: iso8601) {
+            return date
+        }
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return try #require(fractionalFormatter.date(from: iso8601))
     }
 
     private func utcCalendar() throws -> Calendar {
