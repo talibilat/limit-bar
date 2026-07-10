@@ -23,7 +23,8 @@
 ## File Structure
 
 - Modify `LimitBarCore/Sources/LimitBarCore/UsageModel.swift` for hashable provider and time-window values used by SwiftUI.
-- Create `LimitBarCore/Sources/LimitBarCore/DemoUsageData.swift` for demo metrics, provider cards, default selection, and limit display text.
+- Create `LimitBarCore/Sources/LimitBarCore/UsagePresentation.swift` for provider cards, default selection, and limit display text.
+- Create `LimitBarCore/Sources/LimitBarCore/DemoUsageData.swift` for demo metrics.
 - Create `LimitBarCore/Tests/LimitBarCoreTests/DemoUsageDataTests.swift` for core demo/card behavior.
 - Modify `LimitBar/MonitoringPopoverView.swift` to render cards, rows, tabs, stale badges, unsupported text, and empty states.
 
