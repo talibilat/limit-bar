@@ -1,10 +1,12 @@
 import SwiftUI
 import LimitBarCore
+import AppKit
 
 struct LimitBarSettingsView: View {
-    private let storeHealth = StoredUsageMetrics.loadFromApplicationSupport().health
     private let pricingStore = PricingSettingsStore()
+    private let azureJSONLPath = (try? AzureUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
+    @State private var storedMetrics: StoredUsageMetricsSnapshot?
     @State private var provider = ProviderKind.openAI
     @State private var modelLabel = "gpt-5.1-codex"
     @State private var inputPrice = ""
@@ -12,6 +14,7 @@ struct LimitBarSettingsView: View {
     @State private var currencyCode = "USD"
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
+    @State private var azureRevealMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -33,7 +36,35 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Diagnostics") {
-                LabeledContent("Usage database", value: storeHealth.message)
+                if let storedMetrics {
+                    LabeledContent("Usage database", value: storedMetrics.health.message)
+                    LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
+                    LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
+                    if let failureMessage = storedMetrics.azureImport.failureMessage {
+                        LabeledContent("Azure import status", value: failureMessage)
+                    }
+                    ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
+                        Text("Line \(event.lineNumber): \(event.reason)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ProgressView("Loading diagnostics")
+                }
+            }
+
+            Section("Azure OpenAI Integration") {
+                Text(azureJSONLPath)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                Button("Reveal JSONL in Finder") {
+                    revealAzureJSONLPath()
+                }
+                if let azureRevealMessage {
+                    Text(azureRevealMessage)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Pricing") {
@@ -70,6 +101,9 @@ struct LimitBarSettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 520, height: 520)
+        .task {
+            storedMetrics = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
+        }
     }
 
     private func savePricing() {
@@ -89,6 +123,25 @@ struct LimitBarSettingsView: View {
         )
         if pricingStore.add(entry) {
             pricingEntries = pricingStore.entries
+        }
+    }
+
+    private func revealAzureJSONLPath() {
+        guard let url = try? AzureUsageEventImporter.usageEventsURL() else {
+            azureRevealMessage = "Could not resolve the Azure JSONL path."
+            return
+        }
+        let directory = url.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            azureRevealMessage = nil
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else {
+                NSWorkspace.shared.open(directory)
+            }
+        } catch {
+            azureRevealMessage = "Could not create the Azure JSONL directory."
         }
     }
 }

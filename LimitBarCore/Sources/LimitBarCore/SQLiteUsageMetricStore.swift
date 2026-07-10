@@ -16,6 +16,7 @@ public enum UsageMetricStoreError: Error, Equatable {
     case prepareFailed(String)
     case executeFailed(String)
     case decodeFailed(String)
+    case providerMismatch
 }
 
 public final class SQLiteUsageMetricStore {
@@ -27,10 +28,11 @@ public final class SQLiteUsageMetricStore {
     limit_status, limit_used, limit_value, refreshed_at, freshness_status, missed_refreshes
     """
 
-    public init(path: String) throws {
+    public init(path: String, busyTimeoutMilliseconds: Int32 = 5_000) throws {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
             throw UsageMetricStoreError.openFailed(Self.message(from: database))
         }
+        sqlite3_busy_timeout(database, busyTimeoutMilliseconds)
 
         try createSchema()
     }
@@ -116,6 +118,40 @@ public final class SQLiteUsageMetricStore {
         return Int(sqlite3_changes(database))
     }
 
+    @discardableResult
+    public func deleteMetrics(provider: ProviderKind, timeWindows: [TimeWindow]) throws -> Int {
+        guard !timeWindows.isEmpty else {
+            return 0
+        }
+
+        let placeholders = Array(repeating: "?", count: timeWindows.count).joined(separator: ", ")
+        let statement = try prepare("DELETE FROM usage_metrics WHERE provider = ? AND time_window IN (\(placeholders));")
+        defer { sqlite3_finalize(statement) }
+        bind(provider.rawValue, at: 1, in: statement)
+        for (index, window) in timeWindows.enumerated() {
+            bind(window.rawValue, at: Int32(index + 2), in: statement)
+        }
+        try stepDone(statement)
+        return Int(sqlite3_changes(database))
+    }
+
+    public func replaceMetrics(provider: ProviderKind, timeWindows: [TimeWindow], with metrics: [UsageMetric]) throws {
+        let allowedWindows = Set(timeWindows)
+        guard metrics.allSatisfy({ $0.provider == provider && allowedWindows.contains($0.timeWindow) }) else {
+            throw UsageMetricStoreError.providerMismatch
+        }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try deleteMetrics(provider: provider, timeWindows: timeWindows)
+            try save(metrics)
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
     public func markMetricsStale(timeWindow: TimeWindow, missedRefreshes: Int) throws {
         let statement = try prepare("UPDATE usage_metrics SET freshness_status = 'stale', missed_refreshes = ? WHERE time_window = ?;")
         defer { sqlite3_finalize(statement) }
@@ -129,10 +165,15 @@ public final class SQLiteUsageMetricStore {
         defer { sqlite3_finalize(statement) }
 
         var columns = Set<String>()
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             if let name = stringColumn(statement, index: 1) {
                 columns.insert(name)
             }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
         }
         return columns
     }
@@ -170,8 +211,13 @@ public final class SQLiteUsageMetricStore {
         }
 
         var metrics: [UsageMetric] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             metrics.append(try decodeMetric(from: statement))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
         }
         return metrics
     }
@@ -262,7 +308,9 @@ public final class SQLiteUsageMetricStore {
             sqlite3_bind_null(statement, index)
             return
         }
-        sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+        _ = value.utf8CString.withUnsafeBufferPointer { bytes in
+            sqlite3_bind_text(statement, index, bytes.baseAddress, Int32(bytes.count - 1), SQLITE_TRANSIENT)
+        }
     }
 
     private func bind(_ value: Double?, at index: Int32, in statement: OpaquePointer?) {
@@ -281,18 +329,23 @@ public final class SQLiteUsageMetricStore {
         guard let text = sqlite3_column_text(statement, index) else {
             return nil
         }
-        return String(cString: text)
+        let count = Int(sqlite3_column_bytes(statement, index))
+        return String(decoding: UnsafeBufferPointer(start: text, count: count), as: UTF8.self)
     }
 
     private func metricID(_ metric: UsageMetric) -> String {
-        [
+        let components = [
             metric.provider.rawValue,
             metric.timeWindow.rawValue,
             metric.accountLabel ?? "",
             metric.projectLabel ?? "",
             metric.modelLabel,
             metric.deploymentLabel ?? ""
-        ].joined(separator: "|")
+        ]
+        guard components.contains(where: { $0.contains("|") }) else {
+            return components.joined(separator: "|")
+        }
+        return "v2|" + components.map { "\($0.utf8.count):\($0)" }.joined()
     }
 
     private func encode(_ limitStatus: LimitStatus) -> (status: String, used: Double?, limit: Double?) {

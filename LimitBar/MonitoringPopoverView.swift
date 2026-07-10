@@ -5,6 +5,7 @@ struct MonitoringPopoverView: View {
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
+    @State private var azureImport = AzureUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
 
     private var cards: [ProviderUsageCard] {
@@ -38,7 +39,7 @@ struct MonitoringPopoverView: View {
             Divider()
 
             HStack {
-                Text("Demo data only. Provider integrations arrive in later issues.")
+                Text("Demo data plus local Azure JSONL imports.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -52,7 +53,7 @@ struct MonitoringPopoverView: View {
         .padding(20)
         .frame(width: 420, height: 540, alignment: .topLeading)
         .task {
-            loadStoredMetrics()
+            await loadStoredMetrics()
         }
     }
 
@@ -66,13 +67,24 @@ struct MonitoringPopoverView: View {
             Text(storeHealth.message)
                 .font(.caption)
                 .foregroundStyle(storeHealth.isOpen ? Color.secondary : Color.orange)
+            Text(azureImportStatusText)
+                .font(.caption)
+                .foregroundStyle(azureImport.failureMessage == nil && azureImport.malformedEvents.isEmpty ? Color.secondary : Color.orange)
         }
     }
 
-    private func loadStoredMetrics() {
-        let snapshot = StoredUsageMetrics.loadFromApplicationSupport()
+    private var azureImportStatusText: String {
+        if let failureMessage = azureImport.failureMessage {
+            return "Azure JSONL: \(failureMessage)"
+        }
+        return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEventCount) malformed"
+    }
+
+    private func loadStoredMetrics() async {
+        let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
         metrics = snapshot.metrics
         storeHealth = snapshot.health
+        azureImport = snapshot.azureImport
     }
 }
 
@@ -87,7 +99,7 @@ private struct ProviderUsageCardView: View {
                 Text(card.provider.displayName)
                     .font(.headline)
                 Spacer()
-                Text(card.isEmpty ? "Empty" : "Demo")
+                Text(card.isEmpty ? "Empty" : "Usage")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)

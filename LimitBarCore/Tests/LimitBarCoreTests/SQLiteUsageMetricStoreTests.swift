@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import LimitBarCore
 
@@ -85,6 +86,70 @@ struct SQLiteUsageMetricStoreTests {
         #expect(retained.freshness == .stale(missedRefreshes: 2))
     }
 
+    @Test("provider replacement rejects mismatched metrics before deletion")
+    func providerReplacementRejectsMismatchedMetricsBeforeDeletion() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let existing = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "existing")
+        let mismatched = metric(provider: .openAI, timeWindow: .today, modelLabel: "wrong-provider")
+        try store.save([existing])
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [mismatched])
+        }
+
+        #expect(try store.allMetrics() == [existing])
+    }
+
+    @Test("provider replacement rejects metrics outside replacement windows")
+    func providerReplacementRejectsMetricsOutsideReplacementWindows() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let existing = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "existing")
+        let wrongWindow = metric(provider: .azureOpenAI, timeWindow: .currentWeek, modelLabel: "wrong-window")
+        try store.save([existing])
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [wrongWindow])
+        }
+
+        #expect(try store.allMetrics() == [existing])
+    }
+
+    @Test("provider replacement preserves other providers")
+    func providerReplacementPreservesOtherProviders() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let anthropic = metric(provider: .anthropic, timeWindow: .today, modelLabel: "claude")
+        let oldAzure = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "old")
+        let openAI = metric(provider: .openAI, timeWindow: .today, modelLabel: "gpt")
+        let newAzure = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "new")
+        try store.save([anthropic, oldAzure, openAI])
+
+        try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today], with: [newAzure])
+
+        #expect(try store.allMetrics() == [anthropic, openAI, newAzure])
+    }
+
+    @Test("metric identity distinguishes separator characters in labels")
+    func metricIdentityDistinguishesSeparatorCharactersInLabels() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let first = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "a|", deploymentLabel: "b")
+        let second = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "a", deploymentLabel: "|b")
+
+        try store.save([first, second])
+
+        #expect(try store.allMetrics() == [first, second])
+    }
+
+    @Test("metric identity and labels preserve embedded NUL characters")
+    func metricIdentityAndLabelsPreserveEmbeddedNULCharacters() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let first = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "model\0a", deploymentLabel: "deployment")
+        let second = metric(provider: .azureOpenAI, timeWindow: .today, modelLabel: "model\0b", deploymentLabel: "deployment")
+
+        try store.save([first, second])
+
+        #expect(try store.allMetrics() == [first, second])
+    }
+
     @Test("schema stores normalized fields and excludes sensitive fields")
     func schemaStoresNormalizedFieldsAndExcludesSensitiveFields() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
@@ -110,10 +175,26 @@ struct SQLiteUsageMetricStoreTests {
         #expect(store.health().message == "SQLite store opened")
     }
 
+    @Test("read throws when SQLite cannot complete the query")
+    func readThrowsWhenSQLiteCannotCompleteQuery() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
+        let store = try SQLiteUsageMetricStore(path: path, busyTimeoutMilliseconds: 1)
+        var lockingDatabase: OpaquePointer?
+        #expect(sqlite3_open(path, &lockingDatabase) == SQLITE_OK)
+        defer { sqlite3_close(lockingDatabase) }
+        #expect(sqlite3_exec(lockingDatabase, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+        defer { sqlite3_exec(lockingDatabase, "ROLLBACK;", nil, nil, nil) }
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.allMetrics()
+        }
+    }
+
     private func metric(
         provider: ProviderKind,
         timeWindow: TimeWindow,
         modelLabel: String,
+        deploymentLabel: String? = nil,
         refreshedAt: Date = Date(timeIntervalSince1970: 1_783_728_000),
         inputTokens: Int = 10,
         outputTokens: Int = 5,
@@ -126,7 +207,7 @@ struct SQLiteUsageMetricStoreTests {
             accountLabel: "Account",
             projectLabel: "Project",
             modelLabel: modelLabel,
-            deploymentLabel: provider == .azureOpenAI ? "deployment" : nil,
+            deploymentLabel: deploymentLabel ?? (provider == .azureOpenAI ? "deployment" : nil),
             timeWindow: timeWindow,
             tokenUsage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
             cost: cost,
