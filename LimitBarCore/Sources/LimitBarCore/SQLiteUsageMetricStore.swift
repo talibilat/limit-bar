@@ -28,11 +28,11 @@ public final class SQLiteUsageMetricStore {
     limit_status, limit_used, limit_value, refreshed_at, freshness_status, missed_refreshes
     """
 
-    public init(path: String) throws {
+    public init(path: String, busyTimeoutMilliseconds: Int32 = 5_000) throws {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
             throw UsageMetricStoreError.openFailed(Self.message(from: database))
         }
-        sqlite3_busy_timeout(database, 5_000)
+        sqlite3_busy_timeout(database, busyTimeoutMilliseconds)
 
         try createSchema()
     }
@@ -165,10 +165,15 @@ public final class SQLiteUsageMetricStore {
         defer { sqlite3_finalize(statement) }
 
         var columns = Set<String>()
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             if let name = stringColumn(statement, index: 1) {
                 columns.insert(name)
             }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
         }
         return columns
     }
@@ -206,8 +211,13 @@ public final class SQLiteUsageMetricStore {
         }
 
         var metrics: [UsageMetric] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
             metrics.append(try decodeMetric(from: statement))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
         }
         return metrics
     }

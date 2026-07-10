@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import LimitBarCore
 
@@ -172,6 +173,21 @@ struct SQLiteUsageMetricStoreTests {
 
         #expect(store.health().isOpen)
         #expect(store.health().message == "SQLite store opened")
+    }
+
+    @Test("read throws when SQLite cannot complete the query")
+    func readThrowsWhenSQLiteCannotCompleteQuery() throws {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
+        let store = try SQLiteUsageMetricStore(path: path, busyTimeoutMilliseconds: 1)
+        var lockingDatabase: OpaquePointer?
+        #expect(sqlite3_open(path, &lockingDatabase) == SQLITE_OK)
+        defer { sqlite3_close(lockingDatabase) }
+        #expect(sqlite3_exec(lockingDatabase, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+        defer { sqlite3_exec(lockingDatabase, "ROLLBACK;", nil, nil, nil) }
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try store.allMetrics()
+        }
     }
 
     private func metric(

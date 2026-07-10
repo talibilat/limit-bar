@@ -16,6 +16,7 @@ public enum AzureUsageEventError: Error, Equatable {
     case negativeTokenCount
     case tokenCountOverflow
     case lineTooLong
+    case notRegularFile
 }
 
 public struct MalformedAzureUsageEvent: Equatable, Sendable {
@@ -158,12 +159,19 @@ public enum AzureUsageEventImporter {
         now: Date,
         calendar: Calendar
     ) throws -> AzureUsageImportResult {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        let fileHandle: FileHandle
+        do {
+            guard try fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                throw AzureUsageEventError.notRegularFile
+            }
+            fileHandle = try FileHandle(forReadingFrom: fileURL)
+        } catch {
+            guard isFileNotFound(error) else {
+                throw error
+            }
             try store.replaceMetrics(provider: .azureOpenAI, timeWindows: importedWindows, with: [])
             return .empty(fileURL: fileURL)
         }
-
-        let fileHandle = try FileHandle(forReadingFrom: fileURL)
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
         var validEventCount = 0
@@ -323,5 +331,11 @@ public enum AzureUsageEventImporter {
             throw AzureUsageEventError.tokenCountOverflow
         }
         return sum
+    }
+
+    private static func isFileNotFound(_ error: Error) -> Bool {
+        let error = error as NSError
+        return (error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code))
+            || (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT))
     }
 }

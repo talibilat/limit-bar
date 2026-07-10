@@ -268,6 +268,31 @@ struct AzureUsageEventImporterTests {
         #expect(imported.allSatisfy { $0.modelLabel == "gpt-4.1" })
     }
 
+    @Test("inaccessible JSONL path preserves the previous snapshot")
+    func inaccessibleJSONLPathPreservesPreviousSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let initialURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":2}"#)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        try AzureUsageEventImporter.importEvents(from: initialURL, to: store, now: now, calendar: calendar)
+
+        let protectedDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
+        let protectedFile = protectedDirectory.appendingPathComponent("usage-events.jsonl")
+        try Data("valid contents are irrelevant".utf8).write(to: protectedFile)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: protectedDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
+
+        #expect(throws: Error.self) {
+            try AzureUsageEventImporter.importEvents(from: protectedFile, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .azureOpenAI }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "existing" })
+    }
+
     @Test("insert failure rolls back JSONL snapshot replacement")
     func insertFailureRollsBackJSONLSnapshotReplacement() throws {
         let databasePath = temporaryDatabasePath()
