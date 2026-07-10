@@ -107,6 +107,20 @@ struct CredentialStoreTests {
         let configured = try reconciler.reconcile(initiallyMissing)
         #expect(configured.state == .configured)
     }
+
+    @Test("auth method changes never inherit a validated state")
+    func authMethodChangesResetValidation() throws {
+        let fake = InMemoryCredentialStore()
+        let reconciler = ProviderCredentialStateReconciler(credentialService: CredentialService(store: fake))
+        try fake.save(Data("oauth-token".utf8), for: CredentialKey(provider: .anthropic, kind: .accessToken))
+        var settings = ProviderSettings.defaultSettings[0]
+        settings.authMethod = .anthropicOAuth
+        settings.state = .connected
+
+        let reconciled = try reconciler.reconcile(settings, authMethodChanged: true)
+
+        #expect(reconciled.state == .configured)
+    }
 }
 
 private final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {

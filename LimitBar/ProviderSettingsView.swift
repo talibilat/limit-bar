@@ -43,10 +43,20 @@ struct ProviderSettingsView: View {
             }
         }
         .task {
+            var reconciliationFailed = false
             for index in settings.indices {
-                refreshCredentialState(index: index)
-                persist(index: index)
+                let existing = settings[index]
+                do {
+                    let reconciled = try stateReconciler.reconcile(existing)
+                    if reconciled != existing {
+                        settings[index] = reconciled
+                        persist(index: index)
+                    }
+                } catch {
+                    reconciliationFailed = true
+                }
             }
+            keychainMessage = reconciliationFailed ? "Could not update Keychain." : nil
         }
     }
 
@@ -123,9 +133,16 @@ struct ProviderSettingsView: View {
         Binding(
             get: { settings[index].authMethod },
             set: { method in
+                clearSecretField(for: settings[index].provider)
                 settings[index].authMethod = method
+                settings[index].state = .missing
                 settings[index].failureReason = nil
-                refreshCredentialState(index: index)
+                do {
+                    settings[index] = try stateReconciler.reconcile(settings[index], authMethodChanged: true)
+                    keychainMessage = nil
+                } catch {
+                    keychainMessage = "Could not update Keychain."
+                }
                 persist(index: index)
             }
         )
@@ -154,15 +171,6 @@ struct ProviderSettingsView: View {
         do {
             try credentialService.removeCredential(for: CredentialKey(provider: provider, kind: kind))
             updateState(provider: provider, state: .missing)
-            keychainMessage = nil
-        } catch {
-            keychainMessage = "Could not update Keychain."
-        }
-    }
-
-    private func refreshCredentialState(index: Int) {
-        do {
-            settings[index] = try stateReconciler.reconcile(settings[index])
             keychainMessage = nil
         } catch {
             keychainMessage = "Could not update Keychain."

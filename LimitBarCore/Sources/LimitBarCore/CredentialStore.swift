@@ -75,12 +75,13 @@ public struct ProviderCredentialStateReconciler: Sendable {
         self.credentialService = credentialService
     }
 
-    public func reconcile(_ settings: ProviderSettings) throws -> ProviderSettings {
+    public func reconcile(_ settings: ProviderSettings, authMethodChanged: Bool = false) throws -> ProviderSettings {
         var reconciled = settings
         let key = CredentialKey(provider: settings.provider, kind: settings.authMethod.credentialKind)
         if try credentialService.hasCredential(for: key) {
-            if reconciled.state == .missing {
+            if authMethodChanged || reconciled.state == .missing {
                 reconciled.state = .configured
+                reconciled.failureReason = nil
             }
         } else {
             reconciled.state = .missing
