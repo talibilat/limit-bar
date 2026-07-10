@@ -49,7 +49,7 @@ public enum CostCalculator {
     private static let tokenUnit = Decimal(1_000_000)
 
     public static func cost(for metric: UsageMetric, pricing: PricingTable) -> Cost? {
-        if let cost = metric.cost {
+        if let cost = metric.cost, cost.source == .providerReported {
             return cost
         }
 

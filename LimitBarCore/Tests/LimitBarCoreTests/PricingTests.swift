@@ -25,6 +25,18 @@ struct PricingTests {
         #expect(CostCalculator.cost(for: metric, pricing: table) == reported)
     }
 
+    @Test("recalculates existing calculated estimates when pricing changes")
+    func recalculatesExistingCalculatedEstimatesWhenPricingChanges() throws {
+        let oldEstimate = Cost(amount: decimal("1.00"), currencyCode: "USD", source: .calculatedEstimate)
+        let metric = usage(inputTokens: 1_000_000, outputTokens: 0, cost: oldEstimate)
+        let table = PricingTable(entries: [price(input: decimal("4.00"), output: decimal("1.00"))])
+
+        let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+
+        #expect(cost.amount == decimal("4.00"))
+        #expect(cost.source == .calculatedEstimate)
+    }
+
     @Test("selects latest effective pricing at usage time")
     func selectsLatestEffectivePricingAtUsageTime() throws {
         let metric = usage(refreshedAt: date(2026, 7, 10), inputTokens: 1_000_000, outputTokens: 0)
