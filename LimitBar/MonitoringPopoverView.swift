@@ -5,9 +5,14 @@ struct MonitoringPopoverView: View {
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
+    @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
 
     private var cards: [ProviderUsageCard] {
         ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow)
+    }
+
+    private var pricingTable: PricingTable {
+        PricingSettingsStore.table(from: pricingJSON)
     }
 
     var body: some View {
@@ -24,7 +29,7 @@ struct MonitoringPopoverView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     ForEach(cards, id: \.provider) { card in
-                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow)
+                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable)
                     }
                 }
             }
@@ -74,6 +79,7 @@ struct MonitoringPopoverView: View {
 private struct ProviderUsageCardView: View {
     let card: ProviderUsageCard
     let selectedWindow: TimeWindow
+    let pricingTable: PricingTable
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -98,7 +104,7 @@ private struct ProviderUsageCardView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(Array(card.metrics.enumerated()), id: \.offset) { _, metric in
-                        MetricRowView(metric: metric)
+                        MetricRowView(metric: metric, pricingTable: pricingTable)
                     }
                 }
             }
@@ -114,6 +120,11 @@ private struct ProviderUsageCardView: View {
 
 private struct MetricRowView: View {
     let metric: UsageMetric
+    let pricingTable: PricingTable
+
+    private var cost: Cost? {
+        CostCalculator.cost(for: metric, pricing: pricingTable)
+    }
 
     private var metadata: String {
         [
@@ -156,6 +167,12 @@ private struct MetricRowView: View {
             Text(metric.limitStatus.displayText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if let cost {
+                Text("\(cost.currencyCode) \(cost.amount.description) · \(cost.source.displayLabel)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(cost.source == .providerReported ? Color.secondary : Color.blue)
+            }
         }
         .padding(10)
         .background(metric.freshness.isStale ? .orange.opacity(0.08) : .secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))

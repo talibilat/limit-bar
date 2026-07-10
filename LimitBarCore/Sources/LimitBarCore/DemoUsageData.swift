@@ -2,7 +2,7 @@ import Foundation
 
 public enum DemoUsageData {
     public static let metrics: [UsageMetric] = [
-        metric(provider: .anthropic, accountLabel: "Personal", projectLabel: nil, modelLabel: "Claude Sonnet", deploymentLabel: nil, timeWindow: .today, inputTokens: 18_420, outputTokens: 6_120, refreshedAt: 1_783_728_000),
+        metric(provider: .anthropic, accountLabel: "Personal", projectLabel: nil, modelLabel: "Claude Sonnet", deploymentLabel: nil, timeWindow: .today, inputTokens: 18_420, outputTokens: 6_120, refreshedAt: 1_783_728_000, cost: Cost(amount: Decimal(string: "1.23")!, currencyCode: "USD", source: .providerReported)),
         metric(provider: .anthropic, accountLabel: "Personal", projectLabel: nil, modelLabel: "Claude Haiku", deploymentLabel: nil, timeWindow: .currentWeek, inputTokens: 42_000, outputTokens: 12_500, refreshedAt: 1_783_728_000),
         metric(provider: .azureOpenAI, accountLabel: "Team Azure", projectLabel: nil, modelLabel: "gpt-4.1", deploymentLabel: "team-tools", timeWindow: .today, inputTokens: 9_850, outputTokens: 3_210, refreshedAt: 1_783_724_400),
         metric(provider: .azureOpenAI, accountLabel: "Team Azure", projectLabel: nil, modelLabel: "gpt-4.1-mini", deploymentLabel: "batch-review", timeWindow: .currentWeek, inputTokens: 88_000, outputTokens: 21_000, refreshedAt: 1_783_724_400),
@@ -19,6 +19,7 @@ public enum DemoUsageData {
         inputTokens: Int,
         outputTokens: Int,
         refreshedAt: TimeInterval,
+        cost: Cost? = nil,
         freshness: Freshness = .fresh
     ) -> UsageMetric {
         UsageMetric(
@@ -29,7 +30,7 @@ public enum DemoUsageData {
             deploymentLabel: deploymentLabel,
             timeWindow: timeWindow,
             tokenUsage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
-            cost: nil,
+            cost: cost,
             limitStatus: .unsupportedByProviderAPI,
             refreshedAt: Date(timeIntervalSince1970: refreshedAt),
             freshness: freshness

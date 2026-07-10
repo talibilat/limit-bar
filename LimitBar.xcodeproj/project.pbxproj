@@ -11,12 +11,14 @@
 		AA0000000000000000000002 /* MonitoringPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* MonitoringPopoverView.swift */; };
 		AA0000000000000000000003 /* LimitBarSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* LimitBarSettingsView.swift */; };
 		AA0000000000000000000004 /* LimitBarCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000061 /* LimitBarCore */; };
+		AA0000000000000000000005 /* PricingSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* PricingSettingsStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000011 /* LimitBarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitBarApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* MonitoringPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringPopoverView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* LimitBarSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitBarSettingsView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* PricingSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingSettingsStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -46,6 +48,7 @@
 				AA0000000000000000000011 /* LimitBarApp.swift */,
 				AA0000000000000000000012 /* MonitoringPopoverView.swift */,
 				AA0000000000000000000013 /* LimitBarSettingsView.swift */,
+				AA0000000000000000000014 /* PricingSettingsStore.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -126,6 +129,7 @@
 				AA0000000000000000000001 /* LimitBarApp.swift in Sources */,
 				AA0000000000000000000002 /* MonitoringPopoverView.swift in Sources */,
 				AA0000000000000000000003 /* LimitBarSettingsView.swift in Sources */,
+				AA0000000000000000000005 /* PricingSettingsStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
