@@ -14,7 +14,12 @@ let package = Package(
         )
     ],
     targets: [
-        .target(name: "LimitBarCore"),
+        .target(
+            name: "LimitBarCore",
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
+        ),
         .testTarget(
             name: "LimitBarCoreTests",
             dependencies: ["LimitBarCore"]

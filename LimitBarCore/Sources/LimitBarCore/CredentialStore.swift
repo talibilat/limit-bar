@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum CredentialKind: String, Codable, CaseIterable, Equatable, Sendable {
     case apiKey
@@ -64,5 +65,67 @@ public struct CredentialService: Sendable {
 
     public func removeCredential(for key: CredentialKey) throws {
         try store.remove(key)
+    }
+}
+
+public struct KeychainCredentialStore: CredentialStore {
+    public static let service = "com.talibilat.LimitBar.credentials"
+
+    public init() {}
+
+    public func save(_ data: Data, for key: CredentialKey) throws {
+        let query = baseQuery(for: key)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = query
+            item[kSecValueData] = data
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            throw CredentialStoreError.keychainFailure(operation: .save)
+        }
+    }
+
+    public func data(for key: CredentialKey) throws -> Data? {
+        var query = baseQuery(for: key)
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw CredentialStoreError.keychainFailure(operation: .read)
+        }
+        return data
+    }
+
+    public func contains(_ key: CredentialKey) throws -> Bool {
+        var query = baseQuery(for: key)
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound {
+            return false
+        }
+        guard status == errSecSuccess else {
+            throw CredentialStoreError.keychainFailure(operation: .contains)
+        }
+        return true
+    }
+
+    public func remove(_ key: CredentialKey) throws {
+        let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw CredentialStoreError.keychainFailure(operation: .remove)
+        }
+    }
+
+    private func baseQuery(for key: CredentialKey) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: Self.service,
+            kSecAttrAccount: key.accountIdentifier
+        ]
     }
 }

@@ -64,6 +64,14 @@ struct CredentialStoreTests {
         #expect(Set(keys.map(\.accountIdentifier)).count == keys.count)
         #expect(CredentialKey(provider: .anthropic, kind: .apiKey).accountIdentifier == "anthropic.apiKey")
     }
+
+    @Test("Keychain adapter uses the dedicated service and storage seam")
+    func keychainAdapterShape() {
+        let store: any CredentialStore = KeychainCredentialStore()
+
+        #expect(KeychainCredentialStore.service == "com.talibilat.LimitBar.credentials")
+        _ = store
+    }
 }
 
 private final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
