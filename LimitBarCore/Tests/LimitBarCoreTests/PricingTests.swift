@@ -59,6 +59,23 @@ struct PricingTests {
         #expect(CostCalculator.cost(for: metric, pricing: table) == nil)
     }
 
+    @Test("missing refresh date does not use current pricing")
+    func missingRefreshDateDoesNotUseCurrentPricing() {
+        let metric = usage(refreshedAt: nil)
+        let table = PricingTable(entries: [price(input: decimal("1"), output: decimal("1"))])
+
+        #expect(CostCalculator.cost(for: metric, pricing: table) == nil)
+    }
+
+    @Test("pricing effective date is normalized to selected day start")
+    func pricingEffectiveDateIsNormalizedToSelectedDayStart() throws {
+        let calendar = Calendar.current
+        let selected = try #require(calendar.date(bySettingHour: 15, minute: 30, second: 0, of: Date(timeIntervalSince1970: 1_783_728_000)))
+        let entry = price(input: decimal("2"), output: decimal("2"), effectiveAt: selected)
+
+        #expect(entry.effectiveAt == calendar.startOfDay(for: selected))
+    }
+
     @Test("cost source labels stay stable")
     func costSourceLabelsStayStable() {
         #expect(CostSource.providerReported.displayLabel == "Provider reported")
@@ -68,7 +85,7 @@ struct PricingTests {
     private func usage(
         provider: ProviderKind = .openAI,
         modelLabel: String = "gpt-5.1-codex",
-        refreshedAt: Date = Date(timeIntervalSince1970: 1_783_728_000),
+        refreshedAt: Date? = Date(timeIntervalSince1970: 1_783_728_000),
         inputTokens: Int = 1_000,
         outputTokens: Int = 1_000,
         cost: Cost? = nil

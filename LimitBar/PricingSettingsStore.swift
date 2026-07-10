@@ -20,12 +20,22 @@ struct PricingSettingsStore {
         PricingTable(entries: entries)
     }
 
-    func add(_ entry: PricingEntry) {
+    @discardableResult
+    func add(_ entry: PricingEntry) -> Bool {
+        guard !entry.modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !entry.currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              entry.inputPricePerMillionTokens >= 0,
+              entry.outputPricePerMillionTokens >= 0 else {
+            return false
+        }
+
         entries = entries.filter { existing in
             !(existing.provider == entry.provider
               && existing.modelLabel == entry.modelLabel
               && existing.effectiveAt == entry.effectiveAt)
         } + [entry]
+
+        return true
     }
 
     static func table(from json: String) -> PricingTable {

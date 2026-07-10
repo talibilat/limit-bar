@@ -21,7 +21,7 @@ public struct PricingEntry: Codable, Equatable, Sendable {
         self.inputPricePerMillionTokens = inputPricePerMillionTokens
         self.outputPricePerMillionTokens = outputPricePerMillionTokens
         self.currencyCode = currencyCode
-        self.effectiveAt = effectiveAt
+        self.effectiveAt = Calendar.current.startOfDay(for: effectiveAt)
     }
 }
 
@@ -53,7 +53,9 @@ public enum CostCalculator {
             return cost
         }
 
-        let usageDate = metric.refreshedAt ?? Date()
+        guard let usageDate = metric.refreshedAt else {
+            return nil
+        }
         guard let price = pricing.price(for: metric, usageDate: usageDate) else {
             return nil
         }

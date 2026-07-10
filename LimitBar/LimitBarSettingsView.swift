@@ -13,6 +13,17 @@ struct LimitBarSettingsView: View {
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
 
+    private var canSavePricing: Bool {
+        guard let input = Decimal(string: inputPrice), let output = Decimal(string: outputPrice) else {
+            return false
+        }
+
+        return !modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && input >= 0
+            && output >= 0
+    }
+
     var body: some View {
         Form {
             Section("Setup") {
@@ -40,7 +51,7 @@ struct LimitBarSettingsView: View {
                 Button("Save Pricing") {
                     savePricing()
                 }
-                .disabled(modelLabel.isEmpty || Decimal(string: inputPrice) == nil || Decimal(string: outputPrice) == nil || currencyCode.isEmpty)
+                .disabled(!canSavePricing)
 
                 if pricingEntries.isEmpty {
                     Text("No pricing configured. Calculated costs stay hidden until prices are saved.")
@@ -59,20 +70,21 @@ struct LimitBarSettingsView: View {
     }
 
     private func savePricing() {
-        guard let input = Decimal(string: inputPrice), let output = Decimal(string: outputPrice) else {
+        guard canSavePricing, let input = Decimal(string: inputPrice), let output = Decimal(string: outputPrice) else {
             return
         }
 
         let entry = PricingEntry(
             provider: provider,
-            modelLabel: modelLabel,
+            modelLabel: modelLabel.trimmingCharacters(in: .whitespacesAndNewlines),
             inputPricePerMillionTokens: input,
             outputPricePerMillionTokens: output,
-            currencyCode: currencyCode,
+            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines),
             effectiveAt: effectiveAt
         )
-        pricingStore.add(entry)
-        pricingEntries = pricingStore.entries
+        if pricingStore.add(entry) {
+            pricingEntries = pricingStore.entries
+        }
     }
 }
 
