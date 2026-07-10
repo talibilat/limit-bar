@@ -48,10 +48,6 @@ public enum TimeWindow: String, CaseIterable, Codable, Equatable, Hashable, Send
     }
 }
 
-public extension TimeWindow {
-    static let defaultSelection: TimeWindow = .today
-}
-
 public struct TokenUsage: Codable, Equatable, Sendable {
     public let inputTokens: Int
     public let outputTokens: Int
@@ -106,21 +102,6 @@ public enum LimitStatus: Codable, Equatable, Sendable {
         }
 
         return used / limit
-    }
-}
-
-public extension LimitStatus {
-    var displayText: String {
-        switch self {
-        case .confirmed:
-            confirmedUsagePercentage.map { "\($0)%" } ?? "Unavailable"
-        case .unsupportedByProviderAPI:
-            "Unsupported by provider API"
-        case .disconnected:
-            "Disconnected"
-        case .unavailable:
-            "Unavailable"
-        }
     }
 }
 
