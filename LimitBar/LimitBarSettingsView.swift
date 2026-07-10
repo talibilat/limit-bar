@@ -14,7 +14,8 @@ struct LimitBarSettingsView: View {
     @State private var pricingEntries = PricingSettingsStore().entries
 
     private var canSavePricing: Bool {
-        guard let input = Decimal(string: inputPrice), let output = Decimal(string: outputPrice) else {
+        guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
+              let output = PricingSettingsStore.strictDecimal(from: outputPrice) else {
             return false
         }
 
@@ -36,6 +37,8 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Pricing") {
+                LabeledContent("Bundled table", value: PricingTable.bundledDefaultsVersion)
+
                 Picker("Provider", selection: $provider) {
                     ForEach(ProviderKind.orderedCases, id: \.self) { provider in
                         Text(provider.displayName).tag(provider)
@@ -70,7 +73,9 @@ struct LimitBarSettingsView: View {
     }
 
     private func savePricing() {
-        guard canSavePricing, let input = Decimal(string: inputPrice), let output = Decimal(string: outputPrice) else {
+        guard canSavePricing,
+              let input = PricingSettingsStore.strictDecimal(from: inputPrice),
+              let output = PricingSettingsStore.strictDecimal(from: outputPrice) else {
             return
         }
 

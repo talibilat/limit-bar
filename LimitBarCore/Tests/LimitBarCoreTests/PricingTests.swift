@@ -59,6 +59,12 @@ struct PricingTests {
         #expect(CostCalculator.cost(for: metric, pricing: table) == nil)
     }
 
+    @Test("bundled defaults are explicitly unconfigured")
+    func bundledDefaultsAreExplicitlyUnconfigured() {
+        #expect(PricingTable.bundledDefaultsVersion == "2026-07-10-unconfigured")
+        #expect(PricingTable.bundledDefaults.entries.isEmpty)
+    }
+
     @Test("missing refresh date does not use current pricing")
     func missingRefreshDateDoesNotUseCurrentPricing() {
         let metric = usage(refreshedAt: nil)

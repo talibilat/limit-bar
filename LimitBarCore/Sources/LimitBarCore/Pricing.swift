@@ -33,6 +33,8 @@ public struct PricingTable: Codable, Equatable, Sendable {
     }
 
     public static let empty = PricingTable(entries: [])
+    public static let bundledDefaultsVersion = "2026-07-10-unconfigured"
+    public static let bundledDefaults = PricingTable(entries: [])
 
     public func price(for metric: UsageMetric, usageDate: Date) -> PricingEntry? {
         entries

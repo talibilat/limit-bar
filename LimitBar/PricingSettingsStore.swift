@@ -42,6 +42,15 @@ struct PricingSettingsStore {
         PricingTable(entries: entries(from: json))
     }
 
+    static func strictDecimal(from text: String) -> Decimal? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.range(of: #"^[0-9]+(\.[0-9]+)?$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
     private static func entries(from json: String) -> [PricingEntry] {
         guard let data = json.data(using: .utf8) else {
             return []
