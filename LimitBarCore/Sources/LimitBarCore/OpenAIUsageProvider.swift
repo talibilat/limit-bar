@@ -95,6 +95,7 @@ public struct OpenAIOrganizationClient: Sendable {
             URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
             URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
             URLQueryItem(name: "bucket_width", value: "1m"),
+            URLQueryItem(name: "limit", value: "1440"),
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "model")
         ]

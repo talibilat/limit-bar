@@ -18,6 +18,7 @@ struct OpenAIUsageProviderTests {
         #expect(request.url.absoluteString.contains("start_time=100"))
         #expect(request.url.absoluteString.contains("end_time=200"))
         #expect(request.url.absoluteString.contains("bucket_width=1m"))
+        #expect(request.url.absoluteString.contains("limit=1440"))
         #expect(request.url.absoluteString.contains("group_by%5B%5D=project_id"))
         #expect(request.url.absoluteString.contains("group_by%5B%5D=model"))
         #expect(!String(describing: outcome).contains("super-secret"))
@@ -67,6 +68,18 @@ struct OpenAIUsageProviderTests {
         #expect(metric.projectLabel == "proj_1")
         #expect(metric.modelLabel == "Completions")
         #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+    }
+
+    @Test("multi-currency cost rows persist independently")
+    func multiCurrencyCostsPersistIndependently() throws {
+        let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Completions","amount":{"value":2.5,"currency":"eur"}}]}]}"#.utf8)
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar()).filter { $0.timeWindow == .today }
+        let store = try SQLiteUsageMetricStore.inMemory()
+
+        _ = try OpenAIRefreshPersistence.apply(.success(metrics), to: store)
+
+        #expect(try store.metrics(for: .today).count == 2)
+        #expect(Set(try store.metrics(for: .today).compactMap(\.cost?.currencyCode)) == ["USD", "EUR"])
     }
 
     @Test("refresh persistence replaces only OpenAI and stales failures")

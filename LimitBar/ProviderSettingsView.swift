@@ -191,6 +191,10 @@ struct ProviderSettingsView: View {
         defer { clearSecretField(for: provider) }
         do {
             try credentialService.save(secret, for: CredentialKey(provider: provider, kind: kind))
+            if provider == .openAI, kind == .accessToken,
+               let index = settings.firstIndex(where: { $0.provider == .openAI }) {
+                settings[index].openAIOAuthFeasibility = .unvalidated
+            }
             updateState(provider: provider, state: .configured)
             keychainMessage = nil
         } catch {
@@ -202,6 +206,10 @@ struct ProviderSettingsView: View {
         clearSecretField(for: provider)
         do {
             try credentialService.removeCredential(for: CredentialKey(provider: provider, kind: kind))
+            if provider == .openAI, kind == .accessToken,
+               let index = settings.firstIndex(where: { $0.provider == .openAI }) {
+                settings[index].openAIOAuthFeasibility = .unvalidated
+            }
             updateState(provider: provider, state: .missing)
             keychainMessage = nil
         } catch {

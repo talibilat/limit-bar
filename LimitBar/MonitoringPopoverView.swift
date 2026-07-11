@@ -56,6 +56,9 @@ struct MonitoringPopoverView: View {
         .task {
             await loadStoredMetrics()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .providerSettingsDidChange)) { _ in
+            providerSettings = ProviderSettingsStore().settings
+        }
     }
 
     private var header: some View {
@@ -86,6 +89,7 @@ struct MonitoringPopoverView: View {
         metrics = snapshot.metrics
         storeHealth = snapshot.health
         azureImport = snapshot.azureImport
+        providerSettings = ProviderSettingsStore().settings
     }
 }
 

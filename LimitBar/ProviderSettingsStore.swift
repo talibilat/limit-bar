@@ -1,6 +1,10 @@
 import Foundation
 import LimitBarCore
 
+extension Notification.Name {
+    static let providerSettingsDidChange = Notification.Name("limitbar.providerSettingsDidChange")
+}
+
 struct ProviderSettingsStore {
     static let storageKey = "limitbar.providerSettings"
 
@@ -23,6 +27,7 @@ struct ProviderSettingsStore {
         }
         if let data = try? ProviderSettingsPersistence.encode(updated) {
             defaults.set(data, forKey: Self.storageKey)
+            NotificationCenter.default.post(name: .providerSettingsDidChange, object: nil)
         }
     }
 }
