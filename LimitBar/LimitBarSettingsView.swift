@@ -32,10 +32,16 @@ struct LimitBarSettingsView: View {
     var body: some View {
         Form {
             Section("Provider Authentication") {
+                Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ProviderSettingsView(settings: $providerSettings)
             }
 
             Section("Diagnostics") {
+                Text("Diagnostics contain structured status only, never credentials or raw provider responses.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ForEach(providerSettings, id: \.provider) { setting in
                     LabeledContent(setting.provider.displayName) {
                         VStack(alignment: .trailing, spacing: 2) {
@@ -66,6 +72,9 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Azure OpenAI Integration") {
+                Text("Append confirmed response usage events to this local JSONL file.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(azureJSONLPath)
                     .font(.caption)
                     .textSelection(.enabled)
@@ -80,6 +89,9 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Pricing") {
+                Text("Manual prices are used only when a provider does not report spend.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("Bundled table", value: PricingTable.bundledDefaultsVersion)
 
                 Picker("Provider", selection: $provider) {
@@ -112,7 +124,7 @@ struct LimitBarSettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 520, height: 520)
+        .frame(width: 620, height: 720)
         .task {
             storedMetrics = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
         }
