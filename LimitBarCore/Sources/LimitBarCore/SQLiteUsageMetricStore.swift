@@ -369,6 +369,10 @@ public final class SQLiteUsageMetricStore {
             metric.modelLabel,
             metric.deploymentLabel ?? ""
         ]
+        if let cost = metric.cost {
+            let costComponents = components + [cost.currencyCode, cost.source.rawValue]
+            return "v3|" + costComponents.map { "\($0.utf8.count):\($0)" }.joined()
+        }
         guard components.contains(where: { $0.contains("|") }) else {
             return components.joined(separator: "|")
         }

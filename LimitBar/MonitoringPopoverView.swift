@@ -7,6 +7,7 @@ struct MonitoringPopoverView: View {
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
     @State private var azureImport = AzureUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
+    @State private var providerSettings = ProviderSettingsStore().settings
 
     private var cards: [ProviderUsageCard] {
         ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow)
@@ -30,7 +31,7 @@ struct MonitoringPopoverView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     ForEach(cards, id: \.provider) { card in
-                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable)
+                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: providerSettings.first { $0.provider == card.provider }?.state)
                     }
                 }
             }
@@ -54,6 +55,10 @@ struct MonitoringPopoverView: View {
         .frame(width: 420, height: 540, alignment: .topLeading)
         .task {
             await loadStoredMetrics()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerSettingsDidChange)) { _ in
+            providerSettings = ProviderSettingsStore().settings
+            Task { await loadStoredMetrics() }
         }
     }
 
@@ -85,6 +90,7 @@ struct MonitoringPopoverView: View {
         metrics = snapshot.metrics
         storeHealth = snapshot.health
         azureImport = snapshot.azureImport
+        providerSettings = ProviderSettingsStore().settings
     }
 }
 
@@ -92,6 +98,7 @@ private struct ProviderUsageCardView: View {
     let card: ProviderUsageCard
     let selectedWindow: TimeWindow
     let pricingTable: PricingTable
+    let providerState: ProviderConnectionState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -108,12 +115,17 @@ private struct ProviderUsageCardView: View {
             }
 
             if card.isEmpty {
-                Text("No usage for \(selectedWindow.displayName).")
+                Text(emptyMessage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             } else {
+                if providerState == .unsupported || providerState == .adminRequired || providerState == .expired {
+                    Text(providerState?.displayText ?? "Unavailable")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
                 VStack(spacing: 10) {
                     ForEach(Array(card.metrics.enumerated()), id: \.offset) { _, metric in
                         MetricRowView(metric: metric, pricingTable: pricingTable)
@@ -127,6 +139,13 @@ private struct ProviderUsageCardView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(.quaternary, lineWidth: 1)
         )
+    }
+
+    private var emptyMessage: String {
+        if providerState == .unsupported || providerState == .adminRequired {
+            return providerState?.displayText ?? "Unsupported"
+        }
+        return "No usage for \(selectedWindow.displayName)."
     }
 }
 

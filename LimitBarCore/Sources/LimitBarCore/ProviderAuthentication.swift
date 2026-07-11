@@ -124,6 +124,7 @@ public struct ProviderSettings: Codable, Equatable, Sendable {
     public let provider: ProviderKind
     public var authMethod: ProviderAuthMethod
     public var azureEndpoint: String?
+    public var openAIOrganizationID: String?
     public var openAIOAuthFeasibility: OpenAIOAuthFeasibility
     public var state: ProviderConnectionState
     public var failureReason: ProviderFailureReason?
@@ -133,6 +134,7 @@ public struct ProviderSettings: Codable, Equatable, Sendable {
         provider: ProviderKind,
         authMethod: ProviderAuthMethod,
         azureEndpoint: String? = nil,
+        openAIOrganizationID: String? = nil,
         openAIOAuthFeasibility: OpenAIOAuthFeasibility = .unvalidated,
         state: ProviderConnectionState = .missing,
         failureReason: ProviderFailureReason? = nil,
@@ -141,6 +143,7 @@ public struct ProviderSettings: Codable, Equatable, Sendable {
         self.provider = provider
         self.authMethod = authMethod
         self.azureEndpoint = azureEndpoint
+        self.openAIOrganizationID = openAIOrganizationID
         self.openAIOAuthFeasibility = openAIOAuthFeasibility
         self.state = state
         self.failureReason = failureReason
