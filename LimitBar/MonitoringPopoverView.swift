@@ -118,7 +118,7 @@ private struct ProviderUsageCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             } else {
-                if providerState == .unsupported || providerState == .adminRequired || providerState == .expired {
+                if providerState == .unsupported || providerState == .adminRequired || providerState == .expired || providerState == .failed {
                     Text(providerState?.displayText ?? "Unavailable")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.orange)

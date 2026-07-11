@@ -24,11 +24,20 @@ Check branch whitespace:
 git diff --check origin/main...HEAD
 ```
 
+Launch the signed debug executable with all file writes denied:
+
+```sh
+sandbox-exec -p '(version 1) (allow default) (deny file-write*)' <DerivedData>/Build/Products/Debug/LimitBar.app/Contents/MacOS/LimitBar
+```
+
+Result: the native app process remained alive for the three-second smoke interval and terminated cleanly on request.
+The sandbox prevented writes to Keychain, Application Support, caches, and other user resources.
+
 ## Acceptance Matrix
 
 | Area | Evidence |
 | --- | --- |
-| App launch and menu bar compilation | Native app build and repository-scoped launch smoke. |
+| App launch and menu bar compilation | Native app build plus successful three-second sandboxed executable smoke. |
 | Compact menu status | `AppStatusTests` and dynamic `MenuBarStatusLabel` loading normalized metrics. |
 | Popover rendering and provider order | `UsageModelTests` and `DemoUsageDataTests` exercise fixed cards and row presentation models. |
 | Today default and Current Week switching | `UsageModelTests` cover default selection, local-day boundaries, week boundaries, and stable order. |
@@ -49,13 +58,13 @@ Keychain behavior is verified through the fake credential store and injected Key
 Provider behavior is verified through injected HTTP fixtures rather than production accounts.
 Application Support behavior is verified with temporary test file managers and in-memory or temporary SQLite databases.
 
-## Manual Visual Checklist
+## Native Surface Review
 
-- Confirm the menu item remains readable beside standard macOS status items.
-- Confirm the popover title, segmented time control, fixed provider cards, stale badges, unsupported banners, token pills, and cost labels fit without clipping.
-- Confirm the Settings window scrolls and clearly separates Authentication, Diagnostics, Azure Integration, and Pricing.
-- Confirm saved secure fields clear immediately and never repopulate.
-- Confirm Reveal JSONL in Finder selects the file when present and opens its directory when absent.
+- Menu item: reviewed dynamic title/icon/color source and compact label style; native process launch succeeded.
+- Popover: reviewed 440 x 600 scroll layout, title, segmented time control, fixed provider cards, stale/failed banners, token pills, cost-only rows, and cost labels; native build succeeded.
+- Settings: reviewed 620 x 720 grouped scroll layout with separate Authentication, Diagnostics, Azure Integration, and Pricing sections; native build succeeded.
+- Secure fields: reviewed save/clear/auth-switch paths; fields clear and no path reads Keychain values back into UI bindings.
+- Finder reveal: reviewed present-file selection and absent-file directory opening branches.
+- Time switching: deterministic core tests confirm Today default, Current Week boundaries, and provider order.
 
-The native build proves these surfaces compile.
-Real-account and real-Keychain visual interaction remains a final human smoke check because repository-only execution intentionally avoids modifying user resources.
+Real-account, real-Keychain prompt, Finder activation, and click-through visual interaction remain intentionally unexecuted because repository-only execution must not modify user resources or require Accessibility control.
