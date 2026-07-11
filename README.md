@@ -10,6 +10,8 @@ Click it to open the popover, which has two tabs:
 - **Rate Limit** - live percent-used, percent-remaining, and time-to-reset for Claude Code and Codex, read the same way each CLI reads its own limits.
 - **Usage** - confirmed token counts and cost, per provider and per model, for Today and the Current Week.
 
+![LimitBar Rate Limit tab showing Claude session and weekly windows](docs/ss3.png)
+
 ## Features
 
 - **Claude Code rate limits** - session (5 hour) and weekly windows, reusing the login `claude` already stores in Keychain. No new sign-in, no token copied anywhere.
@@ -47,6 +49,14 @@ Every reset time uses the same rule: under 24 hours away shows a countdown (`4h 
 ### Usage tab
 
 Shows Anthropic, Azure OpenAI, and Codex as separate cards, each broken down per model, for Today or Current Week (segmented control). Numbers come from confirmed local logs by default (see [Local Usage Events](#local-usage-events-jsonl-integration)), or from a provider's API if you configure a credential in Settings (see [Provider Configuration](#provider-configuration)).
+
+**Today** rolls up confirmed token counts per model across every connected provider:
+
+![LimitBar Usage tab — Today, Anthropic models from local logs](docs/ss2.png)
+
+**Current Week** uses the same layout with a wider window — handy when you want a running total instead of a single-day snapshot:
+
+![LimitBar Usage tab — Current Week, Azure OpenAI models](docs/ss1.png)
 
 ## Local Usage Events JSONL Integration
 

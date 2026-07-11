@@ -5,3 +5,6 @@ xcuserdata/
 project.xcworkspace/
 .DS_Store
 codex/
+.scratch/
+docs/agents/
+docs/superpowers/
