@@ -58,7 +58,7 @@ struct CodexRateLimitsView: View {
             CreditsUsageRowView(label: "Today", cost: estimate.today)
             CreditsUsageRowView(label: "Current Week", cost: estimate.currentWeek)
         }
-        Text("Business plan: company-pool credit usage only. Calibrated from a monthly org export; see tools/calibrate-codex-credits.py.")
+        Text("Business plan: company-pool credit usage only. Configure credits pricing in Settings.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }

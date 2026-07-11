@@ -202,9 +202,8 @@ public enum CodexSessionRateLimitReader {
     }
 }
 
-// The credit-per-token rate is derived once, offline, from an org admin
-// export (see tools/calibrate-codex-credits.py) and stored as a
-// currencyCode: "credits" PricingEntry. This just sums whatever the existing
+// The credit-per-token rate is configured in Settings as a
+// currencyCode: "credits" PricingEntry. This sums whatever the existing
 // Cost calculator already produces from that entry, scoped to the "credits"
 // currency so it never mixes with a manually configured dollar estimate.
 public enum CodexCreditsEstimator {
