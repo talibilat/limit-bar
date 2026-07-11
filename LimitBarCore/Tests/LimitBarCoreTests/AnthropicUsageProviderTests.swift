@@ -21,6 +21,8 @@ struct AnthropicUsageProviderTests {
         #expect(request.headers["anthropic-version"] == "2023-06-01")
         #expect(request.url.absoluteString.contains("starting_at="))
         #expect(request.url.absoluteString.contains("ending_at="))
+        #expect(request.url.absoluteString.contains("group_by%5B%5D=model"))
+        #expect(request.url.absoluteString.contains("bucket_width=1h"))
         #expect(!String(describing: outcome).contains("super-secret-value"))
     }
 
@@ -56,7 +58,7 @@ struct AnthropicUsageProviderTests {
             "starting_at": "2026-07-10T10:00:00Z",
             "ending_at": "2026-07-10T11:00:00Z",
             "results": [
-              {"model":"Claude Sonnet","uncached_input_tokens":10,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":5,"cost":"1.25","currency":"USD"},
+              {"model":"Claude Sonnet","uncached_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":1,"ephemeral_5m_input_tokens":2},"cache_read_input_tokens":3,"output_tokens":5},
               {"dimension_label":"Cloud Design","input_tokens":7,"output_tokens":4,"limit_used":11,"limit_value":100}
             ]
           }]
@@ -69,12 +71,39 @@ struct AnthropicUsageProviderTests {
         let cloudDesign = try #require(today.first { $0.modelLabel == "Cloud Design" })
 
         #expect(today.count == 2)
-        #expect(sonnet.tokenUsage == TokenUsage(inputTokens: 15, outputTokens: 5))
-        #expect(sonnet.cost == Cost(amount: Decimal(string: "1.25")!, currencyCode: "USD", source: .providerReported))
+        #expect(sonnet.tokenUsage == TokenUsage(inputTokens: 16, outputTokens: 5))
+        #expect(sonnet.cost == nil)
         #expect(sonnet.limitStatus == .unsupportedByProviderAPI)
         #expect(cloudDesign.tokenUsage == TokenUsage(inputTokens: 7, outputTokens: 4))
         #expect(cloudDesign.limitStatus == .confirmed(used: 11, limit: 100))
         #expect(metrics.filter { $0.timeWindow == .currentWeek }.count == 2)
+    }
+
+    @Test("cost report maps returned descriptions and cents")
+    func costReportMapping() throws {
+        let data = Data(#"{"data":[{"starting_at":"2026-07-10T10:00:00Z","ending_at":"2026-07-10T11:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T11:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
+
+        let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metric = try #require(metrics.first { $0.timeWindow == .today })
+
+        #expect(metric.modelLabel == "Claude API Usage")
+        #expect(metric.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
+        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+    }
+
+    @Test("usage fetch follows pagination")
+    func usageFetchFollowsPagination() async {
+        let first = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"page-2"}"#.utf8))
+        let second = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false,"next_page":null}"#.utf8))
+        let http = RecordingHTTPClient(responses: [first, second])
+        let client = AnthropicAdminClient(httpClient: http)
+
+        let result = await client.fetchUsage(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60), now: Date(timeIntervalSince1970: 30), calendar: .current)
+        let requests = await http.requests
+
+        #expect(result == .success([]))
+        #expect(requests.count == 2)
+        #expect(requests[1].url.absoluteString.contains("page=page-2"))
     }
 
     @Test("fixture mapping does not invent missing labels")
@@ -148,24 +177,31 @@ struct AnthropicUsageProviderTests {
 }
 
 private actor RecordingHTTPClient: HTTPClient {
-    private let response: HTTPResponse?
+    private var responses: [HTTPResponse]
     private let error: Error?
-    private(set) var lastRequest: HTTPRequest?
+    private(set) var requests: [HTTPRequest] = []
+
+    var lastRequest: HTTPRequest? { requests.last }
 
     init(response: HTTPResponse) {
-        self.response = response
+        responses = [response]
+        error = nil
+    }
+
+    init(responses: [HTTPResponse]) {
+        self.responses = responses
         error = nil
     }
 
     init(error: Error) {
-        response = nil
+        responses = []
         self.error = error
     }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        lastRequest = request
+        requests.append(request)
         if let error { throw error }
-        return try #require(response)
+        return responses.removeFirst()
     }
 }
 

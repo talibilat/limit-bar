@@ -61,6 +61,19 @@ public final class SQLiteUsageMetricStore {
         UsageStoreHealth(isOpen: database != nil, message: database == nil ? "SQLite store closed" : "SQLite store opened")
     }
 
+    public func hasInitializedMetrics() throws -> Bool {
+        let statement = try prepare("SELECT value FROM app_metadata WHERE key = 'metrics_initialized';")
+        defer { sqlite3_finalize(statement) }
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE { return false }
+        guard result == SQLITE_ROW else { throw UsageMetricStoreError.executeFailed(Self.message(from: database)) }
+        return stringColumn(statement, index: 0) == "true"
+    }
+
+    public func markMetricsInitialized() throws {
+        try execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('metrics_initialized', 'true');")
+    }
+
     public func save(_ metrics: [UsageMetric]) throws {
         let sql = """
         INSERT OR REPLACE INTO usage_metrics (
@@ -214,6 +227,7 @@ public final class SQLiteUsageMetricStore {
             missed_refreshes INTEGER NOT NULL
         );
         """)
+        try execute("CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
     }
 
     private func readMetrics(sql: String, bindings: [String]) throws -> [UsageMetric] {

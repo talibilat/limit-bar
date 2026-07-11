@@ -24,7 +24,19 @@ struct AnthropicRefreshService {
         let now = Date()
         let calendar = Calendar.current
         let interval = TimeWindow.currentWeek.interval(containing: now, calendar: calendar)
-        let result = await client.fetchUsage(apiKey: apiKey, interval: interval, now: now, calendar: calendar)
+        let usageResult = await client.fetchUsage(apiKey: apiKey, interval: interval, now: now, calendar: calendar)
+        let result: AnthropicRefreshResult
+        switch usageResult {
+        case let .success(usageMetrics):
+            let costResult = await client.fetchCost(apiKey: apiKey, interval: interval, now: now, calendar: calendar)
+            if case let .success(costMetrics) = costResult {
+                result = .success(usageMetrics + costMetrics)
+            } else {
+                result = .success(usageMetrics)
+            }
+        case let .failure(reason):
+            result = .failure(reason)
+        }
         do {
             let store = try SQLiteUsageMetricStore.applicationSupportStore()
             return try AnthropicRefreshPersistence.apply(result, to: store, now: now)

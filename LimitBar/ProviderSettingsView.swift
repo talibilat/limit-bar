@@ -220,7 +220,13 @@ struct ProviderSettingsView: View {
                 return
             }
             defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
+            let startedMethod = settings[index].authMethod
+            let startedCredential = credentialData
             let diagnostic = await anthropicRefreshService.refresh(apiKey: apiKey)
+            guard settings[index].authMethod == startedMethod,
+                  try credentialService.credential(for: key) == startedCredential else {
+                return
+            }
             settings[index].state = diagnostic.state
             settings[index].failureReason = diagnostic.failureReason
             settings[index].updatedAt = diagnostic.updatedAt
