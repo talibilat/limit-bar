@@ -26,7 +26,7 @@ Click it to open the popover, which has two tabs:
 Requirements: macOS 14+, Xcode.
 
 ```sh
-git clone <this repo>
+git clone https://github.com/talibilat/limit-bar.git
 cd LimitBar
 open LimitBar.xcodeproj
 ```
