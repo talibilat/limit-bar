@@ -5,6 +5,7 @@ enum OpenAISettingsRefreshResult {
     case supported(OpenAIRefreshResult)
     case unsupported
     case adminRequired
+    case expired
     case failure(ProviderFailureReason)
 }
 
@@ -23,6 +24,8 @@ struct OpenAIRefreshService {
                 return .unsupported
             case .adminCredentialRequired:
                 return .adminRequired
+            case .expired:
+                return .expired
             case let .failed(reason):
                 return .failure(reason)
             }
@@ -33,11 +36,10 @@ struct OpenAIRefreshService {
             return .failure(.refreshFailed)
         }
         let costs = await client.fetchCosts(credential: credential, organization: organization, interval: interval, now: now, calendar: calendar)
-        guard case let .success(costMetrics) = costs else {
-            if case let .failure(reason) = costs { return .failure(reason) }
-            return .failure(.refreshFailed)
+        if case let .success(costMetrics) = costs {
+            return .supported(.success(usageMetrics + costMetrics))
         }
-        return .supported(.success(usageMetrics + costMetrics))
+        return .supported(.success(usageMetrics))
     }
 
     func apply(_ result: OpenAIRefreshResult) -> ProviderDiagnostic {

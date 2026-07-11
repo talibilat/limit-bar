@@ -4,6 +4,7 @@ public enum OpenAIFeasibilityOutcome: Equatable, Sendable {
     case supported
     case unsupported
     case adminCredentialRequired
+    case expired
     case failed(ProviderFailureReason)
 }
 
@@ -29,9 +30,11 @@ public struct OpenAIOrganizationClient: Sendable {
                 guard (try? OpenAIUsageMapper.decode(response.data)) != nil else { return .failed(.refreshFailed) }
                 return .supported
             case 401:
-                return .unsupported
+                return .expired
             case 403:
                 return .adminCredentialRequired
+            case 404:
+                return .unsupported
             default:
                 return .failed(.refreshFailed)
             }
@@ -151,7 +154,7 @@ public enum OpenAIUsageMapper {
             case projectName = "project_name"
             case model
             case inputTokens = "input_tokens"
-            case cachedInputTokens = "cached_input_tokens"
+            case cachedInputTokens = "input_cached_tokens"
             case outputTokens = "output_tokens"
         }
     }
@@ -221,10 +224,12 @@ public enum OpenAICostMapper {
     struct Row: Decodable {
         let projectID: String?
         let lineItem: String?
-        let amount: Amount
+        let amount: Amount?
         enum CodingKeys: String, CodingKey { case projectID = "project_id"; case lineItem = "line_item"; case amount }
     }
     struct Amount: Decodable { let value: Decimal; let currency: String }
+    private struct Key: Hashable { let window: TimeWindow; let organization: String; let project: String; let lineItem: String; let currency: String }
+    private struct Aggregate { var amount: Decimal; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
 
@@ -235,22 +240,28 @@ public enum OpenAICostMapper {
     static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
         let organization = organization.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !organization.isEmpty else { return [] }
-        var metrics: [UsageMetric] = []
+        var aggregates: [Key: Aggregate] = [:]
         for bucket in buckets {
             let start = Date(timeIntervalSince1970: TimeInterval(bucket.startTime))
             let end = Date(timeIntervalSince1970: TimeInterval(bucket.endTime))
             for row in bucket.results {
                 let project = row.projectID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let lineItem = row.lineItem?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !project.isEmpty, !lineItem.isEmpty else { continue }
+                guard !project.isEmpty, !lineItem.isEmpty, let amount = row.amount else { continue }
                 for window in [TimeWindow.today, .currentWeek] {
                     let interval = window.interval(containing: now, calendar: calendar)
                     guard start >= interval.start, end <= interval.end else { continue }
-                    metrics.append(UsageMetric(provider: .openAI, accountLabel: organization, projectLabel: project, modelLabel: lineItem, deploymentLabel: nil, timeWindow: window, tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: row.amount.value, currencyCode: row.amount.currency.uppercased(), source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: end, freshness: .fresh))
+                    let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
+                    var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
+                    aggregate.amount += amount.value
+                    aggregate.latest = max(aggregate.latest, end)
+                    aggregates[key] = aggregate
                 }
             }
         }
-        return metrics
+        return aggregates.map { key, value in
+            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, timeWindow: key.window, tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+        }
     }
 }
 

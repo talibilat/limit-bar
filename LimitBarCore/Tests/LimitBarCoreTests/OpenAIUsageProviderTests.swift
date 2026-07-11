@@ -24,8 +24,9 @@ struct OpenAIUsageProviderTests {
     }
 
     @Test("OAuth feasibility maps access states", arguments: [
-        (401, OpenAIFeasibilityOutcome.unsupported),
+        (401, OpenAIFeasibilityOutcome.expired),
         (403, OpenAIFeasibilityOutcome.adminCredentialRequired),
+        (404, OpenAIFeasibilityOutcome.unsupported),
         (500, OpenAIFeasibilityOutcome.failed(.refreshFailed))
     ])
     func feasibilityStatuses(status: Int, expected: OpenAIFeasibilityOutcome) async {
@@ -57,7 +58,7 @@ struct OpenAIUsageProviderTests {
 
     @Test("cost fixture maps provider-reported project spend")
     func costMapping() throws {
-        let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}}]}]}"#.utf8)
+        let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783684800,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Ignored","amount":null}]},{"start_time":1783684800,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":0.75,"currency":"usd"}}]}]}"#.utf8)
 
         let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
         let metric = try #require(metrics.first { $0.timeWindow == .today })
@@ -65,7 +66,7 @@ struct OpenAIUsageProviderTests {
         #expect(metric.accountLabel == "org_123")
         #expect(metric.projectLabel == "proj_1")
         #expect(metric.modelLabel == "Completions")
-        #expect(metric.cost == Cost(amount: Decimal(string: "1.25")!, currencyCode: "USD", source: .providerReported))
+        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
     }
 
     @Test("refresh persistence replaces only OpenAI and stales failures")

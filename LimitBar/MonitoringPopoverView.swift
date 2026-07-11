@@ -116,6 +116,11 @@ private struct ProviderUsageCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             } else {
+                if providerState == .unsupported || providerState == .adminRequired || providerState == .expired {
+                    Text(providerState?.displayText ?? "Unavailable")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
                 VStack(spacing: 10) {
                     ForEach(Array(card.metrics.enumerated()), id: \.offset) { _, metric in
                         MetricRowView(metric: metric, pricingTable: pricingTable)

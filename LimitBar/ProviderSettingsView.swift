@@ -151,6 +151,9 @@ struct ProviderSettingsView: View {
                 settings[index].authMethod = method
                 settings[index].state = .missing
                 settings[index].failureReason = nil
+                if settings[index].provider == .openAI {
+                    settings[index].openAIOAuthFeasibility = .unvalidated
+                }
                 do {
                     settings[index] = try stateReconciler.reconcile(settings[index], authMethodChanged: true)
                     keychainMessage = nil
@@ -174,6 +177,11 @@ struct ProviderSettingsView: View {
             get: { settings[index].openAIOrganizationID ?? "" },
             set: {
                 settings[index].openAIOrganizationID = $0
+                settings[index].openAIOAuthFeasibility = .unvalidated
+                if settings[index].state != .missing {
+                    settings[index].state = .configured
+                }
+                settings[index].failureReason = nil
                 persist(index: index)
             }
         )
@@ -285,18 +293,26 @@ struct ProviderSettingsView: View {
 
             switch result {
             case let .supported(refreshResult):
-                settings[index].openAIOAuthFeasibility = .supported
+                if method == .openAIOAuth {
+                    settings[index].openAIOAuthFeasibility = .supported
+                }
                 let diagnostic = openAIRefreshService.apply(refreshResult)
                 settings[index].state = diagnostic.state
                 settings[index].failureReason = diagnostic.failureReason
             case .unsupported:
+                _ = openAIRefreshService.apply(.failure(.insufficientPermissions))
                 settings[index].openAIOAuthFeasibility = .unsupported
                 settings[index].state = .unsupported
                 settings[index].failureReason = nil
             case .adminRequired:
+                _ = openAIRefreshService.apply(.failure(.insufficientPermissions))
                 settings[index].openAIOAuthFeasibility = .adminCredentialRequired
                 settings[index].state = .adminRequired
                 settings[index].failureReason = .insufficientPermissions
+            case .expired:
+                _ = openAIRefreshService.apply(.failure(.expiredCredential))
+                settings[index].state = .expired
+                settings[index].failureReason = .expiredCredential
             case let .failure(reason):
                 let diagnostic = openAIRefreshService.apply(.failure(reason))
                 settings[index].state = diagnostic.state
