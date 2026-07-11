@@ -165,6 +165,41 @@ public final class SQLiteUsageMetricStore {
         }
     }
 
+    @discardableResult
+    public func deleteMetrics(provider: ProviderKind, timeWindows: [TimeWindow], accountLabel: String) throws -> Int {
+        guard !timeWindows.isEmpty else {
+            return 0
+        }
+
+        let placeholders = Array(repeating: "?", count: timeWindows.count).joined(separator: ", ")
+        let statement = try prepare("DELETE FROM usage_metrics WHERE provider = ? AND account_label = ? AND time_window IN (\(placeholders));")
+        defer { sqlite3_finalize(statement) }
+        bind(provider.rawValue, at: 1, in: statement)
+        bind(accountLabel, at: 2, in: statement)
+        for (index, window) in timeWindows.enumerated() {
+            bind(window.rawValue, at: Int32(index + 3), in: statement)
+        }
+        try stepDone(statement)
+        return Int(sqlite3_changes(database))
+    }
+
+    public func replaceMetrics(provider: ProviderKind, timeWindows: [TimeWindow], accountLabel: String, with metrics: [UsageMetric]) throws {
+        let allowedWindows = Set(timeWindows)
+        guard metrics.allSatisfy({ $0.provider == provider && $0.accountLabel == accountLabel && allowedWindows.contains($0.timeWindow) }) else {
+            throw UsageMetricStoreError.providerMismatch
+        }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try deleteMetrics(provider: provider, timeWindows: timeWindows, accountLabel: accountLabel)
+            try save(metrics)
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
     public func markMetricsStale(timeWindow: TimeWindow, missedRefreshes: Int) throws {
         let statement = try prepare("UPDATE usage_metrics SET freshness_status = 'stale', missed_refreshes = ? WHERE time_window = ?;")
         defer { sqlite3_finalize(statement) }

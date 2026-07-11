@@ -52,7 +52,7 @@ struct StoredUsageMetricsTests {
 
         #expect(snapshot.health.isOpen)
         #expect(snapshot.health.message == "SQLite store opened")
-        #expect(snapshot.azureImport.failureMessage == "Azure JSONL import failed")
+        #expect(snapshot.localImport.failureMessage == "Local usage import failed")
         #expect(snapshot.metrics.isEmpty)
     }
 

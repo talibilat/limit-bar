@@ -3,7 +3,7 @@ import Foundation
 public struct StoredUsageMetricsSnapshot: Equatable, Sendable {
     public let metrics: [UsageMetric]
     public let health: UsageStoreHealth
-    public let azureImport: AzureUsageImportResult
+    public let localImport: LocalUsageImportResult
 }
 
 public actor StoredUsageMetricsLoader {
@@ -27,7 +27,7 @@ public enum StoredUsageMetrics {
         return StoredUsageMetricsSnapshot(
             metrics: try store.allMetrics(),
             health: store.health(),
-            azureImport: .empty(fileURL: URL(fileURLWithPath: ""))
+            localImport: .empty(fileURL: URL(fileURLWithPath: ""))
         )
     }
 
@@ -38,19 +38,19 @@ public enum StoredUsageMetrics {
             if try !store.hasInitializedMetrics() {
                 try store.markMetricsInitialized()
             }
-            let azureURL = try AzureUsageEventImporter.usageEventsURL(fileManager: fileManager)
-            let importResult: AzureUsageImportResult
+            let eventsURL = try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager)
+            let importResult: LocalUsageImportResult
             do {
-                importResult = try AzureUsageEventImporter.importEvents(from: azureURL, to: store, now: Date(), calendar: .current)
+                importResult = try LocalUsageEventImporter.importEvents(from: eventsURL, to: store, now: Date(), calendar: .current)
             } catch {
-                importResult = .failed(fileURL: azureURL, message: "Azure JSONL import failed")
+                importResult = .failed(fileURL: eventsURL, message: "Local usage import failed")
             }
-            return StoredUsageMetricsSnapshot(metrics: try store.allMetrics(), health: store.health(), azureImport: importResult)
+            return StoredUsageMetricsSnapshot(metrics: try store.allMetrics(), health: store.health(), localImport: importResult)
         } catch {
             return StoredUsageMetricsSnapshot(
                 metrics: [],
                 health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable"),
-                azureImport: .empty(fileURL: URL(fileURLWithPath: ""))
+                localImport: .empty(fileURL: URL(fileURLWithPath: ""))
             )
         }
     }

@@ -63,9 +63,9 @@ struct ProviderAuthenticationTests {
                 )
             ],
             usageDatabaseState: .opened,
-            azureAcceptedEventCount: 3,
-            azureRejectedEventCount: 1,
-            azureImportState: .healthy
+            localAcceptedEventCount: 3,
+            localRejectedEventCount: 1,
+            localImportState: .healthy
         )
 
         let json = try #require(String(data: JSONEncoder().encode(report), encoding: .utf8))
@@ -81,8 +81,8 @@ struct ProviderAuthenticationTests {
     func diagnosticHealthStatesHaveFixedSummaries() {
         #expect(UsageDatabaseDiagnosticState.opened.displayText == "SQLite store opened")
         #expect(UsageDatabaseDiagnosticState.unavailable.displayText == "SQLite store unavailable")
-        #expect(AzureImportDiagnosticState.healthy.displayText == "Import healthy")
-        #expect(AzureImportDiagnosticState.failed.displayText == "Import failed")
+        #expect(LocalImportDiagnosticState.healthy.displayText == "Import healthy")
+        #expect(LocalImportDiagnosticState.failed.displayText == "Import failed")
     }
 
     @Test("provider settings persistence normalizes and excludes secret fields")

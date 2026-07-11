@@ -33,22 +33,22 @@ DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project L
 Open `LimitBar.xcodeproj` in Xcode and run the `LimitBar` scheme.
 The app appears in the menu bar and opens the monitoring popover when selected.
 
-## Azure OpenAI JSONL Integration
+## Local Usage Events JSONL Integration
 
-Azure OpenAI usage is imported from:
+Confirmed local usage for Anthropic, Azure OpenAI, and OpenAI is imported from:
 
 ```text
 ~/Library/Application Support/LimitBar/usage-events.jsonl
 ```
 
 The path is visible and revealable in Settings.
-Tools append one JSON object per line after receiving confirmed Azure OpenAI response usage.
+Tools write one JSON object per line after receiving confirmed response usage.
 
 Each event supports these fields:
 
 | Field | Required | Type | Meaning |
 | --- | --- | --- | --- |
-| `provider` | Yes | String | Must be `azureOpenAI`. |
+| `provider` | Yes | String | `anthropic`, `azureOpenAI`, or `openAI`. |
 | `timestamp` | Yes | ISO-8601 string | Time of the confirmed response usage. |
 | `model` | Yes | Non-empty string | Returned or configured model identity. |
 | `inputTokens` | Yes | Nonnegative integer | Confirmed input token count. |
@@ -63,7 +63,29 @@ Example:
 
 Malformed lines are skipped independently and reported by line number in Diagnostics.
 Invalid input never prevents later valid lines from importing.
-LimitBar reparses the append-only file as its source of truth, so repeated refreshes do not double-count events.
+LimitBar reparses the file as its source of truth, so repeated refreshes do not double-count events.
+Imported metrics are aggregated per provider, model, and time window.
+Anthropic and OpenAI local metrics carry the `Local logs` account label so they coexist with provider-API metrics instead of replacing them.
+
+## Local Agent Exporter
+
+`tools/export-local-usage.py` regenerates `usage-events.jsonl` atomically from three local sources, covering the last nine days, which spans the Today and Current Week windows.
+The exporter rewrites the file on every run, so it is idempotent and never double-counts; it owns the file, so other writers should be merged into the exporter instead of appending.
+
+- Opencode (`~/.local/share/opencode/opencode.db`): `azure` provider messages become `azureOpenAI` events. `inputTokens` adds `tokens.cache.read` and `tokens.cache.write` to `tokens.input`, and `outputTokens` adds `tokens.reasoning` to `tokens.output`, because Opencode stores those separately.
+- Claude Code (`~/.claude/projects/**/*.jsonl`): assistant messages become `anthropic` events, so Pro or Max subscription usage is tracked without any API credential. Input adds cache creation and cache read tokens; duplicate transcript lines for one message are deduplicated by message and request identity.
+- Codex (`~/.codex/sessions/**/*.jsonl`): `token_count` events become `openAI` events, so ChatGPT-organization Codex usage is tracked without a platform API key. Per-turn usage is derived from cumulative session totals so repeated snapshots never double-count.
+
+Install the exporter as a LaunchAgent that runs at login and every five minutes:
+
+```sh
+tools/install-local-usage-export.sh
+```
+
+The script is copied to `~/Library/Application Support/LimitBar/` because launchd cannot read TCC-protected folders such as Documents.
+Logs are written to `~/Library/Logs/LimitBar/usage-export.log`.
+
+Usage from Opencode's `google` and `opencode` providers has no matching LimitBar provider and is intentionally not remapped.
 
 ## Provider Configuration
 

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct AzureUsageEvent: Equatable, Sendable {
+public struct LocalUsageEvent: Equatable, Sendable {
     public let provider: ProviderKind
     public let timestamp: Date
     public let model: String
@@ -9,7 +9,7 @@ public struct AzureUsageEvent: Equatable, Sendable {
     public let outputTokens: Int
 }
 
-public enum AzureUsageEventError: Error, Equatable {
+public enum LocalUsageEventError: Error, Equatable {
     case malformedJSON
     case unsupportedProvider
     case missingRequiredField(String)
@@ -19,28 +19,28 @@ public enum AzureUsageEventError: Error, Equatable {
     case notRegularFile
 }
 
-public struct MalformedAzureUsageEvent: Equatable, Sendable {
+public struct MalformedLocalUsageEvent: Equatable, Sendable {
     public let lineNumber: Int
     public let reason: String
 }
 
-public struct AzureUsageImportResult: Equatable, Sendable {
+public struct LocalUsageImportResult: Equatable, Sendable {
     public let fileURL: URL
     public let validEventCount: Int
     public let malformedEventCount: Int
-    public let malformedEvents: [MalformedAzureUsageEvent]
+    public let malformedEvents: [MalformedLocalUsageEvent]
     public let failureMessage: String?
 
-    public static func empty(fileURL: URL) -> AzureUsageImportResult {
-        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil)
+    public static func empty(fileURL: URL) -> LocalUsageImportResult {
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil)
     }
 
-    public static func failed(fileURL: URL, message: String) -> AzureUsageImportResult {
-        AzureUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message)
+    public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message)
     }
 }
 
-public enum AzureUsageEventParser {
+public enum LocalUsageEventParser {
     private struct RawEvent: Decodable {
         let provider: String?
         let timestamp: String?
@@ -50,33 +50,33 @@ public enum AzureUsageEventParser {
         let deployment: String?
     }
 
-    public static func parseLine(_ line: String) throws -> AzureUsageEvent {
+    public static func parseLine(_ line: String) throws -> LocalUsageEvent {
         guard let data = line.data(using: .utf8),
               let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
-            throw AzureUsageEventError.malformedJSON
+            throw LocalUsageEventError.malformedJSON
         }
 
-        guard raw.provider == ProviderKind.azureOpenAI.rawValue else {
-            throw AzureUsageEventError.unsupportedProvider
+        guard let rawProvider = raw.provider, let provider = ProviderKind(rawValue: rawProvider) else {
+            throw LocalUsageEventError.unsupportedProvider
         }
 
         guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
-            throw AzureUsageEventError.missingRequiredField("timestamp")
+            throw LocalUsageEventError.missingRequiredField("timestamp")
         }
 
         guard let rawModel = raw.model else {
-            throw AzureUsageEventError.missingRequiredField("model")
+            throw LocalUsageEventError.missingRequiredField("model")
         }
         let model = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty else {
-            throw AzureUsageEventError.missingRequiredField("model")
+            throw LocalUsageEventError.missingRequiredField("model")
         }
 
         let deployment: String?
         if let rawDeployment = raw.deployment {
             let trimmedDeployment = rawDeployment.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedDeployment.isEmpty else {
-                throw AzureUsageEventError.missingRequiredField("deployment")
+                throw LocalUsageEventError.missingRequiredField("deployment")
             }
             deployment = trimmedDeployment
         } else {
@@ -84,19 +84,19 @@ public enum AzureUsageEventParser {
         }
 
         guard let inputTokens = raw.inputTokens else {
-            throw AzureUsageEventError.missingRequiredField("inputTokens")
+            throw LocalUsageEventError.missingRequiredField("inputTokens")
         }
 
         guard let outputTokens = raw.outputTokens else {
-            throw AzureUsageEventError.missingRequiredField("outputTokens")
+            throw LocalUsageEventError.missingRequiredField("outputTokens")
         }
 
         guard inputTokens >= 0, outputTokens >= 0 else {
-            throw AzureUsageEventError.negativeTokenCount
+            throw LocalUsageEventError.negativeTokenCount
         }
 
-        return AzureUsageEvent(
-            provider: .azureOpenAI,
+        return LocalUsageEvent(
+            provider: provider,
             timestamp: timestamp,
             model: model,
             deployment: deployment,
@@ -117,8 +117,9 @@ public enum AzureUsageEventParser {
     }
 }
 
-public enum AzureUsageEventImporter {
+public enum LocalUsageEventImporter {
     private struct AggregateKey: Hashable {
+        let provider: ProviderKind
         let timeWindow: TimeWindow
         let model: String
         let deployment: String?
@@ -130,7 +131,17 @@ public enum AzureUsageEventImporter {
         var latestTimestamp: Date
     }
 
-    private static let importedAccountLabel = "Azure OpenAI"
+    // Locally imported metrics are scoped by these account labels so they can
+    // coexist with provider-API metrics, which use nil or an organization label.
+    public static func importedAccountLabel(for provider: ProviderKind) -> String {
+        switch provider {
+        case .anthropic, .openAI:
+            "Local logs"
+        case .azureOpenAI:
+            "Azure OpenAI"
+        }
+    }
+
     private static let importedWindows: [TimeWindow] = [.today, .currentWeek]
     private static let maximumLineByteCount = 1_048_576
 
@@ -158,25 +169,25 @@ public enum AzureUsageEventImporter {
         to store: SQLiteUsageMetricStore,
         now: Date,
         calendar: Calendar
-    ) throws -> AzureUsageImportResult {
+    ) throws -> LocalUsageImportResult {
         let fileHandle: FileHandle
         do {
             guard try fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
-                throw AzureUsageEventError.notRegularFile
+                throw LocalUsageEventError.notRegularFile
             }
             fileHandle = try FileHandle(forReadingFrom: fileURL)
         } catch {
             guard isFileNotFound(error) else {
                 throw error
             }
-            try store.replaceMetrics(provider: .azureOpenAI, timeWindows: importedWindows, with: [])
+            try replaceImportedMetrics(in: store, aggregates: [:])
             return .empty(fileURL: fileURL)
         }
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
         var validEventCount = 0
         var malformedEventCount = 0
-        var malformed: [MalformedAzureUsageEvent] = []
+        var malformed: [MalformedLocalUsageEvent] = []
         var buffer = Data()
         var lineNumber = 1
         var discardingOverlongLine = false
@@ -204,7 +215,7 @@ public enum AzureUsageEventImporter {
                     buffer.removeAll(keepingCapacity: true)
                     lineNumber += 1
                 } else if buffer.count == maximumLineByteCount {
-                    recordMalformed(AzureUsageEventError.lineTooLong, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+                    recordMalformed(LocalUsageEventError.lineTooLong, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
                     buffer.removeAll(keepingCapacity: true)
                     discardingOverlongLine = true
                 } else {
@@ -225,19 +236,29 @@ public enum AzureUsageEventImporter {
             )
         }
 
-        try store.replaceMetrics(
-            provider: .azureOpenAI,
-            timeWindows: importedWindows,
-            with: metrics(from: aggregates)
-        )
+        try replaceImportedMetrics(in: store, aggregates: aggregates)
 
-        return AzureUsageImportResult(
+        return LocalUsageImportResult(
             fileURL: fileURL,
             validEventCount: validEventCount,
             malformedEventCount: malformedEventCount,
             malformedEvents: malformed,
             failureMessage: nil
         )
+    }
+
+    private static func replaceImportedMetrics(
+        in store: SQLiteUsageMetricStore,
+        aggregates: [AggregateKey: AggregateValue]
+    ) throws {
+        for provider in ProviderKind.orderedCases {
+            try store.replaceMetrics(
+                provider: provider,
+                timeWindows: importedWindows,
+                accountLabel: importedAccountLabel(for: provider),
+                with: metrics(from: aggregates.filter { $0.key.provider == provider })
+            )
+        }
     }
 
     private static func process(
@@ -248,38 +269,38 @@ public enum AzureUsageEventImporter {
         aggregates: inout [AggregateKey: AggregateValue],
         validEventCount: inout Int,
         malformedEventCount: inout Int,
-        malformed: inout [MalformedAzureUsageEvent]
+        malformed: inout [MalformedLocalUsageEvent]
     ) throws {
         guard let line = String(data: lineData, encoding: .utf8) else {
-            recordMalformed(AzureUsageEventError.malformedJSON, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+            recordMalformed(LocalUsageEventError.malformedJSON, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
             return
         }
         guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
         do {
-            let event = try AzureUsageEventParser.parseLine(line)
+            let event = try LocalUsageEventParser.parseLine(line)
             validEventCount += 1
             try add(event, now: now, calendar: calendar, to: &aggregates)
-        } catch let error as AzureUsageEventError where error != .tokenCountOverflow {
+        } catch let error as LocalUsageEventError where error != .tokenCountOverflow {
             recordMalformed(error, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
         }
     }
 
     private static func recordMalformed(
-        _ error: AzureUsageEventError,
+        _ error: LocalUsageEventError,
         lineNumber: Int,
         count: inout Int,
-        events: inout [MalformedAzureUsageEvent]
+        events: inout [MalformedLocalUsageEvent]
     ) {
         count += 1
         if events.count < 20 {
-            events.append(MalformedAzureUsageEvent(lineNumber: lineNumber, reason: String(describing: error)))
+            events.append(MalformedLocalUsageEvent(lineNumber: lineNumber, reason: String(describing: error)))
         }
     }
 
     private static func add(
-        _ event: AzureUsageEvent,
+        _ event: LocalUsageEvent,
         now: Date,
         calendar: Calendar,
         to aggregates: inout [AggregateKey: AggregateValue]
@@ -289,7 +310,7 @@ public enum AzureUsageEventImporter {
             guard event.timestamp >= interval.start, event.timestamp < interval.end else {
                 continue
             }
-            let key = AggregateKey(timeWindow: window, model: event.model, deployment: event.deployment)
+            let key = AggregateKey(provider: event.provider, timeWindow: window, model: event.model, deployment: event.deployment)
             var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
             value.inputTokens = try checkedSum(value.inputTokens, event.inputTokens)
             value.outputTokens = try checkedSum(value.outputTokens, event.outputTokens)
@@ -302,8 +323,8 @@ public enum AzureUsageEventImporter {
     private static func metrics(from aggregates: [AggregateKey: AggregateValue]) -> [UsageMetric] {
         aggregates.map { key, value in
             UsageMetric(
-                provider: .azureOpenAI,
-                accountLabel: importedAccountLabel,
+                provider: key.provider,
+                accountLabel: importedAccountLabel(for: key.provider),
                 projectLabel: nil,
                 modelLabel: key.model,
                 deploymentLabel: key.deployment,
@@ -328,7 +349,7 @@ public enum AzureUsageEventImporter {
     private static func checkedSum(_ lhs: Int, _ rhs: Int) throws -> Int {
         let (sum, overflow) = lhs.addingReportingOverflow(rhs)
         guard !overflow else {
-            throw AzureUsageEventError.tokenCountOverflow
+            throw LocalUsageEventError.tokenCountOverflow
         }
         return sum
     }

@@ -189,7 +189,7 @@ public enum UsageDatabaseDiagnosticState: String, Codable, Equatable, Sendable {
     }
 }
 
-public enum AzureImportDiagnosticState: String, Codable, Equatable, Sendable {
+public enum LocalImportDiagnosticState: String, Codable, Equatable, Sendable {
     case healthy
     case failed
 
@@ -206,22 +206,22 @@ public enum AzureImportDiagnosticState: String, Codable, Equatable, Sendable {
 public struct DiagnosticsReport: Codable, Equatable, Sendable {
     public let providerDiagnostics: [ProviderDiagnostic]
     public let usageDatabaseState: UsageDatabaseDiagnosticState
-    public let azureAcceptedEventCount: Int
-    public let azureRejectedEventCount: Int
-    public let azureImportState: AzureImportDiagnosticState
+    public let localAcceptedEventCount: Int
+    public let localRejectedEventCount: Int
+    public let localImportState: LocalImportDiagnosticState
 
     public init(
         providerDiagnostics: [ProviderDiagnostic],
         usageDatabaseState: UsageDatabaseDiagnosticState,
-        azureAcceptedEventCount: Int,
-        azureRejectedEventCount: Int,
-        azureImportState: AzureImportDiagnosticState
+        localAcceptedEventCount: Int,
+        localRejectedEventCount: Int,
+        localImportState: LocalImportDiagnosticState
     ) {
         self.providerDiagnostics = providerDiagnostics
         self.usageDatabaseState = usageDatabaseState
-        self.azureAcceptedEventCount = azureAcceptedEventCount
-        self.azureRejectedEventCount = azureRejectedEventCount
-        self.azureImportState = azureImportState
+        self.localAcceptedEventCount = localAcceptedEventCount
+        self.localRejectedEventCount = localRejectedEventCount
+        self.localImportState = localImportState
     }
 }
 

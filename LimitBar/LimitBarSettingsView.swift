@@ -4,7 +4,7 @@ import AppKit
 
 struct LimitBarSettingsView: View {
     private let pricingStore = PricingSettingsStore()
-    private let azureJSONLPath = (try? AzureUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
+    private let localEventsPath = (try? LocalUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
     @State private var storedMetrics: StoredUsageMetricsSnapshot?
     @State private var providerSettings = ProviderSettingsStore().settings
@@ -15,7 +15,7 @@ struct LimitBarSettingsView: View {
     @State private var currencyCode = "USD"
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
-    @State private var azureRevealMessage: String?
+    @State private var localEventsRevealMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -56,12 +56,12 @@ struct LimitBarSettingsView: View {
                 }
                 if let storedMetrics {
                     LabeledContent("Usage database", value: storedMetrics.health.message)
-                    LabeledContent("Azure JSONL imported", value: "\(storedMetrics.azureImport.validEventCount)")
-                    LabeledContent("Azure malformed events", value: "\(storedMetrics.azureImport.malformedEventCount)")
-                    if storedMetrics.azureImport.failureMessage != nil {
-                        LabeledContent("Azure import status", value: AzureImportDiagnosticState.failed.displayText)
+                    LabeledContent("Local events imported", value: "\(storedMetrics.localImport.validEventCount)")
+                    LabeledContent("Local malformed events", value: "\(storedMetrics.localImport.malformedEventCount)")
+                    if storedMetrics.localImport.failureMessage != nil {
+                        LabeledContent("Local import status", value: LocalImportDiagnosticState.failed.displayText)
                     }
-                    ForEach(storedMetrics.azureImport.malformedEvents, id: \.lineNumber) { event in
+                    ForEach(storedMetrics.localImport.malformedEvents, id: \.lineNumber) { event in
                         Text("Line \(event.lineNumber): \(event.reason)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -71,18 +71,18 @@ struct LimitBarSettingsView: View {
                 }
             }
 
-            Section("Azure OpenAI Integration") {
-                Text("Append confirmed response usage events to this local JSONL file.")
+            Section("Local Usage Events") {
+                Text("Confirmed usage events for Anthropic, Azure OpenAI, and OpenAI are imported from this local JSONL file.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(azureJSONLPath)
+                Text(localEventsPath)
                     .font(.caption)
                     .textSelection(.enabled)
                 Button("Reveal JSONL in Finder") {
-                    revealAzureJSONLPath()
+                    revealLocalEventsPath()
                 }
-                if let azureRevealMessage {
-                    Text(azureRevealMessage)
+                if let localEventsRevealMessage {
+                    Text(localEventsRevealMessage)
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -150,22 +150,22 @@ struct LimitBarSettingsView: View {
         }
     }
 
-    private func revealAzureJSONLPath() {
-        guard let url = try? AzureUsageEventImporter.usageEventsURL() else {
-            azureRevealMessage = "Could not resolve the Azure JSONL path."
+    private func revealLocalEventsPath() {
+        guard let url = try? LocalUsageEventImporter.usageEventsURL() else {
+            localEventsRevealMessage = "Could not resolve the local events path."
             return
         }
         let directory = url.deletingLastPathComponent()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            azureRevealMessage = nil
+            localEventsRevealMessage = nil
             if FileManager.default.fileExists(atPath: url.path) {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } else {
                 NSWorkspace.shared.open(directory)
             }
         } catch {
-            azureRevealMessage = "Could not create the Azure JSONL directory."
+            localEventsRevealMessage = "Could not create the local events directory."
         }
     }
 }

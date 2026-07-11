@@ -5,7 +5,7 @@ struct MonitoringPopoverView: View {
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
-    @State private var azureImport = AzureUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
+    @State private var localImport = LocalUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
     @State private var providerSettings = ProviderSettingsStore().settings
 
@@ -38,9 +38,9 @@ struct MonitoringPopoverView: View {
             .scrollIndicators(.hidden)
 
             HStack {
-                Text(azureImportStatusText)
+                Text(localImportStatusText)
                     .font(.footnote)
-                    .foregroundStyle(azureImport.failureMessage == nil && azureImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
+                    .foregroundStyle(localImport.failureMessage == nil && localImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
 
                 Spacer()
 
@@ -75,18 +75,18 @@ struct MonitoringPopoverView: View {
         }
     }
 
-    private var azureImportStatusText: String {
-        if azureImport.failureMessage != nil {
-            return "Azure JSONL: Import failed"
+    private var localImportStatusText: String {
+        if localImport.failureMessage != nil {
+            return "Local events: Import failed"
         }
-        return "Azure JSONL: \(azureImport.validEventCount) imported, \(azureImport.malformedEventCount) malformed"
+        return "Local events: \(localImport.validEventCount) imported, \(localImport.malformedEventCount) malformed"
     }
 
     private func loadStoredMetrics() async {
         let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
         metrics = snapshot.metrics
         storeHealth = snapshot.health
-        azureImport = snapshot.azureImport
+        localImport = snapshot.localImport
         providerSettings = ProviderSettingsStore().settings
     }
 }
