@@ -3,20 +3,20 @@ import LimitBarCore
 
 struct MonitoringPopoverView: View {
     private enum PopoverTab: String, CaseIterable {
-        case claudeLimits
+        case rateLimit
         case usage
 
         var displayName: String {
             switch self {
-            case .claudeLimits:
-                "Claude Limits"
+            case .rateLimit:
+                "Rate Limit"
             case .usage:
                 "Usage"
             }
         }
     }
 
-    @State private var selectedTab = PopoverTab.claudeLimits
+    @State private var selectedTab = PopoverTab.rateLimit
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
@@ -44,8 +44,8 @@ struct MonitoringPopoverView: View {
             .pickerStyle(.segmented)
 
             switch selectedTab {
-            case .claudeLimits:
-                ClaudeRateLimitsView()
+            case .rateLimit:
+                RateLimitView(metrics: metrics, pricingTable: pricingTable)
             case .usage:
                 usageTab
             }

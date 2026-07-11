@@ -22,7 +22,7 @@ private struct MenuBarStatusLabel: View {
 
     var body: some View {
         Label(status.menuBarText, systemImage: status.symbolName)
-            .labelStyle(.titleAndIcon)
+            .labelStyle(.iconOnly)
             .foregroundStyle(statusColor)
             .accessibilityLabel(status.accessibilityDescription)
             .task { await reload() }

@@ -75,6 +75,18 @@ public struct ClaudeRateLimitSnapshot: Equatable, Sendable {
         self.limits = limits
         self.fetchedAt = fetchedAt
     }
+
+    // Individual plans (Pro, Max) get per-model scoped limits alongside the
+    // account-wide session/weekly windows. Team and Enterprise seats share a
+    // pooled allowance, so only the account-wide windows are shown; a scoped
+    // breakdown would describe the seat's slice of a shared pool, not a
+    // personal limit, the same way Codex business seats only expose credits.
+    private static let individualSubscriptionTypes: Set<String> = ["pro", "max"]
+
+    public func displayLimits(forSubscriptionType subscriptionType: String?) -> [ClaudeRateLimit] {
+        let isIndividual = subscriptionType.map { Self.individualSubscriptionTypes.contains($0.lowercased()) } ?? false
+        return isIndividual ? limits : limits.filter { $0.scopeDisplayName == nil }
+    }
 }
 
 public enum ClaudeRateLimitFailure: Error, Equatable, Sendable {

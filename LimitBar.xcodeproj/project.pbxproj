@@ -18,6 +18,9 @@
 		AA0000000000000000000009 /* OpenAIRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* OpenAIRefreshService.swift */; };
 		AA000000000000000000000A /* ClaudeCodeCredentialReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* ClaudeCodeCredentialReader.swift */; };
 		AA000000000000000000000B /* ClaudeRateLimitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* ClaudeRateLimitsView.swift */; };
+		AA000000000000000000000C /* CodexRateLimitsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* CodexRateLimitsView.swift */; };
+		AA000000000000000000000D /* RateLimitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* RateLimitView.swift */; };
+		AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001D /* PercentRateLimitRowView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +34,9 @@
 		AA0000000000000000000018 /* OpenAIRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIRefreshService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000019 /* ClaudeCodeCredentialReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeCredentialReader.swift; sourceTree = "<group>"; };
 		AA000000000000000000001A /* ClaudeRateLimitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRateLimitsView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001B /* CodexRateLimitsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexRateLimitsView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001C /* RateLimitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001D /* PercentRateLimitRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PercentRateLimitRowView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -67,6 +73,9 @@
 				AA0000000000000000000018 /* OpenAIRefreshService.swift */,
 				AA0000000000000000000019 /* ClaudeCodeCredentialReader.swift */,
 				AA000000000000000000001A /* ClaudeRateLimitsView.swift */,
+				AA000000000000000000001B /* CodexRateLimitsView.swift */,
+				AA000000000000000000001C /* RateLimitView.swift */,
+				AA000000000000000000001D /* PercentRateLimitRowView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -154,6 +163,9 @@
 				AA0000000000000000000009 /* OpenAIRefreshService.swift in Sources */,
 				AA000000000000000000000A /* ClaudeCodeCredentialReader.swift in Sources */,
 				AA000000000000000000000B /* ClaudeRateLimitsView.swift in Sources */,
+				AA000000000000000000000C /* CodexRateLimitsView.swift in Sources */,
+				AA000000000000000000000D /* RateLimitView.swift in Sources */,
+				AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

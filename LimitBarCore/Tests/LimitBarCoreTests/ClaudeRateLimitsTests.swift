@@ -39,6 +39,25 @@ struct ClaudeRateLimitsTests {
         #expect(scoped.isActive)
     }
 
+    @Test("individual plans see every limit including scoped ones")
+    func individualPlansSeeEverything() throws {
+        let snapshot = try ClaudeUsageResponseMapper.rateLimits(from: Data(sampleResponse.utf8), fetchedAt: Date(timeIntervalSince1970: 0))
+
+        #expect(snapshot.displayLimits(forSubscriptionType: "pro").count == 3)
+        #expect(snapshot.displayLimits(forSubscriptionType: "Max").count == 3)
+    }
+
+    @Test("team, enterprise, and unknown plans hide scoped limits")
+    func businessPlansHideScopedLimits() throws {
+        let snapshot = try ClaudeUsageResponseMapper.rateLimits(from: Data(sampleResponse.utf8), fetchedAt: Date(timeIntervalSince1970: 0))
+
+        for subscriptionType in ["team", "enterprise", "unknown_future_plan", nil] {
+            let displayed = snapshot.displayLimits(forSubscriptionType: subscriptionType)
+            #expect(displayed.count == 2)
+            #expect(displayed.allSatisfy { $0.scopeDisplayName == nil })
+        }
+    }
+
     @Test("falls back to window utilization when limits are absent")
     func fallsBackToWindows() throws {
         let json = #"{"five_hour": {"utilization": 12.0, "resets_at": "2026-07-11T18:09:59+00:00"}, "seven_day": {"utilization": 7.0, "resets_at": null}}"#
