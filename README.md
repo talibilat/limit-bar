@@ -130,6 +130,21 @@ There is no hosted telemetry, cloud sync, or backend.
 Provider-reported cost takes precedence over calculated pricing.
 If neither provider spend nor matching pricing is available, no cost is shown.
 
+## Codex Company-Pool Credits Estimate
+
+Codex on a seat-based org plan does not expose a personal credits balance locally - the CLI's own rate-limit payload reports `has_credits: false` and a zero balance for accounts like this, because the credit ledger lives entirely in the workspace admin analytics export, not in anything the client is told.
+
+When that monthly export is available (an admin-downloaded CSV bundle placed under `codex/`, which is git-ignored and must never be committed since it contains coworker names, emails, and per-person productivity data), `tools/calibrate-codex-credits.py` reads your row from `leaderboard-users_*.csv` and computes your personal blended credits-per-1M-tokens rate from your own `Credits` and `Tokens` totals for that export window:
+
+```sh
+tools/calibrate-codex-credits.py --email you@yourcompany.com
+```
+
+The script writes a `currencyCode: "credits"` entry into LimitBar's existing Pricing store (the same mechanism as manual dollar pricing in Settings), scoped to `provider: openAI` and every Codex model label already tracked locally. No app code or UI is needed - the Usage tab's existing `Calculated estimate` cost rendering picks it up automatically.
+
+This is a personal blended average (input, output, and cached input combined), not a per-model rate, because the export's per-model credit breakdown (`analytics-credits-by-model`, `analytics-credits-by-metered-item`) is workspace-wide, not per-user, so a personal per-model split cannot be recovered from this data.
+Re-run the script whenever a new monthly export lands to recalibrate; it replaces only the prior `openAI` + `credits` entries, leaving other pricing untouched.
+
 ## Limits And Freshness
 
 `Unsupported by provider API` means the selected provider source did not return a confirmed denominator.
