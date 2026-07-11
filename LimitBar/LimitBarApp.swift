@@ -23,7 +23,7 @@ private struct MenuBarStatusLabel: View {
     var body: some View {
         Label(status.menuBarText, systemImage: status.symbolName)
             .labelStyle(.titleAndIcon)
-            .foregroundStyle(status.statusColor)
+            .foregroundStyle(statusColor)
             .accessibilityLabel(status.accessibilityDescription)
             .task { await reload() }
             .onReceive(NotificationCenter.default.publisher(for: .providerSettingsDidChange)) { _ in
@@ -34,5 +34,18 @@ private struct MenuBarStatusLabel: View {
     private func reload() async {
         let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
         status = AppStatus.from(menuBarStatus: MenuBarStatus.from(metrics: snapshot.metrics))
+    }
+
+    private var statusColor: Color {
+        switch status.statusColor {
+        case .green:
+            .green
+        case .yellow:
+            .yellow
+        case .red:
+            .red
+        case .gray:
+            .secondary
+        }
     }
 }
