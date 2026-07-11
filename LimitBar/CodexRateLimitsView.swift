@@ -11,6 +11,11 @@ struct CodexRateLimitsView: View {
     let metrics: [UsageMetric]
     let pricingTable: PricingTable
 
+    // Reported back to the parent so its "Codex" section header can be
+    // hidden too - Codex has genuinely never been used recently on this
+    // machine, so there's nothing useful to show at all.
+    @Binding var isPresent: Bool
+
     @State private var state = LoadState.loading
 
     private var sessionsDirectory: URL {
@@ -81,10 +86,15 @@ struct CodexRateLimitsView: View {
     private func load() async {
         do {
             let snapshot = try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: sessionsDirectory, now: Date())
+            isPresent = true
             state = .loaded(snapshot)
+        } catch CodexRateLimitFailure.notFound {
+            isPresent = false
         } catch let failure as CodexRateLimitFailure {
+            isPresent = true
             state = .failed(failure.displayText)
         } catch {
+            isPresent = true
             state = .failed("Codex session data could not be read.")
         }
     }
@@ -118,7 +128,7 @@ private struct CreditsUsageRowView: View {
 }
 
 #Preview {
-    CodexRateLimitsView(metrics: [], pricingTable: .empty)
+    CodexRateLimitsView(metrics: [], pricingTable: .empty, isPresent: .constant(true))
         .padding(20)
         .frame(width: 440, height: 300)
 }

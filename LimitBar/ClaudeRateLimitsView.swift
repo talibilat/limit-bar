@@ -8,6 +8,11 @@ struct ClaudeRateLimitsView: View {
         case failed(String)
     }
 
+    // Reported back to the parent so its "Claude" section header can be
+    // hidden too - Claude Code has genuinely never been used on this
+    // machine, so there's nothing useful to show at all.
+    @Binding var isPresent: Bool
+
     @State private var state = LoadState.loading
     @State private var isRefreshing = false
 
@@ -74,11 +79,13 @@ struct ClaudeRateLimitsView: View {
         let credential: ClaudeCodeOAuthCredential
         switch ClaudeCodeCredentialReader.read() {
         case let .found(found):
+            isPresent = true
             credential = found
         case .notFound:
-            state = .failed("No Claude Code login found. Sign in with the claude CLI first.")
+            isPresent = false
             return
         case .accessDenied:
+            isPresent = true
             state = .failed("Keychain access to the Claude Code login was denied.")
             return
         }
@@ -97,7 +104,7 @@ struct ClaudeRateLimitsView: View {
 }
 
 #Preview {
-    ClaudeRateLimitsView()
+    ClaudeRateLimitsView(isPresent: .constant(true))
         .padding(20)
         .frame(width: 440, height: 400)
 }

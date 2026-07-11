@@ -13,7 +13,8 @@ The menu bar gauge turns green, yellow, or red as your busiest rate limit fills 
 
 - **Claude Code** — session and weekly limits from your existing Keychain login.
 - **Codex** — limits from local session logs; pooled team seats can show credits estimates when pricing is configured in Settings.
-- **Usage tracking** — Anthropic, Azure OpenAI, and Codex from local CLI logs, with optional Admin API keys.
+- **Usage tracking** — Anthropic, Azure OpenAI, and Codex from local CLI logs, with optional Admin API keys. A provider's card only appears once it actually has usage or a configured credential — nothing shows for tools you don't use.
+- **Any other tool** — add a custom local log source in Settings (name + file path) to track usage from any tool with no built-in support: Aider, Cursor, Windsurf, or anything else that can write a JSON line per response.
 - **Cost labels** — provider-reported or calculated estimates, clearly marked.
 - **Privacy-first** — credentials in Keychain, metrics in local SQLite, no prompts or telemetry stored.
 
@@ -55,6 +56,16 @@ To stop the app while debugging, press **⌘.** in Xcode or quit LimitBar from t
 ![LimitBar Usage tab — Current Week, Azure OpenAI models](docs/ss1.png)
 
 Confirmed usage can also be imported from `~/Library/Application Support/LimitBar/usage-events.jsonl` — the path is shown in Settings.
+
+### Tracking any other tool
+
+Settings has a **Custom Usage Sources** section for tools with no built-in adapter. Point it at a local log file where each line is JSON with `timestamp`, `model`, `inputTokens`, and `outputTokens`:
+
+```json
+{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}
+```
+
+Give the source a name (e.g. "Aider") and LimitBar shows it as its own card on the Usage tab, broken down by model, the same as any built-in provider — as soon as the file has matching events, and not before.
 
 ## Build & Test
 

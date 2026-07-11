@@ -8,8 +8,12 @@ public enum ProviderKind: String, CaseIterable, Codable, Equatable, Hashable, Se
     case anthropic
     case azureOpenAI
     case openAI
+    // Any locally logged tool without built-in support (see CustomUsageSource).
+    // Has no auth method or credential of its own, so it is intentionally
+    // excluded from ProviderAuthMethod/ProviderSettings.defaultSettings.
+    case custom
 
-    public static let orderedCases: [ProviderKind] = [.anthropic, .azureOpenAI, .openAI]
+    public static let orderedCases: [ProviderKind] = [.anthropic, .azureOpenAI, .openAI, .custom]
 
     public var displayName: String {
         switch self {
@@ -19,6 +23,8 @@ public enum ProviderKind: String, CaseIterable, Codable, Equatable, Hashable, Se
             "Azure OpenAI"
         case .openAI:
             "Codex"
+        case .custom:
+            "Custom"
         }
     }
 }

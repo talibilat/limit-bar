@@ -5,14 +5,29 @@ struct RateLimitView: View {
     let metrics: [UsageMetric]
     let pricingTable: PricingTable
 
+    @State private var isClaudePresent = true
+    @State private var isCodexPresent = true
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                sectionHeader("Claude")
-                ClaudeRateLimitsView()
+                if isClaudePresent {
+                    sectionHeader("Claude")
+                    ClaudeRateLimitsView(isPresent: $isClaudePresent)
+                }
 
-                sectionHeader("Codex")
-                CodexRateLimitsView(metrics: metrics, pricingTable: pricingTable)
+                if isCodexPresent {
+                    sectionHeader("Codex")
+                    CodexRateLimitsView(metrics: metrics, pricingTable: pricingTable, isPresent: $isCodexPresent)
+                }
+
+                if !isClaudePresent && !isCodexPresent {
+                    Text("No Claude Code or Codex usage found on this machine yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 24)
+                }
             }
         }
         .scrollIndicators(.hidden)

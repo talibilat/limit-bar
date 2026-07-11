@@ -55,12 +55,29 @@ struct DemoUsageDataTests {
         #expect(metrics.contains { $0.freshness.isStale })
     }
 
-    @Test("empty cards stay present")
-    func emptyCardsStayPresent() {
+    @Test("providers with no usage and no configuration are left out entirely")
+    func providersWithNoSignalAreLeftOut() {
         let cards = ProviderUsageCard.cards(from: [], timeWindow: .today)
 
-        #expect(cards.count == 3)
+        #expect(cards.isEmpty)
+    }
+
+    @Test("a configured provider still shows an empty card before it has any usage")
+    func configuredProviderShowsEmptyCard() {
+        let cards = ProviderUsageCard.cards(from: [], timeWindow: .today, configuredProviders: [.anthropic])
+
+        #expect(cards.map(\.provider) == [.anthropic])
         #expect(cards.allSatisfy { $0.isEmpty })
+    }
+
+    @Test("presence is decided across every window, not just the selected one")
+    func presenceSpansEveryWindow() {
+        let onlyTodayMetric = [DemoUsageData.metrics.first { $0.provider == .openAI }!]
+
+        let cards = ProviderUsageCard.cards(from: onlyTodayMetric, timeWindow: .currentWeek)
+
+        #expect(cards.map(\.provider) == [.openAI])
+        #expect(cards.first?.isEmpty == true)
     }
 
     @Test("current week demo includes an empty OpenAI card")

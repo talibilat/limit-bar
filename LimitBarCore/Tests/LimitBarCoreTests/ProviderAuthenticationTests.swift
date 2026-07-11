@@ -17,7 +17,9 @@ struct ProviderAuthenticationTests {
     func providerDefaultsStayOrderedAndUnvalidated() {
         let settings = ProviderSettings.defaultSettings
 
-        #expect(settings.map(\.provider) == ProviderKind.orderedCases)
+        // .custom has no credential or auth method of its own (configured as
+        // a local file in Settings instead), so it has no default entry here.
+        #expect(settings.map(\.provider) == [.anthropic, .azureOpenAI, .openAI])
         #expect(settings.map(\.state) == [.missing, .missing, .missing])
         #expect(settings[0].authMethod == .anthropicAdminAPIKey)
         #expect(settings[1].authMethod == .azureAPIKey)
@@ -92,7 +94,7 @@ struct ProviderAuthenticationTests {
         let encoded = try ProviderSettingsPersistence.encode([ProviderSettings.defaultSettings[2], ProviderSettings.defaultSettings[0], duplicate])
         let decoded = ProviderSettingsPersistence.decode(encoded)
 
-        #expect(decoded.map(\.provider) == ProviderKind.orderedCases)
+        #expect(decoded.map(\.provider) == [.anthropic, .azureOpenAI, .openAI])
         #expect(decoded[0].state == .connected)
         let json = try #require(String(data: encoded, encoding: .utf8))
         for forbidden in ["apiKey", "accessToken", "refreshToken", "secret", "rawProviderResponse"] {

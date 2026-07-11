@@ -25,7 +25,8 @@ struct MonitoringPopoverView: View {
     @State private var providerSettings = ProviderSettingsStore().settings
 
     private var cards: [ProviderUsageCard] {
-        ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow)
+        let configured = Set(providerSettings.filter { $0.state != .missing }.map(\.provider))
+        return ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow, configuredProviders: configured)
     }
 
     private var pricingTable: PricingTable {
@@ -73,6 +74,9 @@ struct MonitoringPopoverView: View {
             providerSettings = ProviderSettingsStore().settings
             Task { await loadStoredMetrics() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .customUsageSourcesDidChange)) { _ in
+            Task { await loadStoredMetrics() }
+        }
     }
 
     @ViewBuilder
@@ -118,10 +122,25 @@ struct MonitoringPopoverView: View {
 
     private func loadStoredMetrics() async {
         let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
-        metrics = snapshot.metrics
+        metrics = snapshot.metrics + Self.loadCustomSourceMetrics()
         storeHealth = snapshot.health
         localImport = snapshot.localImport
         providerSettings = ProviderSettingsStore().settings
+    }
+
+    // Custom sources are arbitrary external files LimitBar does not own, so
+    // they are re-read fresh on every load rather than persisted to SQLite.
+    private static func loadCustomSourceMetrics() -> [UsageMetric] {
+        let now = Date()
+        let calendar = Calendar.current
+        return CustomUsageSourceStore().sources.flatMap { source in
+            CustomUsageAggregator.metrics(
+                from: URL(fileURLWithPath: source.filePath),
+                sourceName: source.name,
+                now: now,
+                calendar: calendar
+            )
+        }
     }
 }
 

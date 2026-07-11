@@ -24,7 +24,7 @@ struct ProviderSettingsView: View {
 
     var body: some View {
         Group {
-            ForEach(ProviderKind.orderedCases, id: \.self) { provider in
+            ForEach(settings.map(\.provider), id: \.self) { provider in
                 DisclosureGroup {
                     if let index = settings.firstIndex(where: { $0.provider == provider }) {
                         providerControls(index: index)
@@ -81,6 +81,10 @@ struct ProviderSettingsView: View {
             azureControls(index: index)
         case .openAI:
             openAIControls(index: index)
+        case .custom:
+            // .custom is configured under Settings > Custom Usage Sources
+            // and never appears in ProviderSettings, so this is unreachable.
+            EmptyView()
         }
     }
 
@@ -239,6 +243,8 @@ struct ProviderSettingsView: View {
         case .openAI:
             openAIAdminAPIKey = ""
             openAIOAuthToken = ""
+        case .custom:
+            break
         }
     }
 

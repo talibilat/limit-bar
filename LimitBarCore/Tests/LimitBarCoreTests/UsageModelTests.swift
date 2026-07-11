@@ -6,8 +6,8 @@ import Testing
 struct UsageModelTests {
     @Test("providers use the fixed display order")
     func providersUseFixedDisplayOrder() {
-        #expect(ProviderKind.orderedCases == [.anthropic, .azureOpenAI, .openAI])
-        #expect(ProviderKind.orderedCases.map(\.displayName) == ["Anthropic", "Azure OpenAI", "Codex"])
+        #expect(ProviderKind.orderedCases == [.anthropic, .azureOpenAI, .openAI, .custom])
+        #expect(ProviderKind.orderedCases.map(\.displayName) == ["Anthropic", "Azure OpenAI", "Codex", "Custom"])
     }
 
     @Test("today window covers the local day containing the reference date")

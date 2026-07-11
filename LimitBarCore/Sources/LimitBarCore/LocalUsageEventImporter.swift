@@ -56,7 +56,9 @@ public enum LocalUsageEventParser {
             throw LocalUsageEventError.malformedJSON
         }
 
-        guard let rawProvider = raw.provider, let provider = ProviderKind(rawValue: rawProvider) else {
+        guard let rawProvider = raw.provider,
+              let provider = ProviderKind(rawValue: rawProvider),
+              LocalUsageEventImporter.supportedProviders.contains(provider) else {
             throw LocalUsageEventError.unsupportedProvider
         }
 
@@ -131,6 +133,11 @@ public enum LocalUsageEventImporter {
         var latestTimestamp: Date
     }
 
+    // This importer only ever handles the shared usage-events.jsonl file and
+    // the built-in providers that write to it. Custom sources (see
+    // CustomUsageSource) are separate per-file imports and never reach here.
+    public static let supportedProviders: Set<ProviderKind> = [.anthropic, .azureOpenAI, .openAI]
+
     // Locally imported metrics are scoped by these account labels so they can
     // coexist with provider-API metrics, which use nil or an organization label.
     public static func importedAccountLabel(for provider: ProviderKind) -> String {
@@ -139,6 +146,8 @@ public enum LocalUsageEventImporter {
             "Local logs"
         case .azureOpenAI:
             "Azure OpenAI"
+        case .custom:
+            "Custom"
         }
     }
 
@@ -251,7 +260,7 @@ public enum LocalUsageEventImporter {
         in store: SQLiteUsageMetricStore,
         aggregates: [AggregateKey: AggregateValue]
     ) throws {
-        for provider in ProviderKind.orderedCases {
+        for provider in supportedProviders {
             try store.replaceMetrics(
                 provider: provider,
                 timeWindows: importedWindows,
