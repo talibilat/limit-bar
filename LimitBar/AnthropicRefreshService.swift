@@ -20,7 +20,7 @@ struct URLSessionHTTPClient: HTTPClient {
 struct AnthropicRefreshService {
     private let client = AnthropicAdminClient(httpClient: URLSessionHTTPClient())
 
-    func refresh(apiKey: String) async -> ProviderDiagnostic {
+    func fetch(apiKey: String) async -> AnthropicRefreshResult {
         let now = Date()
         let calendar = Calendar.current
         let interval = TimeWindow.currentWeek.interval(containing: now, calendar: calendar)
@@ -37,11 +37,15 @@ struct AnthropicRefreshService {
         case let .failure(reason):
             result = .failure(reason)
         }
+        return result
+    }
+
+    func apply(_ result: AnthropicRefreshResult) -> ProviderDiagnostic {
         do {
             let store = try SQLiteUsageMetricStore.applicationSupportStore()
-            return try AnthropicRefreshPersistence.apply(result, to: store, now: now)
+            return try AnthropicRefreshPersistence.apply(result, to: store)
         } catch {
-            return ProviderDiagnostic(provider: .anthropic, state: .failed, failureReason: .refreshFailed, updatedAt: now)
+            return ProviderDiagnostic(provider: .anthropic, state: .failed, failureReason: .refreshFailed, updatedAt: Date())
         }
     }
 }

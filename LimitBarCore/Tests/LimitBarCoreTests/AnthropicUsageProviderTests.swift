@@ -22,7 +22,7 @@ struct AnthropicUsageProviderTests {
         #expect(request.url.absoluteString.contains("starting_at="))
         #expect(request.url.absoluteString.contains("ending_at="))
         #expect(request.url.absoluteString.contains("group_by%5B%5D=model"))
-        #expect(request.url.absoluteString.contains("bucket_width=1h"))
+        #expect(request.url.absoluteString.contains("bucket_width=1m"))
         #expect(!String(describing: outcome).contains("super-secret-value"))
     }
 
@@ -81,7 +81,7 @@ struct AnthropicUsageProviderTests {
 
     @Test("cost report maps returned descriptions and cents")
     func costReportMapping() throws {
-        let data = Data(#"{"data":[{"starting_at":"2026-07-10T10:00:00Z","ending_at":"2026-07-10T11:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T11:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
+        let data = Data(#"{"data":[{"starting_at":"2026-07-10T00:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T12:00:00Z","ending_at":"2026-07-11T00:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
 
         let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
         let metric = try #require(metrics.first { $0.timeWindow == .today })
@@ -104,6 +104,22 @@ struct AnthropicUsageProviderTests {
         #expect(result == .success([]))
         #expect(requests.count == 2)
         #expect(requests[1].url.absoluteString.contains("page=page-2"))
+    }
+
+    @Test("cost fetch groups descriptions and follows pagination")
+    func costFetchFollowsPagination() async {
+        let first = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"cost-2"}"#.utf8))
+        let second = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false,"next_page":null}"#.utf8))
+        let http = RecordingHTTPClient(responses: [first, second])
+        let client = AnthropicAdminClient(httpClient: http)
+
+        let result = await client.fetchCost(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60), now: Date(timeIntervalSince1970: 30), calendar: .current)
+        let requests = await http.requests
+
+        #expect(result == .success([]))
+        #expect(requests.count == 2)
+        #expect(requests[0].url.absoluteString.contains("group_by%5B%5D=description"))
+        #expect(requests[1].url.absoluteString.contains("page=cost-2"))
     }
 
     @Test("fixture mapping does not invent missing labels")

@@ -68,10 +68,17 @@ public struct AnthropicAdminClient: Sendable {
     }
 
     public func fetchCost(apiKey: String, interval: DateInterval, now: Date, calendar: Calendar) async -> AnthropicRefreshResult {
+        var page: String?
+        var buckets: [AnthropicCostMapper.Bucket] = []
         do {
-            let response = try await httpClient.send(request(apiKey: apiKey, interval: interval, path: "v1/organizations/cost_report"))
-            guard response.statusCode == 200 else { return .failure(.refreshFailed) }
-            return .success(try AnthropicCostMapper.metrics(from: response.data, now: now, calendar: calendar))
+            repeat {
+                let response = try await httpClient.send(request(apiKey: apiKey, interval: interval, page: page, path: "v1/organizations/cost_report"))
+                guard response.statusCode == 200 else { return .failure(.refreshFailed) }
+                let decoded = try AnthropicCostMapper.decode(response.data)
+                buckets.append(contentsOf: decoded.data)
+                page = decoded.hasMore == true ? decoded.nextPage : nil
+            } while page != nil
+            return .success(try AnthropicCostMapper.metrics(from: buckets, now: now, calendar: calendar))
         } catch is DecodingError {
             return .failure(.refreshFailed)
         } catch {
@@ -88,7 +95,9 @@ public struct AnthropicAdminClient: Sendable {
         ]
         if path.contains("usage_report") {
             components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "model"))
-            components.queryItems?.append(URLQueryItem(name: "bucket_width", value: "1h"))
+            components.queryItems?.append(URLQueryItem(name: "bucket_width", value: "1m"))
+        } else if path.contains("cost_report") {
+            components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "description"))
         }
         if let page {
             components.queryItems?.append(URLQueryItem(name: "page", value: page))
@@ -208,7 +217,7 @@ public enum AnthropicUsageMapper {
 
                 for window in [TimeWindow.today, .currentWeek] {
                     let interval = window.interval(containing: now, calendar: calendar)
-                    guard start < interval.end, end > interval.start else { continue }
+                    guard start >= interval.start, end <= interval.end else { continue }
                     let key = Key(window: window, label: label)
                     var aggregate = aggregates[key] ?? Aggregate(latest: end)
                     aggregate.input = try checkedSum(aggregate.input, rowInput)
@@ -265,8 +274,18 @@ public enum AnthropicUsageMapper {
 }
 
 public enum AnthropicCostMapper {
-    private struct Response: Decodable { let data: [Bucket] }
-    private struct Bucket: Decodable {
+    struct Response: Decodable {
+        let data: [Bucket]
+        let hasMore: Bool?
+        let nextPage: String?
+
+        enum CodingKeys: String, CodingKey {
+            case data
+            case hasMore = "has_more"
+            case nextPage = "next_page"
+        }
+    }
+    struct Bucket: Decodable {
         let startingAt: String
         let endingAt: String
         let results: [Row]
@@ -277,22 +296,33 @@ public enum AnthropicCostMapper {
             case results
         }
     }
-    private struct Row: Decodable { let description: String; let amount: String; let currency: String }
+    struct Row: Decodable { let description: String?; let amount: String; let currency: String }
     private struct Key: Hashable { let window: TimeWindow; let label: String; let currency: String }
     private struct Aggregate { var cents: Decimal; var latest: Date }
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        let response = try JSONDecoder().decode(Response.self, from: data)
+        try metrics(from: decode(data).data, now: now, calendar: calendar)
+    }
+
+    static func decode(_ data: Data) throws -> Response {
+        try JSONDecoder().decode(Response.self, from: data)
+    }
+
+    static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
         var aggregates: [Key: Aggregate] = [:]
-        for bucket in response.data {
-            guard let start = formatter.date(from: bucket.startingAt), let end = formatter.date(from: bucket.endingAt) else { continue }
-            for row in bucket.results {
-                let label = row.description.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !label.isEmpty, let cents = Decimal(string: row.amount) else { continue }
-                for window in [TimeWindow.today, .currentWeek] {
-                    let interval = window.interval(containing: now, calendar: calendar)
-                    guard start < interval.end, end > interval.start else { continue }
+        let datedBuckets = buckets.compactMap { bucket -> (Bucket, Date, Date)? in
+            guard let start = formatter.date(from: bucket.startingAt), let end = formatter.date(from: bucket.endingAt) else { return nil }
+            return (bucket, start, end)
+        }
+        for window in [TimeWindow.today, .currentWeek] {
+            let interval = window.interval(containing: now, calendar: calendar)
+            let contained = datedBuckets.filter { $0.1 >= interval.start && $0.2 <= interval.end }.sorted { $0.1 < $1.1 }
+            guard fullyCovers(interval, buckets: contained) else { continue }
+            for (bucket, _, end) in contained {
+                for row in bucket.results {
+                    let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard !label.isEmpty, let cents = Decimal(string: row.amount) else { continue }
                     let key = Key(window: window, label: label, currency: row.currency)
                     var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
                     aggregate.cents = try checkedAdd(aggregate.cents, cents)
@@ -321,6 +351,16 @@ public enum AnthropicCostMapper {
             let right = rhs.timeWindow == .today ? 0 : 1
             return (left, lhs.modelLabel) < (right, rhs.modelLabel)
         }
+    }
+
+    private static func fullyCovers(_ interval: DateInterval, buckets: [(Bucket, Date, Date)]) -> Bool {
+        guard let first = buckets.first, first.1 == interval.start else { return false }
+        var end = first.2
+        for bucket in buckets.dropFirst() {
+            guard bucket.1 == end else { return false }
+            end = bucket.2
+        }
+        return end == interval.end
     }
 
     private static func checkedAdd(_ lhs: Decimal, _ rhs: Decimal) throws -> Decimal {
