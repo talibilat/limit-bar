@@ -58,6 +58,7 @@ struct MonitoringPopoverView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .providerSettingsDidChange)) { _ in
             providerSettings = ProviderSettingsStore().settings
+            Task { await loadStoredMetrics() }
         }
     }
 
