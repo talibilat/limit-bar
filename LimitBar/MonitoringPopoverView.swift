@@ -7,6 +7,7 @@ struct MonitoringPopoverView: View {
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
     @State private var azureImport = AzureUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
+    @State private var providerSettings = ProviderSettingsStore().settings
 
     private var cards: [ProviderUsageCard] {
         ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow)
@@ -30,7 +31,7 @@ struct MonitoringPopoverView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     ForEach(cards, id: \.provider) { card in
-                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable)
+                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: providerSettings.first { $0.provider == card.provider }?.state)
                     }
                 }
             }
@@ -92,6 +93,7 @@ private struct ProviderUsageCardView: View {
     let card: ProviderUsageCard
     let selectedWindow: TimeWindow
     let pricingTable: PricingTable
+    let providerState: ProviderConnectionState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -108,7 +110,7 @@ private struct ProviderUsageCardView: View {
             }
 
             if card.isEmpty {
-                Text("No usage for \(selectedWindow.displayName).")
+                Text(emptyMessage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,6 +129,13 @@ private struct ProviderUsageCardView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(.quaternary, lineWidth: 1)
         )
+    }
+
+    private var emptyMessage: String {
+        if providerState == .unsupported || providerState == .adminRequired {
+            return providerState?.displayText ?? "Unsupported"
+        }
+        return "No usage for \(selectedWindow.displayName)."
     }
 }
 

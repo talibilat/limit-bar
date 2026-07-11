@@ -67,6 +67,25 @@ public struct OpenAIOrganizationClient: Sendable {
         }
     }
 
+    public func fetchCosts(credential: String, organization: String, interval: DateInterval, now: Date, calendar: Calendar) async -> OpenAIRefreshResult {
+        var page: String?
+        var buckets: [OpenAICostMapper.Bucket] = []
+        do {
+            repeat {
+                let response = try await httpClient.send(costRequest(credential: credential, interval: interval, page: page))
+                guard response.statusCode == 200 else { return .failure(.refreshFailed) }
+                let decoded = try OpenAICostMapper.decode(response.data)
+                buckets.append(contentsOf: decoded.data)
+                page = decoded.hasMore == true ? decoded.nextPage : nil
+            } while page != nil
+            return .success(try OpenAICostMapper.metrics(from: buckets, organization: organization, now: now, calendar: calendar))
+        } catch is DecodingError {
+            return .failure(.refreshFailed)
+        } catch {
+            return .failure(.networkUnavailable)
+        }
+    }
+
     private func request(credential: String, interval: DateInterval, page: String? = nil) -> HTTPRequest {
         var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/usage/completions"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
@@ -75,6 +94,19 @@ public struct OpenAIOrganizationClient: Sendable {
             URLQueryItem(name: "bucket_width", value: "1m"),
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "model")
+        ]
+        if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
+    }
+
+    private func costRequest(credential: String, interval: DateInterval, page: String?) -> HTTPRequest {
+        var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/costs"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
+            URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
+            URLQueryItem(name: "bucket_width", value: "1d"),
+            URLQueryItem(name: "group_by[]", value: "project_id"),
+            URLQueryItem(name: "group_by[]", value: "line_item")
         ]
         if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
         return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
@@ -172,6 +204,55 @@ public enum OpenAIUsageMapper {
 }
 
 public enum OpenAIMappingError: Error, Equatable { case tokenOverflow }
+
+public enum OpenAICostMapper {
+    struct Response: Decodable {
+        let data: [Bucket]
+        let hasMore: Bool?
+        let nextPage: String?
+        enum CodingKeys: String, CodingKey { case data; case hasMore = "has_more"; case nextPage = "next_page" }
+    }
+    struct Bucket: Decodable {
+        let startTime: Int
+        let endTime: Int
+        let results: [Row]
+        enum CodingKeys: String, CodingKey { case startTime = "start_time"; case endTime = "end_time"; case results }
+    }
+    struct Row: Decodable {
+        let projectID: String?
+        let lineItem: String?
+        let amount: Amount
+        enum CodingKeys: String, CodingKey { case projectID = "project_id"; case lineItem = "line_item"; case amount }
+    }
+    struct Amount: Decodable { let value: Decimal; let currency: String }
+
+    static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
+
+    public static func metrics(from data: Data, organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        try metrics(from: decode(data).data, organization: organization, now: now, calendar: calendar)
+    }
+
+    static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        let organization = organization.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !organization.isEmpty else { return [] }
+        var metrics: [UsageMetric] = []
+        for bucket in buckets {
+            let start = Date(timeIntervalSince1970: TimeInterval(bucket.startTime))
+            let end = Date(timeIntervalSince1970: TimeInterval(bucket.endTime))
+            for row in bucket.results {
+                let project = row.projectID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let lineItem = row.lineItem?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !project.isEmpty, !lineItem.isEmpty else { continue }
+                for window in [TimeWindow.today, .currentWeek] {
+                    let interval = window.interval(containing: now, calendar: calendar)
+                    guard start >= interval.start, end <= interval.end else { continue }
+                    metrics.append(UsageMetric(provider: .openAI, accountLabel: organization, projectLabel: project, modelLabel: lineItem, deploymentLabel: nil, timeWindow: window, tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: row.amount.value, currencyCode: row.amount.currency.uppercased(), source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: end, freshness: .fresh))
+                }
+            }
+        }
+        return metrics
+    }
+}
 
 public enum OpenAIRefreshPersistence {
     public static func apply(_ result: OpenAIRefreshResult, to store: SQLiteUsageMetricStore, now: Date = Date()) throws -> ProviderDiagnostic {

@@ -55,6 +55,19 @@ struct OpenAIUsageProviderTests {
         #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: try utcCalendar()).isEmpty)
     }
 
+    @Test("cost fixture maps provider-reported project spend")
+    func costMapping() throws {
+        let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}}]}]}"#.utf8)
+
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metric = try #require(metrics.first { $0.timeWindow == .today })
+
+        #expect(metric.accountLabel == "org_123")
+        #expect(metric.projectLabel == "proj_1")
+        #expect(metric.modelLabel == "Completions")
+        #expect(metric.cost == Cost(amount: Decimal(string: "1.25")!, currencyCode: "USD", source: .providerReported))
+    }
+
     @Test("refresh persistence replaces only OpenAI and stales failures")
     func refreshPersistence() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
