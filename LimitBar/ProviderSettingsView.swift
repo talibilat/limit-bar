@@ -1,5 +1,6 @@
 import SwiftUI
 import LimitBarCore
+import CryptoKit
 
 struct ProviderSettingsView: View {
     @Binding var settings: [ProviderSettings]
@@ -221,10 +222,12 @@ struct ProviderSettingsView: View {
             }
             defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
             let startedMethod = settings[index].authMethod
-            let startedCredential = credentialData
+            let startedFingerprint = Data(SHA256.hash(data: credentialData))
             let result = await anthropicRefreshService.fetch(apiKey: apiKey)
+            guard var currentCredential = try credentialService.credential(for: key) else { return }
+            defer { currentCredential.resetBytes(in: currentCredential.startIndex..<currentCredential.endIndex) }
             guard settings[index].authMethod == startedMethod,
-                  try credentialService.credential(for: key) == startedCredential else {
+                  Data(SHA256.hash(data: currentCredential)) == startedFingerprint else {
                 return
             }
             let diagnostic = anthropicRefreshService.apply(result)

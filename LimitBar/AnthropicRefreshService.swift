@@ -29,10 +29,11 @@ struct AnthropicRefreshService {
         switch usageResult {
         case let .success(usageMetrics):
             let costResult = await client.fetchCost(apiKey: apiKey, interval: interval, now: now, calendar: calendar)
-            if case let .success(costMetrics) = costResult {
+            switch costResult {
+            case let .success(costMetrics):
                 result = .success(usageMetrics + costMetrics)
-            } else {
-                result = .success(usageMetrics)
+            case let .failure(reason):
+                result = .failure(reason)
             }
         case let .failure(reason):
             result = .failure(reason)
