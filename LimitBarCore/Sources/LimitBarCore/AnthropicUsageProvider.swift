@@ -318,7 +318,6 @@ public enum AnthropicCostMapper {
         for window in [TimeWindow.today, .currentWeek] {
             let interval = window.interval(containing: now, calendar: calendar)
             let contained = datedBuckets.filter { $0.1 >= interval.start && $0.2 <= interval.end }.sorted { $0.1 < $1.1 }
-            guard fullyCovers(interval, buckets: contained) else { continue }
             for (bucket, _, end) in contained {
                 for row in bucket.results {
                     let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -351,16 +350,6 @@ public enum AnthropicCostMapper {
             let right = rhs.timeWindow == .today ? 0 : 1
             return (left, lhs.modelLabel) < (right, rhs.modelLabel)
         }
-    }
-
-    private static func fullyCovers(_ interval: DateInterval, buckets: [(Bucket, Date, Date)]) -> Bool {
-        guard let first = buckets.first, first.1 == interval.start else { return false }
-        var end = first.2
-        for bucket in buckets.dropFirst() {
-            guard bucket.1 == end else { return false }
-            end = bucket.2
-        }
-        return end == interval.end
     }
 
     private static func checkedAdd(_ lhs: Decimal, _ rhs: Decimal) throws -> Decimal {
