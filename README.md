@@ -1,7 +1,7 @@
 # LimitBar
 
-LimitBar is a private macOS 14+ menu bar utility for monitoring confirmed Anthropic, Azure OpenAI, and OpenAI usage.
-It presents a compact menu bar status and a SwiftUI popover with provider cards in fixed order: Anthropic, Azure OpenAI, OpenAI.
+LimitBar is a private macOS 14+ menu bar utility for monitoring confirmed Anthropic, Azure OpenAI, and Codex (OpenAI) usage.
+It presents a compact menu bar status and a SwiftUI popover with a Claude Limits tab and a Usage tab; the Usage tab shows provider cards in fixed order: Anthropic, Azure OpenAI, Codex.
 Today is selected by default, and Current Week is available from the segmented control.
 
 ## Requirements
@@ -103,9 +103,9 @@ This endpoint is not part of Anthropic's public API surface and may change witho
 Anthropic supports an Admin API key and an OAuth-compatible future configuration path.
 Validate & Refresh calls the Anthropic organization usage and cost reports and stores only normalized metrics.
 
-OpenAI supports OAuth feasibility validation and an admin/platform API-key fallback.
+OpenAI (shown as the Codex card) supports OAuth feasibility validation and an admin/platform API-key fallback.
 LimitBar does not report OpenAI as Connected until the credential can access the required organization usage endpoint.
-Unsupported OAuth, expired credentials, and admin-required access remain explicit in Settings and the OpenAI card.
+Unsupported OAuth, expired credentials, and admin-required access remain explicit in Settings and the Codex card.
 
 Azure OpenAI usage remains a local JSONL integration.
 LimitBar does not call Azure management, quota, or rate-limit APIs.

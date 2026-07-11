@@ -18,7 +18,7 @@ public enum ProviderKind: String, CaseIterable, Codable, Equatable, Hashable, Se
         case .azureOpenAI:
             "Azure OpenAI"
         case .openAI:
-            "OpenAI"
+            "Codex"
         }
     }
 }

@@ -124,7 +124,7 @@ private struct RateLimitRowView: View {
                 Text("\(Int(limit.percentUsed.rounded()))% used")
                 Spacer()
                 if let resetsAt = limit.resetsAt {
-                    Text("Resets \(resetsAt.formatted(.relative(presentation: .named)))")
+                    Text("Resets \(resetsAt.formatted(date: .abbreviated, time: .standard))")
                 }
             }
             .font(.caption)
