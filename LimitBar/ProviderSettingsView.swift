@@ -1,11 +1,13 @@
 import SwiftUI
 import LimitBarCore
+import CryptoKit
 
 struct ProviderSettingsView: View {
     @Binding var settings: [ProviderSettings]
 
     private let settingsStore = ProviderSettingsStore()
     private let credentialService = CredentialService(store: KeychainCredentialStore())
+    private let anthropicRefreshService = AnthropicRefreshService()
 
     private var stateReconciler: ProviderCredentialStateReconciler {
         ProviderCredentialStateReconciler(credentialService: credentialService)
@@ -15,6 +17,7 @@ struct ProviderSettingsView: View {
     @State private var azureAPIKey = ""
     @State private var openAIAdminAPIKey = ""
     @State private var keychainMessage: String?
+    @State private var isRefreshingAnthropic = false
 
     var body: some View {
         Group {
@@ -83,6 +86,10 @@ struct ProviderSettingsView: View {
         if settings[index].authMethod == .anthropicAdminAPIKey {
             SecureField("Admin API key", text: $anthropicAPIKey)
             credentialButtons(secret: anthropicAPIKey, provider: .anthropic, kind: .apiKey)
+            Button(isRefreshingAnthropic ? "Refreshing..." : "Validate & Refresh") {
+                Task { await refreshAnthropic(index: index) }
+            }
+            .disabled(settings[index].state == .missing || isRefreshingAnthropic)
         } else {
             Text("OAuth-compatible configuration is ready for a future authorization flow.")
                 .font(.caption)
@@ -198,6 +205,39 @@ struct ProviderSettingsView: View {
             azureAPIKey = ""
         case .openAI:
             openAIAdminAPIKey = ""
+        }
+    }
+
+    private func refreshAnthropic(index: Int) async {
+        isRefreshingAnthropic = true
+        defer { isRefreshingAnthropic = false }
+        let key = CredentialKey(provider: .anthropic, kind: .apiKey)
+        do {
+            guard var credentialData = try credentialService.credential(for: key),
+                  let apiKey = String(data: credentialData, encoding: .utf8) else {
+                settings[index].state = .missing
+                settings[index].failureReason = nil
+                persist(index: index)
+                return
+            }
+            defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
+            let startedMethod = settings[index].authMethod
+            let startedFingerprint = Data(SHA256.hash(data: credentialData))
+            let result = await anthropicRefreshService.fetch(apiKey: apiKey)
+            guard var currentCredential = try credentialService.credential(for: key) else { return }
+            defer { currentCredential.resetBytes(in: currentCredential.startIndex..<currentCredential.endIndex) }
+            guard settings[index].authMethod == startedMethod,
+                  Data(SHA256.hash(data: currentCredential)) == startedFingerprint else {
+                return
+            }
+            let diagnostic = anthropicRefreshService.apply(result)
+            settings[index].state = diagnostic.state
+            settings[index].failureReason = diagnostic.failureReason
+            settings[index].updatedAt = diagnostic.updatedAt
+            settingsStore.update(settings[index])
+            keychainMessage = nil
+        } catch {
+            keychainMessage = "Could not update Keychain."
         }
     }
 }

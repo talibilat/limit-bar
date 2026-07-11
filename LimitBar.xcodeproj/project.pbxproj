@@ -14,6 +14,7 @@
 		AA0000000000000000000005 /* PricingSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* PricingSettingsStore.swift */; };
 		AA0000000000000000000006 /* ProviderSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* ProviderSettingsStore.swift */; };
 		AA0000000000000000000007 /* ProviderSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* ProviderSettingsView.swift */; };
+		AA0000000000000000000008 /* AnthropicRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* AnthropicRefreshService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		AA0000000000000000000014 /* PricingSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingSettingsStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* ProviderSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000016 /* ProviderSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000017 /* AnthropicRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicRefreshService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -55,6 +57,7 @@
 				AA0000000000000000000014 /* PricingSettingsStore.swift */,
 				AA0000000000000000000015 /* ProviderSettingsStore.swift */,
 				AA0000000000000000000016 /* ProviderSettingsView.swift */,
+				AA0000000000000000000017 /* AnthropicRefreshService.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -138,6 +141,7 @@
 				AA0000000000000000000005 /* PricingSettingsStore.swift in Sources */,
 				AA0000000000000000000006 /* ProviderSettingsStore.swift in Sources */,
 				AA0000000000000000000007 /* ProviderSettingsView.swift in Sources */,
+				AA0000000000000000000008 /* AnthropicRefreshService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

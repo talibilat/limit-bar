@@ -20,8 +20,11 @@ public enum StoredUsageMetrics {
     public static func load(from store: SQLiteUsageMetricStore, now: Date = Date()) throws -> StoredUsageMetricsSnapshot {
         try store.deleteMetrics(olderThan: now.addingTimeInterval(-(90 * 24 * 60 * 60)))
 
-        if try store.allMetrics().isEmpty {
-            try store.save(DemoUsageData.metrics)
+        if try !store.hasInitializedMetrics() {
+            if try store.allMetrics().isEmpty {
+                try store.save(DemoUsageData.metrics)
+            }
+            try store.markMetricsInitialized()
         }
 
         return StoredUsageMetricsSnapshot(
@@ -35,8 +38,11 @@ public enum StoredUsageMetrics {
         do {
             let store = try SQLiteUsageMetricStore.applicationSupportStore(fileManager: fileManager)
             try store.deleteMetrics(olderThan: Date().addingTimeInterval(-(90 * 24 * 60 * 60)))
-            if try store.allMetrics().isEmpty {
-                try store.save(DemoUsageData.metrics)
+            if try !store.hasInitializedMetrics() {
+                if try store.allMetrics().isEmpty {
+                    try store.save(DemoUsageData.metrics)
+                }
+                try store.markMetricsInitialized()
             }
             let azureURL = try AzureUsageEventImporter.usageEventsURL(fileManager: fileManager)
             let importResult: AzureUsageImportResult

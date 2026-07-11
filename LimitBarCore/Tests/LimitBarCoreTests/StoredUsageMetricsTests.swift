@@ -76,6 +76,19 @@ struct StoredUsageMetricsTests {
         #expect(snapshot.metrics.contains { $0.provider == .openAI })
     }
 
+    @Test("initialized empty store does not reseed demo metrics")
+    func initializedEmptyStoreDoesNotReseedDemoMetrics() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        _ = try StoredUsageMetrics.load(from: store)
+        try store.replaceMetrics(provider: .anthropic, timeWindows: [.today, .currentWeek], with: [])
+        try store.replaceMetrics(provider: .azureOpenAI, timeWindows: [.today, .currentWeek], with: [])
+        try store.replaceMetrics(provider: .openAI, timeWindows: [.today, .currentWeek], with: [])
+
+        let snapshot = try StoredUsageMetrics.load(from: store)
+
+        #expect(snapshot.metrics.isEmpty)
+    }
+
     private func metric(modelLabel: String, refreshedAt: Date) -> UsageMetric {
         UsageMetric(
             provider: .anthropic,

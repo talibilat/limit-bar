@@ -61,6 +61,19 @@ public final class SQLiteUsageMetricStore {
         UsageStoreHealth(isOpen: database != nil, message: database == nil ? "SQLite store closed" : "SQLite store opened")
     }
 
+    public func hasInitializedMetrics() throws -> Bool {
+        let statement = try prepare("SELECT value FROM app_metadata WHERE key = 'metrics_initialized';")
+        defer { sqlite3_finalize(statement) }
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE { return false }
+        guard result == SQLITE_ROW else { throw UsageMetricStoreError.executeFailed(Self.message(from: database)) }
+        return stringColumn(statement, index: 0) == "true"
+    }
+
+    public func markMetricsInitialized() throws {
+        try execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('metrics_initialized', 'true');")
+    }
+
     public func save(_ metrics: [UsageMetric]) throws {
         let sql = """
         INSERT OR REPLACE INTO usage_metrics (
@@ -160,6 +173,19 @@ public final class SQLiteUsageMetricStore {
         try stepDone(statement)
     }
 
+    public func markMetricsStale(provider: ProviderKind, timeWindows: [TimeWindow], missedRefreshes: Int) throws {
+        guard !timeWindows.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: timeWindows.count).joined(separator: ", ")
+        let statement = try prepare("UPDATE usage_metrics SET freshness_status = 'stale', missed_refreshes = ? WHERE provider = ? AND time_window IN (\(placeholders));")
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, Int64(missedRefreshes))
+        bind(provider.rawValue, at: 2, in: statement)
+        for (index, window) in timeWindows.enumerated() {
+            bind(window.rawValue, at: Int32(index + 3), in: statement)
+        }
+        try stepDone(statement)
+    }
+
     func schemaColumnNames() throws -> Set<String> {
         let statement = try prepare("PRAGMA table_info(usage_metrics);")
         defer { sqlite3_finalize(statement) }
@@ -201,6 +227,7 @@ public final class SQLiteUsageMetricStore {
             missed_refreshes INTEGER NOT NULL
         );
         """)
+        try execute("CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
     }
 
     private func readMetrics(sql: String, bindings: [String]) throws -> [UsageMetric] {
