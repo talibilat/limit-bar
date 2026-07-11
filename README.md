@@ -44,11 +44,15 @@ To stop the app while debugging, press **⌘.** in Xcode or quit LimitBar from t
 
 **Rate Limit** reuses Claude Code's login and reads Codex limits from `~/.codex/sessions`. Reset times show a countdown under 24 hours, otherwise the weekday and time.
 
-**Usage** shows one card per provider, broken down by model:
+**Usage** shows one card per provider, broken down by model.
 
-![LimitBar Usage tab — Today](docs/ss2.png)
+**Today** rolls up confirmed token counts per model across every connected provider:
 
-![LimitBar Usage tab — Current Week](docs/ss1.png)
+![LimitBar Usage tab — Today, Anthropic models from local logs](docs/ss2.png)
+
+**Current Week** uses the same layout with a wider window — handy when you want a running total instead of a single-day snapshot:
+
+![LimitBar Usage tab — Current Week, Azure OpenAI models](docs/ss1.png)
 
 Confirmed usage can also be imported from `~/Library/Application Support/LimitBar/usage-events.jsonl` — the path is shown in Settings.
 
