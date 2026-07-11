@@ -37,12 +37,10 @@ struct MonitoringPopoverView: View {
             }
             .scrollIndicators(.hidden)
 
-            Divider()
-
             HStack {
-                Text("Demo data plus local Azure JSONL imports.")
+                Text(azureImportStatusText)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(azureImport.failureMessage == nil && azureImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
 
                 Spacer()
 
@@ -52,7 +50,7 @@ struct MonitoringPopoverView: View {
             }
         }
         .padding(20)
-        .frame(width: 420, height: 540, alignment: .topLeading)
+        .frame(width: 440, height: 600, alignment: .topLeading)
         .task {
             await loadStoredMetrics()
         }
@@ -66,15 +64,14 @@ struct MonitoringPopoverView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("LimitBar")
                 .font(.title2.weight(.semibold))
-            Text("Confirmed demo usage by provider")
+            Text("Confirmed usage across connected providers")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text(storeHealth.message)
-                .font(.caption)
-                .foregroundStyle(storeHealth.isOpen ? Color.secondary : Color.orange)
-            Text(azureImportStatusText)
-                .font(.caption)
-                .foregroundStyle(azureImport.failureMessage == nil && azureImport.malformedEvents.isEmpty ? Color.secondary : Color.orange)
+            if !storeHealth.isOpen {
+                Text(storeHealth.message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -106,7 +103,7 @@ private struct ProviderUsageCardView: View {
                 Text(card.provider.displayName)
                     .font(.headline)
                 Spacer()
-                Text(card.isEmpty ? "Empty" : "Usage")
+                Text(badgeText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -142,10 +139,16 @@ private struct ProviderUsageCardView: View {
     }
 
     private var emptyMessage: String {
-        if providerState == .unsupported || providerState == .adminRequired {
+        if providerState == .unsupported || providerState == .adminRequired || providerState == .expired || providerState == .failed {
             return providerState?.displayText ?? "Unsupported"
         }
         return "No usage for \(selectedWindow.displayName)."
+    }
+
+    private var badgeText: String {
+        if card.metrics.contains(where: { $0.freshness.isStale }) { return "Stale" }
+        if let providerState, providerState != .missing { return providerState.displayText }
+        return card.isEmpty ? "Not configured" : "Confirmed"
     }
 }
 
@@ -189,10 +192,12 @@ private struct MetricRowView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 8) {
-                TokenPill(title: "In", value: metric.tokenUsage.inputTokens)
-                TokenPill(title: "Out", value: metric.tokenUsage.outputTokens)
-                TokenPill(title: "Total", value: metric.tokenUsage.totalTokens)
+            if metric.tokenUsage.totalTokens > 0 {
+                HStack(spacing: 8) {
+                    TokenPill(title: "In", value: metric.tokenUsage.inputTokens)
+                    TokenPill(title: "Out", value: metric.tokenUsage.outputTokens)
+                    TokenPill(title: "Total", value: metric.tokenUsage.totalTokens)
+                }
             }
 
             Text(metric.limitStatus.displayText)

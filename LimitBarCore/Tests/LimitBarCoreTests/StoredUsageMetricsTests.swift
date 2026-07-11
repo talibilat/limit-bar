@@ -4,26 +4,26 @@ import Testing
 
 @Suite("Stored usage metrics")
 struct StoredUsageMetricsTests {
-    @Test("loads seeded demo metrics into an empty store")
-    func loadsSeededDemoMetricsIntoAnEmptyStore() throws {
+    @Test("fresh store starts empty without demo metrics")
+    func freshStoreStartsEmpty() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
 
         let snapshot = try StoredUsageMetrics.load(from: store)
 
-        #expect(snapshot.metrics == DemoUsageData.metrics)
-        #expect(try store.allMetrics() == DemoUsageData.metrics)
+        #expect(snapshot.metrics.isEmpty)
+        #expect(try store.allMetrics().isEmpty)
         #expect(snapshot.health.isOpen)
     }
 
-    @Test("does not duplicate seed metrics on repeated loads")
-    func doesNotDuplicateSeedMetricsOnRepeatedLoads() throws {
+    @Test("repeated fresh loads stay empty")
+    func repeatedFreshLoadsStayEmpty() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
 
         _ = try StoredUsageMetrics.load(from: store)
         let second = try StoredUsageMetrics.load(from: store)
 
-        #expect(second.metrics.count == DemoUsageData.metrics.count)
-        #expect(try store.allMetrics().count == DemoUsageData.metrics.count)
+        #expect(second.metrics.isEmpty)
+        #expect(try store.allMetrics().isEmpty)
     }
 
     @Test("load applies ninety day retention before returning metrics")
@@ -53,11 +53,11 @@ struct StoredUsageMetricsTests {
         #expect(snapshot.health.isOpen)
         #expect(snapshot.health.message == "SQLite store opened")
         #expect(snapshot.azureImport.failureMessage == "Azure JSONL import failed")
-        #expect(snapshot.metrics == DemoUsageData.metrics)
+        #expect(snapshot.metrics.isEmpty)
     }
 
-    @Test("JSONL import replaces seeded Azure demo metrics")
-    func jsonlImportReplacesSeededAzureDemoMetrics() throws {
+    @Test("JSONL import populates only confirmed Azure metrics")
+    func jsonlImportPopulatesOnlyAzureMetrics() throws {
         let applicationSupport = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileManager = TemporaryApplicationSupportFileManager(applicationSupport: applicationSupport)
@@ -72,8 +72,8 @@ struct StoredUsageMetricsTests {
 
         #expect(!azureMetrics.isEmpty)
         #expect(azureMetrics.allSatisfy { $0.modelLabel == "imported-model" })
-        #expect(snapshot.metrics.contains { $0.provider == .anthropic })
-        #expect(snapshot.metrics.contains { $0.provider == .openAI })
+        #expect(!snapshot.metrics.contains { $0.provider == .anthropic })
+        #expect(!snapshot.metrics.contains { $0.provider == .openAI })
     }
 
     @Test("initialized empty store does not reseed demo metrics")
