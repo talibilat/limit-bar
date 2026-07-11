@@ -1,2 +1,6 @@
 .worktrees/
 **/.build/
+xcuserdata/
+**/.swiftpm/
+project.xcworkspace/
+.DS_Store

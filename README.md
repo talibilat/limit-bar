@@ -87,6 +87,17 @@ Logs are written to `~/Library/Logs/LimitBar/usage-export.log`.
 
 Usage from Opencode's `google` and `opencode` providers has no matching LimitBar provider and is intentionally not remapped.
 
+## Claude Rate Limits
+
+The popover has a Claude Limits tab showing live subscription rate limits: the five-hour session window, the weekly all-usage window, and any scoped windows the API reports (for example a per-model Fable weekly limit).
+Each row shows percent used, percent remaining, severity coloring, and the reset time.
+
+LimitBar reuses the login Claude Code already maintains in the macOS Keychain (`Claude Code-credentials`) and calls the same `api.anthropic.com/api/oauth/usage` endpoint Claude Code uses for `/usage`.
+No separate OAuth flow runs, and the token is never copied or stored by LimitBar.
+macOS may ask once to allow LimitBar to read the Keychain item.
+If the login is missing or expired, the tab says so; running `claude` refreshes it.
+This endpoint is not part of Anthropic's public API surface and may change without notice.
+
 ## Provider Configuration
 
 Anthropic supports an Admin API key and an OAuth-compatible future configuration path.

@@ -2,6 +2,21 @@ import SwiftUI
 import LimitBarCore
 
 struct MonitoringPopoverView: View {
+    private enum PopoverTab: String, CaseIterable {
+        case usage
+        case claudeLimits
+
+        var displayName: String {
+            switch self {
+            case .usage:
+                "Usage"
+            case .claudeLimits:
+                "Claude Limits"
+            }
+        }
+    }
+
+    @State private var selectedTab = PopoverTab.usage
     @State private var selectedWindow = TimeWindow.defaultSelection
     @State private var metrics: [UsageMetric] = []
     @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
@@ -21,26 +36,26 @@ struct MonitoringPopoverView: View {
         VStack(alignment: .leading, spacing: 16) {
             header
 
-            Picker("Time window", selection: $selectedWindow) {
-                ForEach(TimeWindow.allCases, id: \.self) { window in
-                    Text(window.displayName).tag(window)
+            Picker("Tab", selection: $selectedTab) {
+                ForEach(PopoverTab.allCases, id: \.self) { tab in
+                    Text(tab.displayName).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
 
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach(cards, id: \.provider) { card in
-                        ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: providerSettings.first { $0.provider == card.provider }?.state)
-                    }
-                }
+            switch selectedTab {
+            case .usage:
+                usageTab
+            case .claudeLimits:
+                ClaudeRateLimitsView()
             }
-            .scrollIndicators(.hidden)
 
             HStack {
-                Text(localImportStatusText)
-                    .font(.footnote)
-                    .foregroundStyle(localImport.failureMessage == nil && localImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
+                if selectedTab == .usage {
+                    Text(localImportStatusText)
+                        .font(.footnote)
+                        .foregroundStyle(localImport.failureMessage == nil && localImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
+                }
 
                 Spacer()
 
@@ -58,6 +73,25 @@ struct MonitoringPopoverView: View {
             providerSettings = ProviderSettingsStore().settings
             Task { await loadStoredMetrics() }
         }
+    }
+
+    @ViewBuilder
+    private var usageTab: some View {
+        Picker("Time window", selection: $selectedWindow) {
+            ForEach(TimeWindow.allCases, id: \.self) { window in
+                Text(window.displayName).tag(window)
+            }
+        }
+        .pickerStyle(.segmented)
+
+        ScrollView {
+            VStack(spacing: 12) {
+                ForEach(cards, id: \.provider) { card in
+                    ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: providerSettings.first { $0.provider == card.provider }?.state)
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
     }
 
     private var header: some View {
