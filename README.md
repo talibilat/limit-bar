@@ -172,13 +172,15 @@ Errors shown for custom import failures are generic and do not include private f
 ## Build And Test
 
 ```sh
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+export DEVELOPER_DIR="/Applications/Xcode_16.2.app/Contents/Developer"
+scripts/check-toolchain.sh
+swift test --package-path LimitBarCore
+xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 git diff --check
 ```
 
 Pull requests and pushes to `main` run these checks on macOS 14 with Xcode 16.2.
-To reproduce a pull request's whitespace check, run `git diff --check <base-commit> HEAD`.
+To check committed branch changes from their merge base, run `git diff --check <base-commit>...HEAD`.
 
 See [`docs/QA.md`](docs/QA.md) for acceptance checks and verification evidence.
 See [`futures/README.md`](futures/README.md) for proposals that are not current commitments.
