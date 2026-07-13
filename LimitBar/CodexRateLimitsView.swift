@@ -2,25 +2,9 @@ import SwiftUI
 import LimitBarCore
 
 struct CodexRateLimitsView: View {
-    private enum LoadState: Equatable {
-        case loading
-        case loaded(CodexRateLimitSnapshot)
-        case failed(String)
-    }
-
+    let snapshot: CodexRateLimitSnapshot
     let metrics: [UsageMetric]
     let pricingTable: PricingTable
-
-    // Reported back to the parent so its "Codex" section header can be
-    // hidden too - Codex has genuinely never been used recently on this
-    // machine, so there's nothing useful to show at all.
-    @Binding var isPresent: Bool
-
-    @State private var state = LoadState.loading
-
-    private var sessionsDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -28,31 +12,15 @@ struct CodexRateLimitsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            switch state {
-            case .loading:
-                ProgressView("Loading Codex rate limits")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
-            case let .failed(message):
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-            case let .loaded(snapshot):
-                if snapshot.isBusinessPlan {
-                    businessCreditsSection
-                } else {
-                    individualPlanSection(snapshot)
-                }
-
-                Text("As of \(snapshot.reportedAt.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if snapshot.isBusinessPlan {
+                businessCreditsSection
+            } else {
+                individualPlanSection(snapshot)
             }
-        }
-        .task {
-            await load()
+
+            Text("As of \(snapshot.reportedAt.formatted(date: .omitted, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -83,21 +51,6 @@ struct CodexRateLimitsView: View {
         }
     }
 
-    private func load() async {
-        do {
-            let snapshot = try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: sessionsDirectory, now: Date())
-            isPresent = true
-            state = .loaded(snapshot)
-        } catch CodexRateLimitFailure.notFound {
-            isPresent = false
-        } catch let failure as CodexRateLimitFailure {
-            isPresent = true
-            state = .failed(failure.displayText)
-        } catch {
-            isPresent = true
-            state = .failed("Codex session data could not be read.")
-        }
-    }
 }
 
 private struct CreditsUsageRowView: View {
@@ -128,7 +81,11 @@ private struct CreditsUsageRowView: View {
 }
 
 #Preview {
-    CodexRateLimitsView(metrics: [], pricingTable: .empty, isPresent: .constant(true))
+    CodexRateLimitsView(
+        snapshot: CodexRateLimitSnapshot(planType: "plus", primary: CodexRateLimitWindow(percentUsed: 10, windowMinutes: 300, resetsAt: nil), secondary: nil, credits: nil, reportedAt: Date()),
+        metrics: [],
+        pricingTable: .empty
+    )
         .padding(20)
         .frame(width: 440, height: 300)
 }

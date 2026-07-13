@@ -79,6 +79,31 @@ struct ProviderAuthenticationTests {
         }
     }
 
+    @Test("cancelled diagnostics are non-failures and do not update UI settings")
+    func cancelledDiagnosticsAreSuppressible() {
+        let diagnostic = ProviderDiagnostic(
+            provider: .openAI,
+            state: .cancelled,
+            failureReason: nil,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        #expect(diagnostic.state.displayText == "Cancelled")
+        #expect(!diagnostic.shouldUpdateSettings)
+    }
+
+    @Test("settings persistence decision suppresses diagnostic and task cancellation")
+    func settingsPersistenceDecisionSuppressesCancellation() {
+        let connected = ProviderDiagnostic(provider: .openAI, state: .connected, failureReason: nil, updatedAt: Date())
+        let failed = ProviderDiagnostic(provider: .openAI, state: .failed, failureReason: .refreshFailed, updatedAt: Date())
+        let cancelled = ProviderDiagnostic(provider: .openAI, state: .cancelled, failureReason: nil, updatedAt: Date())
+
+        #expect(ProviderSettingsPersistenceDecision.evaluate(connected, taskIsCancelled: false) == .persist)
+        #expect(ProviderSettingsPersistenceDecision.evaluate(failed, taskIsCancelled: false) == .persist)
+        #expect(ProviderSettingsPersistenceDecision.evaluate(cancelled, taskIsCancelled: false) == .suppress)
+        #expect(ProviderSettingsPersistenceDecision.evaluate(connected, taskIsCancelled: true) == .suppress)
+    }
+
     @Test("diagnostic health states have fixed summaries")
     func diagnosticHealthStatesHaveFixedSummaries() {
         #expect(UsageDatabaseDiagnosticState.opened.displayText == "SQLite store opened")

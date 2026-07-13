@@ -232,6 +232,123 @@ struct LocalUsageEventImporterTests {
         #expect(try store.metrics(for: .today).map(\.modelLabel) == ["valid"])
     }
 
+    @Test("file larger than 100 MiB fails without replacing the previous snapshot")
+    func oversizedFilePreservesPreviousSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        let handle = try FileHandle(forWritingTo: fileURL)
+        try handle.truncate(atOffset: UInt64(100 * 1_024 * 1_024 + 1))
+        try handle.close()
+
+        #expect(throws: LocalUsageEventError.fileTooLarge) {
+            try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .openAI && $0.provenance.source == .builtInLocalLog }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "existing" })
+    }
+
+    @Test("more than 10,000 aggregate keys fails without replacing the previous snapshot")
+    func aggregateLimitPreservesPreviousSnapshot() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        let events = (0...5_000).map {
+            #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"model-\#($0)","inputTokens":1,"outputTokens":1}"#
+        }
+        try events.joined(separator: "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+
+        #expect(throws: LocalUsageEventError.tooManyAggregates) {
+            try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let imported = try store.allMetrics().filter { $0.provider == .openAI && $0.provenance.source == .builtInLocalLog }
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.modelLabel == "existing" })
+    }
+
+    @Test("pre-cancelled import preserves the previous snapshot")
+    func preCancelledImportPreservesPreviousSnapshot() async throws {
+        let databasePath = temporaryDatabasePath()
+        let store = try SQLiteUsageMetricStore(path: databasePath)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let errorWasCancellation = await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                let taskStore = try SQLiteUsageMetricStore(path: databasePath)
+                try LocalUsageEventImporter.importEvents(from: fileURL, to: taskStore, now: now, calendar: calendar)
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                return false
+            }
+        }.value
+
+        #expect(errorWasCancellation)
+        #expect(try store.allMetrics().filter { $0.provenance.source == .builtInLocalLog }.allSatisfy { $0.modelLabel == "existing" })
+    }
+
+    @Test("cancellation during chunk streaming preserves the previous snapshot")
+    func midImportCancellationPreservesPreviousSnapshot() async throws {
+        let databasePath = temporaryDatabasePath()
+        let store = try SQLiteUsageMetricStore(path: databasePath)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let initialURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
+        try LocalUsageEventImporter.importEvents(from: initialURL, to: store, now: now, calendar: calendar)
+        let largeURL = try temporaryFile(contents: "")
+        defer { try? FileManager.default.removeItem(at: largeURL) }
+        let handle = try FileHandle(forWritingTo: largeURL)
+        try handle.truncate(atOffset: UInt64(100 * 1_024 * 1_024))
+        try handle.close()
+
+        let importTask = Task.detached {
+            let taskStore = try SQLiteUsageMetricStore(path: databasePath)
+            return try LocalUsageEventImporter.importEvents(from: largeURL, to: taskStore, now: now, calendar: calendar)
+        }
+        try await Task.sleep(for: .milliseconds(5))
+        importTask.cancel()
+
+        do {
+            _ = try await importTask.value
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+        #expect(try store.allMetrics().filter { $0.provenance.source == .builtInLocalLog }.allSatisfy { $0.modelLabel == "existing" })
+    }
+
+    @Test("future events beyond five minutes are malformed while the boundary is accepted")
+    func futureTimestampTolerance() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T10:00:00Z")
+        let fileURL = try temporaryFile(contents: [
+            #"{"provider":"openAI","timestamp":"2026-07-10T10:05:00Z","model":"boundary","inputTokens":1,"outputTokens":1}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T10:05:01Z","model":"later-today","inputTokens":1,"outputTokens":1}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-12T10:00:00Z","model":"later-week","inputTokens":1,"outputTokens":1}"#
+        ].joined(separator: "\n"))
+
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: try utcCalendar())
+
+        #expect(result.validEventCount == 1)
+        #expect(result.malformedEventCount == 2)
+        #expect(result.malformedEvents.map(\.reason) == Array(repeating: String(describing: LocalUsageEventError.futureTimestamp), count: 2))
+        #expect(try store.metrics(for: .today).map(\.modelLabel) == ["boundary"])
+        #expect(try store.metrics(for: .currentWeek).map(\.modelLabel) == ["boundary"])
+    }
+
     @Test("event at the end of today is excluded from today")
     func eventAtEndOfTodayIsExcludedFromToday() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
@@ -240,7 +357,7 @@ struct LocalUsageEventImporterTests {
         try LocalUsageEventImporter.importEvents(
             from: fileURL,
             to: store,
-            now: try date("2026-07-10T18:00:00Z"),
+            now: try date("2026-07-10T23:55:00Z"),
             calendar: try utcCalendar()
         )
 
@@ -342,6 +459,37 @@ struct LocalUsageEventImporterTests {
         #expect(imported.allSatisfy { $0.modelLabel == "existing" })
     }
 
+    @Test("multi-provider replacement rolls back every source scope when a later provider insert fails")
+    func multiProviderReplacementIsAtomic() throws {
+        let databasePath = temporaryDatabasePath()
+        let store = try SQLiteUsageMetricStore(path: databasePath)
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: [
+            #"{"provider":"anthropic","timestamp":"2026-07-10T10:00:00Z","model":"old-anthropic","inputTokens":1,"outputTokens":1}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"old-openai","inputTokens":1,"outputTokens":1}"#
+        ].joined(separator: "\n"))
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try executeSQLite(databasePath: databasePath, sql: """
+        CREATE TRIGGER fail_openai_insert BEFORE INSERT ON usage_metrics
+        WHEN NEW.provider = 'openAI' AND NEW.model_label = 'new-openai'
+        BEGIN
+            SELECT RAISE(ABORT, 'blocked second provider insert');
+        END;
+        """)
+        try [
+            #"{"provider":"anthropic","timestamp":"2026-07-10T10:00:00Z","model":"new-anthropic","inputTokens":2,"outputTokens":2}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"new-openai","inputTokens":2,"outputTokens":2}"#
+        ].joined(separator: "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+
+        #expect(throws: Error.self) {
+            try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        }
+
+        let models = Set(try store.allMetrics().map(\.modelLabel))
+        #expect(models == ["old-anthropic", "old-openai"])
+    }
+
     @Test("parses Anthropic and OpenAI events")
     func parsesAnthropicAndOpenAIEvents() throws {
         let anthropic = try LocalUsageEventParser.parseLine(#"{"provider":"anthropic","timestamp":"2026-07-10T10:30:00Z","model":"claude-fable-5","inputTokens":300,"outputTokens":40}"#)
@@ -417,6 +565,48 @@ struct LocalUsageEventImporterTests {
         let afterClear = try store.metrics(for: .today).filter { $0.provider == .anthropic }
         #expect(afterClear.count == 1)
         #expect(afterClear.first?.accountLabel == nil)
+    }
+
+    @Test("local import persists exact local midnight and Monday windows")
+    func localImportPersistsExactLocalWindows() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let fileURL = try temporaryFile(contents: #"{"provider":"anthropic","timestamp":"2026-07-06T07:00:00Z","model":"claude","inputTokens":3,"outputTokens":1}"#)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let now = try date("2026-07-06T19:00:00Z")
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let metrics = try store.currentMetrics(at: now, calendar: calendar)
+        #expect(Set(metrics.map(\.provenance)) == [
+            .bounded(source: .builtInLocalLog, window: windows.today),
+            .bounded(source: .builtInLocalLog, window: windows.currentWeek)
+        ])
+    }
+
+    @Test("local replacement does not delete provider API rows in the same exact window")
+    func localReplacementIsSourceScoped() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let window = try CurrentUsageWindows.resolve(at: now, calendar: calendar).today
+        let apiMetric = UsageMetric(
+            provider: .anthropic, accountLabel: nil, projectLabel: nil, modelLabel: "api", deploymentLabel: nil,
+            provenance: .bounded(source: .providerAPI, window: window),
+            tokenUsage: TokenUsage(inputTokens: 9, outputTokens: 1), cost: nil,
+            limitStatus: .unsupportedByProviderAPI, refreshedAt: now, freshness: .fresh
+        )
+        try store.save([apiMetric])
+        let fileURL = try temporaryFile(contents: #"{"provider":"anthropic","timestamp":"2026-07-10T10:30:00Z","model":"local","inputTokens":3,"outputTokens":1}"#)
+
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let today = try store.currentMetrics(at: now, calendar: calendar).filter { $0.timeWindow == .today }
+        #expect(today.count == 2)
+        #expect(today.contains { $0.provenance.source == .providerAPI && $0.modelLabel == "api" })
+        #expect(today.contains { $0.provenance.source == .builtInLocalLog && $0.modelLabel == "local" })
     }
 
     private func temporaryFile(contents: String) throws -> URL {

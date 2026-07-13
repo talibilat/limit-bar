@@ -29,7 +29,7 @@ struct CustomUsageSourceTests {
     }
 
     @Test("aggregates events per model and time window under the source's name")
-    func aggregatesEventsUnderSourceName() throws {
+    func aggregatesEventsUnderSourceName() async throws {
         let jsonl = [
             #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#,
             #"{"timestamp":"2026-07-12T11:00:00Z","model":"gpt-4o","inputTokens":50,"outputTokens":5}"#,
@@ -38,7 +38,8 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-12T18:00:00Z")
 
-        let metrics = CustomUsageAggregator.metrics(from: fileURL, sourceName: "Aider", now: now, calendar: utcCalendar())
+        let source = CustomUsageSource(name: "Aider", filePath: fileURL.path)
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: source, now: now, calendar: utcCalendar())
 
         let today = metrics.filter { $0.timeWindow == .today }
         #expect(today.allSatisfy { $0.provider == .custom && $0.accountLabel == "Aider" })
@@ -49,16 +50,16 @@ struct CustomUsageSourceTests {
     }
 
     @Test("a missing file produces no metrics instead of an error")
-    func missingFileProducesNoMetrics() {
+    func missingFileProducesNoMetrics() async {
         let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
 
-        let metrics = CustomUsageAggregator.metrics(from: missing, sourceName: "Aider", now: Date(), calendar: .current)
+        let metrics = await CustomUsageAggregator.metrics(from: missing, source: CustomUsageSource(name: "Aider", filePath: missing.path), now: Date(), calendar: .current)
 
         #expect(metrics.isEmpty)
     }
 
     @Test("malformed lines are skipped without failing the whole source")
-    func malformedLinesAreSkipped() throws {
+    func malformedLinesAreSkipped() async throws {
         let jsonl = [
             #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#,
             "not json at all"
@@ -66,11 +67,134 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-12T18:00:00Z")
 
-        let metrics = CustomUsageAggregator.metrics(from: fileURL, sourceName: "Aider", now: now, calendar: utcCalendar())
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
 
         // One valid event, aggregated into both the Today and Current Week windows it falls in.
         #expect(metrics.count == 2)
         #expect(metrics.allSatisfy { $0.modelLabel == "gpt-4o" })
+    }
+
+    @Test("custom metrics use stable source identity across rename")
+    func customMetricsUseStableIdentityAcrossRename() async throws {
+        let fileURL = try temporaryFile(contents: #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":1,"outputTokens":2}"#)
+        let id = UUID()
+        let now = try date("2026-07-12T18:00:00Z")
+        let before = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
+        let after = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Renamed", filePath: fileURL.path), now: now, calendar: utcCalendar())
+
+        #expect(before.allSatisfy { $0.provenance.source == .custom(id) })
+        #expect(after.allSatisfy { $0.provenance.source == .custom(id) })
+        #expect(before.map(\.provenance) == after.map(\.provenance))
+        #expect(after.allSatisfy { $0.accountLabel == "Renamed" })
+    }
+
+    @Test("streaming load recovers after invalid UTF-8 and overlong lines with bounded diagnostics")
+    func streamingLoadRecoversWithBoundedDiagnostics() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var data = Data([0xFF, 0x0A])
+        data.append(Data(repeating: 0x61, count: 1_048_577))
+        data.append(0x0A)
+        for _ in 0..<25 { data.append(Data("bad json\n".utf8)) }
+        data.append(Data(#"{"timestamp":"2026-07-12T10:00:00Z","model":"valid","inputTokens":3,"outputTokens":2}"#.utf8))
+        try data.write(to: fileURL)
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL,
+            source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar()
+        )
+
+        #expect(result.metrics.count == 2)
+        #expect(result.metrics.allSatisfy { $0.modelLabel == "valid" })
+        #expect(result.rejectedLineCount == 27)
+        #expect(result.diagnostics.count == 20)
+    }
+
+    @Test("load rejects sparse oversized files, directories, and special files without leaking paths")
+    func rejectsUnsafeFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oversized = root.appendingPathComponent("private-name.jsonl")
+        #expect(FileManager.default.createFile(atPath: oversized.path, contents: Data()))
+        let handle = try FileHandle(forWritingTo: oversized)
+        try handle.truncate(atOffset: 100 * 1_024 * 1_024 + 1)
+        try handle.close()
+        let source = CustomUsageSource(name: "Tool", filePath: oversized.path)
+
+        await #expect(throws: CustomUsageLoadError.fileTooLarge) {
+            try await CustomUsageAggregator.loadMetrics(from: oversized, source: source, now: Date(), calendar: .current)
+        }
+        await #expect(throws: CustomUsageLoadError.notRegularFile) {
+            try await CustomUsageAggregator.loadMetrics(from: root, source: source, now: Date(), calendar: .current)
+        }
+
+        let fifo = root.appendingPathComponent("private-fifo")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        do {
+            _ = try await CustomUsageAggregator.loadMetrics(from: fifo, source: source, now: Date(), calendar: .current)
+            Issue.record("Expected special file rejection")
+        } catch let error as CustomUsageLoadError {
+            #expect(error == .notRegularFile)
+            #expect(!String(describing: error).contains(root.path))
+        }
+    }
+
+    @Test("load rejects events over five minutes in the future but accepts the boundary")
+    func rejectsFutureEventsPastBoundary() async throws {
+        let jsonl = [
+            #"{"timestamp":"2026-07-12T18:05:00Z","model":"boundary","inputTokens":1,"outputTokens":1}"#,
+            #"{"timestamp":"2026-07-12T18:05:01Z","model":"future","inputTokens":2,"outputTokens":2}"#
+        ].joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL,
+            source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar()
+        )
+
+        #expect(Set(result.metrics.map(\.modelLabel)) == ["boundary"])
+        #expect(result.rejectedLineCount == 1)
+        #expect(result.diagnostics.first?.reason == .futureTimestamp)
+        #expect(result.hasFutureTimestampRejection)
+    }
+
+    @Test("token overflow fails the typed load")
+    func tokenOverflowFails() async throws {
+        let jsonl = [
+            #"{"timestamp":"2026-07-12T10:00:00Z","model":"x","inputTokens":9223372036854775807,"outputTokens":0}"#,
+            #"{"timestamp":"2026-07-12T11:00:00Z","model":"x","inputTokens":1,"outputTokens":0}"#
+        ].joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+
+        await #expect(throws: CustomUsageLoadError.tokenOverflow) {
+            try await CustomUsageAggregator.loadMetrics(
+                from: fileURL,
+                source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
+                now: try date("2026-07-12T18:00:00Z"),
+                calendar: utcCalendar()
+            )
+        }
+    }
+
+    @Test("more than ten thousand distinct model-window aggregates fails the typed load")
+    func aggregateCardinalityIsBounded() async throws {
+        let jsonl = (0...5_000).map { index in
+            "{\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1}"
+        }.joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+
+        await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
+            try await CustomUsageAggregator.loadMetrics(
+                from: fileURL,
+                source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
+                now: try date("2026-07-12T18:00:00Z"),
+                calendar: utcCalendar()
+            )
+        }
     }
 
     private func temporaryFile(contents: String) throws -> URL {

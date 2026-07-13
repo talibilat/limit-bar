@@ -66,6 +66,7 @@ public struct CodexRateLimitSnapshot: Equatable, Sendable {
 public enum CodexRateLimitFailure: Error, Equatable, Sendable {
     case notFound
     case malformedResponse
+    case traversalLimitExceeded
 
     public var displayText: String {
         switch self {
@@ -73,6 +74,8 @@ public enum CodexRateLimitFailure: Error, Equatable, Sendable {
             "No recent Codex session found. Run codex once to populate rate limit data."
         case .malformedResponse:
             "Codex session data was not understood."
+        case .traversalLimitExceeded:
+            "Codex session storage contains too many entries to scan safely."
         }
     }
 }
@@ -113,19 +116,27 @@ public enum CodexRateLimitMapper {
             throw CodexRateLimitFailure.malformedResponse
         }
 
-        let reportedAt = raw.timestamp.flatMap(parseTimestamp) ?? Date()
+        guard let timestamp = raw.timestamp, let reportedAt = parseTimestamp(timestamp) else {
+            throw CodexRateLimitFailure.malformedResponse
+        }
 
-        return CodexRateLimitSnapshot(
+        let snapshot = CodexRateLimitSnapshot(
             planType: rateLimits.plan_type,
             primary: window(from: rateLimits.primary),
             secondary: window(from: rateLimits.secondary),
             credits: credits(from: rateLimits.credits),
             reportedAt: reportedAt
         )
+        guard snapshot.primary != nil || snapshot.secondary != nil || snapshot.credits != nil else {
+            throw CodexRateLimitFailure.malformedResponse
+        }
+        return snapshot
     }
 
     private static func window(from raw: RawEntry.RawPayload.RawWindow?) -> CodexRateLimitWindow? {
-        guard let raw, let percent = raw.used_percent, let minutes = raw.window_minutes else {
+        guard let raw, let percent = raw.used_percent, let minutes = raw.window_minutes,
+              percent.isFinite, (0...100).contains(percent),
+              (1...525_600).contains(minutes) else {
             return nil
         }
         return CodexRateLimitWindow(
@@ -162,28 +173,84 @@ public enum CodexSessionRateLimitReader {
         recentWindow: TimeInterval = 9 * 24 * 60 * 60,
         fileManager: FileManager = .default
     ) throws -> CodexRateLimitSnapshot {
+        try Task.checkCancellation()
         guard let enumerator = fileManager.enumerator(
             at: sessionsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
             throw CodexRateLimitFailure.notFound
         }
 
+        return try latestSnapshot(
+            nextEntry: { enumerator.nextObject() as? URL },
+            now: now,
+            recentWindow: recentWindow,
+            maximumEntries: 10_000,
+            maximumFileSize: 8 * 1_024 * 1_024,
+            maximumTotalReadSize: 32 * 1_024 * 1_024,
+            fileManager: fileManager
+        )
+    }
+
+    static func latestSnapshot(
+        nextEntry: () -> URL?,
+        now: Date,
+        recentWindow: TimeInterval = 9 * 24 * 60 * 60,
+        maximumEntries: Int,
+        maximumFileSize: Int = 8 * 1_024 * 1_024,
+        maximumTotalReadSize: Int = 32 * 1_024 * 1_024,
+        fileManager: FileManager = .default,
+        readFile: (URL, Int) throws -> Data = boundedRead
+    ) throws -> CodexRateLimitSnapshot {
+        try Task.checkCancellation()
+        guard maximumFileSize >= 0, maximumFileSize < Int.max,
+              maximumTotalReadSize >= 0, maximumTotalReadSize < Int.max else {
+            throw CodexRateLimitFailure.traversalLimitExceeded
+        }
+
         let cutoff = now.addingTimeInterval(-recentWindow)
         var best: CodexRateLimitSnapshot?
+        var examinedEntries = 0
+        var totalReadSize = 0
+        var candidates: [(url: URL, modified: Date)] = []
 
-        for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
-            guard let modified = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+        while let fileURL = nextEntry() {
+            try Task.checkCancellation()
+            examinedEntries += 1
+            guard examinedEntries <= maximumEntries else {
+                throw CodexRateLimitFailure.traversalLimitExceeded
+            }
+            guard fileURL.pathExtension == "jsonl" else { continue }
+            guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let modified = values.contentModificationDate,
+                  let fileSize = values.fileSize,
+                  fileSize <= maximumFileSize,
                   modified >= cutoff else {
                 continue
             }
-            guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            candidates.append((fileURL, modified))
+        }
+
+        for candidate in candidates.sorted(by: { $0.modified > $1.modified }) {
+            try Task.checkCancellation()
+            guard totalReadSize < maximumTotalReadSize else { break }
+            let remainingReadSize = maximumTotalReadSize - totalReadSize
+            let readSize = min(maximumFileSize, remainingReadSize) + 1
+            guard let contents = try? readFile(candidate.url, readSize) else { continue }
+            guard contents.count <= remainingReadSize else { break }
+            totalReadSize += contents.count
+            guard contents.count <= maximumFileSize else { continue }
+            guard !contents.isEmpty else {
                 continue
             }
-            for line in contents.split(separator: "\n") {
-                guard let lineData = line.data(using: .utf8),
-                      let snapshot = try? CodexRateLimitMapper.parseLine(lineData) else {
+            for line in contents.split(separator: 0x0A) {
+                try Task.checkCancellation()
+                guard let snapshot = try? CodexRateLimitMapper.parseLine(Data(line)) else {
+                    continue
+                }
+                guard snapshot.reportedAt >= cutoff,
+                      snapshot.reportedAt <= now.addingTimeInterval(5 * 60) else {
                     continue
                 }
                 guard snapshot.primary != nil || snapshot.secondary != nil || snapshot.credits != nil else {
@@ -199,6 +266,19 @@ public enum CodexSessionRateLimitReader {
             throw CodexRateLimitFailure.notFound
         }
         return best
+    }
+
+    private static func boundedRead(_ fileURL: URL, byteCount: Int) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        defer { try? handle.close() }
+        var data = Data()
+        while data.count < byteCount {
+            try Task.checkCancellation()
+            let count = min(64 * 1_024, byteCount - data.count)
+            guard let chunk = try handle.read(upToCount: count), !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return data
     }
 }
 
@@ -218,10 +298,28 @@ public enum CodexCreditsEstimator {
     }
 
     public static func estimate(from metrics: [UsageMetric], pricing: PricingTable) -> Estimate {
+        guard let windows = try? CurrentUsageWindows.resolve(at: Date(), calendar: .current) else {
+            return Estimate(today: nil, currentWeek: nil)
+        }
+        return estimate(from: metrics, pricing: pricing, windows: windows)
+    }
+
+    public static func estimate(from metrics: [UsageMetric], pricing: PricingTable, windows: CurrentUsageWindows) -> Estimate {
         Estimate(
-            today: totalCreditsCost(metrics.filter { $0.provider == .openAI && $0.timeWindow == .today }, pricing: pricing),
-            currentWeek: totalCreditsCost(metrics.filter { $0.provider == .openAI && $0.timeWindow == .currentWeek }, pricing: pricing)
+            today: totalCreditsCost(selectedMetrics(metrics, window: windows.today), pricing: pricing),
+            currentWeek: totalCreditsCost(selectedMetrics(metrics, window: windows.currentWeek), pricing: pricing)
         )
+    }
+
+    private static func selectedMetrics(_ metrics: [UsageMetric], window: ExactUsageWindow) -> [UsageMetric] {
+        let current = metrics.filter {
+            $0.provider == .openAI
+                && $0.provenance.exactWindow == window
+                && $0.tokenUsage.totalTokens > 0
+                && !$0.freshness.isStale
+        }
+        let provider = current.filter { $0.provenance.source == .providerAPI }
+        return provider.isEmpty ? current.filter { $0.provenance.source == .builtInLocalLog } : provider
     }
 
     private static func totalCreditsCost(_ metrics: [UsageMetric], pricing: PricingTable) -> Cost? {

@@ -3,11 +3,23 @@ import Foundation
 public enum AnthropicProviderOutcome: Equatable, Sendable {
     case connected
     case failed(ProviderFailureReason)
+    case cancelled
 }
 
 public enum AnthropicRefreshResult: Equatable, Sendable {
     case success([UsageMetric])
     case failure(ProviderFailureReason)
+    case cancelled
+}
+
+public struct AnthropicRefreshBatch: Equatable, Sendable {
+    public let usage: AnthropicRefreshResult
+    public let cost: AnthropicRefreshResult
+
+    public init(usage: AnthropicRefreshResult, cost: AnthropicRefreshResult) {
+        self.usage = usage
+        self.cost = cost
+    }
 }
 
 public struct AnthropicAdminClient: Sendable {
@@ -35,22 +47,40 @@ public struct AnthropicAdminClient: Sendable {
             default:
                 return .failed(.refreshFailed)
             }
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failed(.networkUnavailable)
         }
     }
 
     public func fetchUsage(apiKey: String, interval: DateInterval, now: Date, calendar: Calendar) async -> AnthropicRefreshResult {
+        guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else { return .failure(.refreshFailed) }
+        return await fetchUsage(apiKey: apiKey, interval: interval, windows: windows)
+    }
+
+    public func fetchUsage(apiKey: String, windows: CurrentUsageWindows, now: Date) async -> AnthropicRefreshResult {
+        await fetchUsage(
+            apiKey: apiKey,
+            interval: DateInterval(start: windows.currentWeek.start, end: min(now, windows.currentWeek.end)),
+            windows: windows
+        )
+    }
+
+    public func fetchUsage(apiKey: String, interval: DateInterval, windows: CurrentUsageWindows) async -> AnthropicRefreshResult {
         var page: String?
+        var pagination = PaginationGuard()
         var buckets: [AnthropicUsageMapper.Bucket] = []
         do {
             repeat {
+                try pagination.registerRequest(token: page)
                 let response = try await httpClient.send(request(apiKey: apiKey, interval: interval, page: page))
                 switch response.statusCode {
                 case 200:
                     let decoded = try AnthropicUsageMapper.decode(response.data)
                     buckets.append(contentsOf: decoded.data)
-                    page = decoded.hasMore == true ? decoded.nextPage : nil
+                    page = try pagination.nextToken(hasMore: decoded.hasMore, token: decoded.nextPage)
                 case 401:
                     return .failure(.authenticationRejected)
                 case 403:
@@ -59,29 +89,54 @@ public struct AnthropicAdminClient: Sendable {
                     return .failure(.refreshFailed)
                 }
             } while page != nil
-            return .success(try AnthropicUsageMapper.metrics(from: buckets, now: now, calendar: calendar))
-        } catch is DecodingError {
+            return .success(try AnthropicUsageMapper.metrics(from: buckets, windows: windows))
+        } catch is DecodingError, is PaginationError {
             return .failure(.refreshFailed)
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failure(.networkUnavailable)
         }
     }
 
     public func fetchCost(apiKey: String, interval: DateInterval, now: Date, calendar: Calendar) async -> AnthropicRefreshResult {
+        guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else { return .failure(.refreshFailed) }
+        return await fetchCost(apiKey: apiKey, interval: interval, windows: windows)
+    }
+
+    public func fetchCost(apiKey: String, windows: CurrentUsageWindows) async -> AnthropicRefreshResult {
+        await fetchCost(apiKey: apiKey, windows: windows, now: Date())
+    }
+
+    public func fetchCost(apiKey: String, windows: CurrentUsageWindows, now: Date) async -> AnthropicRefreshResult {
+        await fetchCost(
+            apiKey: apiKey,
+            interval: DateInterval(start: windows.utcBillingWeek.start, end: min(now, windows.utcBillingWeek.end)),
+            windows: windows
+        )
+    }
+
+    public func fetchCost(apiKey: String, interval: DateInterval, windows: CurrentUsageWindows) async -> AnthropicRefreshResult {
         var page: String?
+        var pagination = PaginationGuard()
         var buckets: [AnthropicCostMapper.Bucket] = []
         do {
             repeat {
+                try pagination.registerRequest(token: page)
                 let response = try await httpClient.send(request(apiKey: apiKey, interval: interval, page: page, path: "v1/organizations/cost_report"))
                 guard response.statusCode == 200 else { return .failure(.refreshFailed) }
                 let decoded = try AnthropicCostMapper.decode(response.data)
                 buckets.append(contentsOf: decoded.data)
-                page = decoded.hasMore == true ? decoded.nextPage : nil
+                page = try pagination.nextToken(hasMore: decoded.hasMore, token: decoded.nextPage)
             } while page != nil
-            return .success(try AnthropicCostMapper.metrics(from: buckets, now: now, calendar: calendar))
-        } catch is DecodingError {
+            return .success(try AnthropicCostMapper.metrics(from: buckets, windows: windows))
+        } catch is DecodingError, is PaginationError {
             return .failure(.refreshFailed)
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failure(.networkUnavailable)
         }
     }
@@ -172,7 +227,7 @@ public enum AnthropicUsageMapper {
     }
 
     private struct Key: Hashable {
-        let window: TimeWindow
+        let window: ExactUsageWindow
         let label: String
     }
 
@@ -189,11 +244,16 @@ public enum AnthropicUsageMapper {
     }
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: decode(data).data, now: now, calendar: calendar)
+        try metrics(from: decode(data).data, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
+    }
+
+    static func metrics(from buckets: [Bucket], windows current: CurrentUsageWindows) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
+        let windows = [current.today, current.currentWeek]
         var aggregates: [Key: Aggregate] = [:]
 
         for bucket in buckets {
@@ -215,17 +275,19 @@ public enum AnthropicUsageMapper {
                 guard inputParts.allSatisfy({ $0 >= 0 }) else { continue }
                 let rowInput = try inputParts.reduce(0, checkedSum)
 
-                for window in [TimeWindow.today, .currentWeek] {
-                    let interval = window.interval(containing: now, calendar: calendar)
-                    guard start >= interval.start, end <= interval.end else { continue }
+                for window in windows {
+                    guard start >= window.start, end <= window.end else { continue }
                     let key = Key(window: window, label: label)
                     var aggregate = aggregates[key] ?? Aggregate(latest: end)
                     aggregate.input = try checkedSum(aggregate.input, rowInput)
                     aggregate.output = try checkedSum(aggregate.output, row.outputTokens)
                     _ = try checkedSum(aggregate.input, aggregate.output)
                     aggregate.latest = max(aggregate.latest, end)
-                    if let used = row.limitUsed, let limit = row.limitValue, limit > 0 {
-                        aggregate.limitUsed = (aggregate.limitUsed ?? 0) + used
+                    if let used = row.limitUsed, let limit = row.limitValue,
+                       used.isFinite, used >= 0, limit.isFinite, limit > 0 {
+                        let combinedUsed = (aggregate.limitUsed ?? 0) + used
+                        guard combinedUsed.isFinite else { throw AnthropicMappingError.limitOverflow }
+                        aggregate.limitUsed = combinedUsed
                         aggregate.limitValue = limit
                     }
                     aggregates[key] = aggregate
@@ -246,7 +308,7 @@ public enum AnthropicUsageMapper {
                 projectLabel: nil,
                 modelLabel: key.label,
                 deploymentLabel: nil,
-                timeWindow: key.window,
+                provenance: .bounded(source: .providerAPI, window: key.window),
                 tokenUsage: TokenUsage(inputTokens: aggregate.input, outputTokens: aggregate.output),
                 cost: nil,
                 limitStatus: limitStatus,
@@ -297,11 +359,11 @@ public enum AnthropicCostMapper {
         }
     }
     struct Row: Decodable { let description: String?; let amount: String; let currency: String }
-    private struct Key: Hashable { let window: TimeWindow; let label: String; let currency: String }
+    private struct Key: Hashable { let window: ExactUsageWindow; let label: String; let currency: String }
     private struct Aggregate { var cents: Decimal; var latest: Date }
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: decode(data).data, now: now, calendar: calendar)
+        try metrics(from: decode(data).data, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func decode(_ data: Data) throws -> Response {
@@ -309,19 +371,26 @@ public enum AnthropicCostMapper {
     }
 
     static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
+    }
+
+    static func metrics(from buckets: [Bucket], windows: CurrentUsageWindows) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
+        let window = windows.utcBillingWeek
         var aggregates: [Key: Aggregate] = [:]
         let datedBuckets = buckets.compactMap { bucket -> (Bucket, Date, Date)? in
             guard let start = formatter.date(from: bucket.startingAt), let end = formatter.date(from: bucket.endingAt) else { return nil }
             return (bucket, start, end)
         }
-        for window in [TimeWindow.today, .currentWeek] {
-            let interval = window.interval(containing: now, calendar: calendar)
-            let contained = datedBuckets.filter { $0.1 >= interval.start && $0.2 <= interval.end }.sorted { $0.1 < $1.1 }
+        for window in [window] {
+            let contained = datedBuckets.filter { $0.1 >= window.start && $0.2 <= window.end }.sorted { $0.1 < $1.1 }
             for (bucket, _, end) in contained {
                 for row in bucket.results {
                     let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !label.isEmpty, let cents = Decimal(string: row.amount) else { continue }
+                    guard !label.isEmpty,
+                          let cents = Decimal(string: row.amount),
+                          cents.isFinite,
+                          cents >= 0 else { continue }
                     let key = Key(window: window, label: label, currency: row.currency)
                     var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
                     aggregate.cents = try checkedAdd(aggregate.cents, cents)
@@ -337,7 +406,7 @@ public enum AnthropicCostMapper {
                 projectLabel: nil,
                 modelLabel: key.label,
                 deploymentLabel: nil,
-                timeWindow: key.window,
+                provenance: .bounded(source: .providerAPI, window: key.window),
                 tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0),
                 cost: Cost(amount: aggregate.cents / 100, currencyCode: key.currency, source: .providerReported),
                 limitStatus: .unsupportedByProviderAPI,
@@ -366,18 +435,104 @@ public enum AnthropicCostMapper {
 public enum AnthropicMappingError: Error, Equatable {
     case tokenOverflow
     case costOverflow
+    case limitOverflow
 }
 
 public enum AnthropicRefreshPersistence {
-    public static func apply(_ result: AnthropicRefreshResult, to store: SQLiteUsageMetricStore, now: Date = Date()) throws -> ProviderDiagnostic {
+    public static func apply(
+        _ batch: AnthropicRefreshBatch,
+        to store: SQLiteUsageMetricStore,
+        windows: CurrentUsageWindows,
+        now: Date = Date()
+    ) throws -> ProviderDiagnostic {
+        if case .cancelled = batch.usage, case .cancelled = batch.cost {
+            return ProviderDiagnostic(provider: .anthropic, state: .cancelled, failureReason: nil, updatedAt: now)
+        }
+        try store.markMetricsInitialized()
+        var succeeded = false
+        var failure: ProviderFailureReason?
+        var wasCancelled = false
+
+        switch batch.usage {
+        case let .success(metrics):
+            try store.replaceMetrics(
+                in: UsageReplacementScope(provider: .anthropic, source: .providerAPI, windows: [windows.today, windows.currentWeek]),
+                with: metrics
+            )
+            succeeded = true
+        case let .failure(reason):
+            try store.markMetricsStale(
+                in: UsageReplacementScope(provider: .anthropic, source: .providerAPI, windows: [windows.today, windows.currentWeek]),
+                missedRefreshes: 2
+            )
+            failure = reason
+        case .cancelled:
+            wasCancelled = true
+        }
+
+        switch batch.cost {
+        case let .success(metrics):
+            try store.replaceMetrics(
+                in: UsageReplacementScope(provider: .anthropic, source: .providerAPI, windows: [windows.utcBillingWeek]),
+                with: metrics
+            )
+            succeeded = true
+        case let .failure(reason):
+            try ProviderCostRefreshPersistence.markFailed(provider: .anthropic, in: store, window: windows.utcBillingWeek)
+            failure = failure ?? reason
+        case .cancelled:
+            wasCancelled = true
+        }
+
+        let state: ProviderConnectionState = if succeeded {
+            .connected
+        } else if failure != nil {
+            .failed
+        } else if wasCancelled {
+            .cancelled
+        } else {
+            .failed
+        }
+        return ProviderDiagnostic(
+            provider: .anthropic,
+            state: state,
+            failureReason: failure,
+            updatedAt: now
+        )
+    }
+
+    public static func apply(
+        _ result: AnthropicRefreshResult,
+        to store: SQLiteUsageMetricStore,
+        windows: CurrentUsageWindows? = nil,
+        now: Date = Date()
+    ) throws -> ProviderDiagnostic {
         switch result {
         case let .success(metrics):
             try store.markMetricsInitialized()
-            try store.replaceMetrics(provider: .anthropic, timeWindows: [.today, .currentWeek], with: metrics)
+            let exactWindows = Set(metrics.compactMap(\.provenance.exactWindow))
+            if !exactWindows.isEmpty || windows != nil {
+                let replacementWindows = windows.map { Set([$0.today, $0.currentWeek, $0.utcBillingWeek]) } ?? exactWindows
+                try store.replaceMetrics(
+                    in: UsageReplacementScope(provider: .anthropic, source: .providerAPI, windows: replacementWindows),
+                    with: metrics
+                )
+            } else {
+                try store.replaceMetrics(provider: .anthropic, timeWindows: [.today, .currentWeek], with: metrics)
+            }
             return ProviderDiagnostic(provider: .anthropic, state: .connected, failureReason: nil, updatedAt: now)
         case let .failure(reason):
-            try store.markMetricsStale(provider: .anthropic, timeWindows: [.today, .currentWeek], missedRefreshes: 2)
+            if let windows {
+                try store.markMetricsStale(
+                    in: UsageReplacementScope(provider: .anthropic, source: .providerAPI, windows: [windows.today, windows.currentWeek, windows.utcBillingWeek]),
+                    missedRefreshes: 2
+                )
+            } else {
+                try store.markMetricsStale(provider: .anthropic, timeWindows: [.today, .currentWeek], missedRefreshes: 2)
+            }
             return ProviderDiagnostic(provider: .anthropic, state: .failed, failureReason: reason, updatedAt: now)
+        case .cancelled:
+            return ProviderDiagnostic(provider: .anthropic, state: .cancelled, failureReason: nil, updatedAt: now)
         }
     }
 }

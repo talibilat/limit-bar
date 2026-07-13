@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 public enum ClaudeRateLimitGroup: String, Codable, Equatable, Sendable {
     case session
@@ -94,6 +95,7 @@ public enum ClaudeRateLimitFailure: Error, Equatable, Sendable {
     case requestRejected
     case networkUnavailable
     case malformedResponse
+    case cancelled
 
     public var displayText: String {
         switch self {
@@ -105,6 +107,8 @@ public enum ClaudeRateLimitFailure: Error, Equatable, Sendable {
             "Network unavailable."
         case .malformedResponse:
             "Claude usage response was not understood."
+        case .cancelled:
+            ""
         }
     }
 }
@@ -146,7 +150,8 @@ public enum ClaudeUsageResponseMapper {
         }
 
         var limits: [ClaudeRateLimit] = (raw.limits ?? []).compactMap { rawLimit in
-            guard let kind = rawLimit.kind, let percent = rawLimit.percent else {
+            guard let kind = rawLimit.kind, let percent = rawLimit.percent,
+                  percent.isFinite, (0...100).contains(percent) else {
                 return nil
             }
             return ClaudeRateLimit(
@@ -161,7 +166,8 @@ public enum ClaudeUsageResponseMapper {
         }
 
         if limits.isEmpty {
-            if let fiveHour = raw.five_hour, let utilization = fiveHour.utilization {
+            if let fiveHour = raw.five_hour, let utilization = fiveHour.utilization,
+               utilization.isFinite, (0...100).contains(utilization) {
                 limits.append(ClaudeRateLimit(
                     kind: "session",
                     group: .session,
@@ -172,7 +178,8 @@ public enum ClaudeUsageResponseMapper {
                     isActive: false
                 ))
             }
-            if let sevenDay = raw.seven_day, let utilization = sevenDay.utilization {
+            if let sevenDay = raw.seven_day, let utilization = sevenDay.utilization,
+               utilization.isFinite, (0...100).contains(utilization) {
                 limits.append(ClaudeRateLimit(
                     kind: "weekly_all",
                     group: .weekly,
@@ -202,7 +209,11 @@ public enum ClaudeUsageResponseMapper {
     }
 }
 
-public struct ClaudeOAuthUsageClient: Sendable {
+public protocol ClaudeRateLimitsFetching: Sendable {
+    func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure>
+}
+
+public struct ClaudeOAuthUsageClient: Sendable, ClaudeRateLimitsFetching {
     private let httpClient: any HTTPClient
     private let baseURL: URL
 
@@ -211,7 +222,11 @@ public struct ClaudeOAuthUsageClient: Sendable {
         self.baseURL = baseURL
     }
 
-    public func fetchRateLimits(accessToken: String, now: Date = Date()) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+    public func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+        await fetchRateLimits(accessToken: accessToken, now: Date())
+    }
+
+    public func fetchRateLimits(accessToken: String, now: Date) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
         let request = HTTPRequest(
             url: baseURL.appendingPathComponent("api/oauth/usage"),
             method: .get,
@@ -225,7 +240,10 @@ public struct ClaudeOAuthUsageClient: Sendable {
         let response: HTTPResponse
         do {
             response = try await httpClient.send(request)
+        } catch is CancellationError {
+            return .failure(.cancelled)
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .failure(.cancelled) }
             return .failure(.networkUnavailable)
         }
 
@@ -240,6 +258,107 @@ public struct ClaudeOAuthUsageClient: Sendable {
             return .failure(.expiredLogin)
         default:
             return .failure(.requestRejected)
+        }
+    }
+}
+
+public enum ClaudeRateLimitsModelState: Equatable, Sendable {
+    case loading
+    case notConnected
+    case authorizationRequired
+    case loaded(ClaudeRateLimitSnapshot, subscription: String?)
+    case failed(String)
+}
+
+@MainActor
+@Observable
+public final class ClaudeRateLimitsModel {
+    public private(set) var state: ClaudeRateLimitsModelState
+    public private(set) var isPresent = true
+    public private(set) var isRefreshing = false
+
+    private let credentials: any ClaudeCredentialProviding
+    private let client: any ClaudeRateLimitsFetching
+
+    public init(
+        credentials: any ClaudeCredentialProviding,
+        client: any ClaudeRateLimitsFetching,
+        state: ClaudeRateLimitsModelState = .loading
+    ) {
+        self.credentials = credentials
+        self.client = client
+        self.state = state
+    }
+
+    public func appeared() async {
+        await refresh(intent: .passive)
+    }
+
+    public func connect() async {
+        await refresh(intent: .interactive)
+    }
+
+    public func refresh() async {
+        await refresh(intent: .passive)
+    }
+
+    private func refresh(intent: ClaudeCredentialIntent) async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let credential: ClaudeCodeOAuthCredential
+        switch await credentials.credential(intent: intent) {
+        case let .credential(found):
+            isPresent = true
+            credential = found
+        case .absent:
+            isPresent = true
+            state = .notConnected
+            return
+        case .failure(.interactionRequired):
+            isPresent = true
+            state = .authorizationRequired
+            return
+        case .failure(.userCancelled):
+            return
+        case let .failure(error):
+            isPresent = true
+            state = .failed(error.displayText)
+            return
+        }
+
+        switch await client.fetchRateLimits(accessToken: credential.accessToken) {
+        case let .success(snapshot):
+            state = .loaded(snapshot, subscription: credential.subscriptionType)
+        case .failure(.cancelled):
+            return
+        case let .failure(failure):
+            if failure == .expiredLogin {
+                await credentials.invalidate()
+            }
+            state = .failed(failure.displayText)
+        }
+    }
+}
+
+private extension ClaudeCredentialError {
+    var displayText: String {
+        switch self {
+        case .interactionRequired:
+            "Authorization is required to read the Claude Code login."
+        case .userCancelled:
+            ""
+        case .authFailed:
+            "Claude Code login authorization failed."
+        case .notAvailable:
+            "The macOS Keychain is unavailable."
+        case .noAccess:
+            "LimitBar cannot access the Claude Code login."
+        case .malformedCredential:
+            "The Claude Code login was not understood."
+        case .unexpected:
+            "The Claude Code login could not be read."
         }
     }
 }

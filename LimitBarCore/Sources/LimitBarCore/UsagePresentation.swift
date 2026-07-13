@@ -1,3 +1,5 @@
+import Foundation
+
 public extension TimeWindow {
     static let defaultSelection: TimeWindow = .today
 }
@@ -37,10 +39,48 @@ public struct ProviderUsageCard: Equatable, Sendable {
         return ProviderKind.orderedCases
             .filter { providersWithAnyUsage.contains($0) || configuredProviders.contains($0) }
             .map { provider in
-                ProviderUsageCard(
+                let candidates = metrics.filter {
+                    $0.provider == provider
+                        && $0.timeWindow == timeWindow
+                        && $0.provenance.exactWindow != nil
+                        && $0.provenance.exactWindow?.basis != .utcBilling
+                }
+                let apiWindows = Set(candidates.compactMap { metric -> ExactUsageWindow? in
+                    guard metric.provenance.source == .providerAPI, metric.tokenUsage.totalTokens > 0 else { return nil }
+                    return metric.provenance.exactWindow
+                })
+                return ProviderUsageCard(
                     provider: provider,
-                    metrics: metrics.filter { $0.provider == provider && $0.timeWindow == timeWindow }
+                    metrics: candidates.filter { metric in
+                        guard metric.provenance.source == .builtInLocalLog,
+                              let window = metric.provenance.exactWindow else { return true }
+                        return !apiWindows.contains(window)
+                    }
                 )
             }
+    }
+}
+
+public extension UsageMetric {
+    var showsLimitStatus: Bool {
+        !(tokenUsage.totalTokens == 0 && cost?.source == .providerReported)
+    }
+}
+
+public struct UTCBillingWeekPresentation: Equatable, Sendable {
+    public let title: String
+    public let interval: DateInterval
+    public let metrics: [UsageMetric]
+
+    public static func from(metrics: [UsageMetric]) -> UTCBillingWeekPresentation? {
+        let billingMetrics = metrics.filter {
+            $0.cost?.source == .providerReported && $0.provenance.exactWindow?.basis == .utcBilling
+        }
+        guard let window = billingMetrics.compactMap(\.provenance.exactWindow).max(by: { $0.start < $1.start }) else { return nil }
+        return UTCBillingWeekPresentation(
+            title: "UTC Billing Week",
+            interval: DateInterval(start: window.start, end: window.end),
+            metrics: billingMetrics.filter { $0.provenance.exactWindow == window }
+        )
     }
 }

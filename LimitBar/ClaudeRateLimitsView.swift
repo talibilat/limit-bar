@@ -2,21 +2,7 @@ import SwiftUI
 import LimitBarCore
 
 struct ClaudeRateLimitsView: View {
-    private enum LoadState: Equatable {
-        case loading
-        case loaded(ClaudeRateLimitSnapshot, subscription: String?)
-        case failed(String)
-    }
-
-    // Reported back to the parent so its "Claude" section header can be
-    // hidden too - Claude Code has genuinely never been used on this
-    // machine, so there's nothing useful to show at all.
-    @Binding var isPresent: Bool
-
-    @State private var state = LoadState.loading
-    @State private var isRefreshing = false
-
-    private let client = ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+    @Bindable var model: ClaudeRateLimitsModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,23 +11,43 @@ struct ClaudeRateLimitsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(isRefreshing ? "Refreshing..." : "Refresh") {
-                    Task { await refresh() }
+                Button(model.isRefreshing ? "Refreshing..." : "Refresh") {
+                    Task { await model.refresh() }
                 }
-                .disabled(isRefreshing)
+                .disabled(model.isRefreshing)
             }
 
-            switch state {
+            switch model.state {
             case .loading:
                 ProgressView("Loading Claude rate limits")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
+            case .notConnected:
+                HStack {
+                    Text("No Claude Code login found.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check Again") { Task { await model.refresh() } }
+                    Button("Connect") { Task { await model.connect() } }
+                }
             case let .failed(message):
                 Text(message)
                     .font(.callout)
                     .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
+            case .authorizationRequired:
+                HStack {
+                    Text("Authorize LimitBar to read your Claude Code login.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(model.isRefreshing ? "Connecting..." : "Connect") {
+                        Task { await model.connect() }
+                    }
+                    .disabled(model.isRefreshing)
+                }
             case let .loaded(snapshot, subscription):
                 let displayed = snapshot.displayLimits(forSubscriptionType: subscription)
                 VStack(spacing: 10) {
@@ -68,43 +74,16 @@ struct ClaudeRateLimitsView: View {
             }
         }
         .task {
-            await refresh()
-        }
-    }
-
-    private func refresh() async {
-        isRefreshing = true
-        defer { isRefreshing = false }
-
-        let credential: ClaudeCodeOAuthCredential
-        switch ClaudeCodeCredentialReader.read() {
-        case let .found(found):
-            isPresent = true
-            credential = found
-        case .notFound:
-            isPresent = false
-            return
-        case .accessDenied:
-            isPresent = true
-            state = .failed("Keychain access to the Claude Code login was denied.")
-            return
-        }
-
-        switch await client.fetchRateLimits(accessToken: credential.accessToken) {
-        case let .success(snapshot):
-            state = .loaded(snapshot, subscription: credential.subscriptionType)
-        case let .failure(failure):
-            if failure == .expiredLogin, credential.isExpired() {
-                state = .failed("Claude login expired. Open Claude Code to refresh it.")
-            } else {
-                state = .failed(failure.displayText)
-            }
+            await model.appeared()
         }
     }
 }
 
 #Preview {
-    ClaudeRateLimitsView(isPresent: .constant(true))
+    ClaudeRateLimitsView(model: ClaudeRateLimitsModel(
+        credentials: ClaudeCredentialBroker.shared,
+        client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+    ))
         .padding(20)
         .frame(width: 440, height: 400)
 }

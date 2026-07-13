@@ -16,6 +16,10 @@ public enum LocalUsageEventError: Error, Equatable {
     case negativeTokenCount
     case tokenCountOverflow
     case lineTooLong
+    case fileTooLarge
+    case tooManyAggregates
+    case futureTimestamp
+    case unreadableFile
     case notRegularFile
 }
 
@@ -30,13 +34,14 @@ public struct LocalUsageImportResult: Equatable, Sendable {
     public let malformedEventCount: Int
     public let malformedEvents: [MalformedLocalUsageEvent]
     public let failureMessage: String?
+    public let hasFutureTimestampRejection: Bool
 
     public static func empty(fileURL: URL) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false)
     }
 
     public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false)
     }
 }
 
@@ -122,7 +127,7 @@ public enum LocalUsageEventParser {
 public enum LocalUsageEventImporter {
     private struct AggregateKey: Hashable {
         let provider: ProviderKind
-        let timeWindow: TimeWindow
+        let window: ExactUsageWindow
         let model: String
         let deployment: String?
     }
@@ -153,6 +158,9 @@ public enum LocalUsageEventImporter {
 
     private static let importedWindows: [TimeWindow] = [.today, .currentWeek]
     private static let maximumLineByteCount = 1_048_576
+    private static let maximumFileByteCount = 100 * 1_024 * 1_024
+    private static let maximumAggregateKeys = 10_000
+    private static let futureTolerance: TimeInterval = 5 * 60
 
     public static func usageEventsURL(applicationSupportDirectory: URL) -> URL {
         applicationSupportDirectory
@@ -179,17 +187,28 @@ public enum LocalUsageEventImporter {
         now: Date,
         calendar: Calendar
     ) throws -> LocalUsageImportResult {
+        try Task.checkCancellation()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let importedWindows = [windows.today, windows.currentWeek]
         let fileHandle: FileHandle
         do {
-            guard try fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true else {
                 throw LocalUsageEventError.notRegularFile
+            }
+            guard let fileSize = values.fileSize, fileSize <= maximumFileByteCount else {
+                throw LocalUsageEventError.fileTooLarge
             }
             fileHandle = try FileHandle(forReadingFrom: fileURL)
         } catch {
             guard isFileNotFound(error) else {
-                throw error
+                if let typedError = error as? LocalUsageEventError {
+                    throw typedError
+                }
+                throw LocalUsageEventError.unreadableFile
             }
-            try replaceImportedMetrics(in: store, aggregates: [:])
+            try Task.checkCancellation()
+            try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: [:])
             return .empty(fileURL: fileURL)
         }
         defer { try? fileHandle.close() }
@@ -200,8 +219,15 @@ public enum LocalUsageEventImporter {
         var buffer = Data()
         var lineNumber = 1
         var discardingOverlongLine = false
+        var bytesRead = 0
+        var hasFutureTimestampRejection = false
 
-        while let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+        while let chunk = try readChunk(from: fileHandle), !chunk.isEmpty {
+            try Task.checkCancellation()
+            bytesRead = try checkedSum(bytesRead, chunk.count)
+            guard bytesRead <= maximumFileByteCount else {
+                throw LocalUsageEventError.fileTooLarge
+            }
             for byte in chunk {
                 if discardingOverlongLine {
                     if byte == 0x0A {
@@ -214,12 +240,13 @@ public enum LocalUsageEventImporter {
                     try process(
                         lineData: buffer[...],
                         lineNumber: lineNumber,
-                        now: now,
-                        calendar: calendar,
+                        windows: importedWindows,
                         aggregates: &aggregates,
                         validEventCount: &validEventCount,
                         malformedEventCount: &malformedEventCount,
-                        malformed: &malformed
+                        malformed: &malformed,
+                        hasFutureTimestampRejection: &hasFutureTimestampRejection,
+                        now: now
                     )
                     buffer.removeAll(keepingCapacity: true)
                     lineNumber += 1
@@ -236,50 +263,57 @@ public enum LocalUsageEventImporter {
             try process(
                 lineData: buffer[...],
                 lineNumber: lineNumber,
-                now: now,
-                calendar: calendar,
+                windows: importedWindows,
                 aggregates: &aggregates,
                 validEventCount: &validEventCount,
                 malformedEventCount: &malformedEventCount,
-                malformed: &malformed
+                malformed: &malformed,
+                hasFutureTimestampRejection: &hasFutureTimestampRejection,
+                now: now
             )
         }
 
-        try replaceImportedMetrics(in: store, aggregates: aggregates)
+        try Task.checkCancellation()
+        try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: aggregates)
 
         return LocalUsageImportResult(
             fileURL: fileURL,
             validEventCount: validEventCount,
             malformedEventCount: malformedEventCount,
             malformedEvents: malformed,
-            failureMessage: nil
+            failureMessage: nil,
+            hasFutureTimestampRejection: hasFutureTimestampRejection
         )
     }
 
     private static func replaceImportedMetrics(
         in store: SQLiteUsageMetricStore,
+        windows: [ExactUsageWindow],
         aggregates: [AggregateKey: AggregateValue]
     ) throws {
-        for provider in supportedProviders {
-            try store.replaceMetrics(
-                provider: provider,
-                timeWindows: importedWindows,
-                accountLabel: importedAccountLabel(for: provider),
-                with: metrics(from: aggregates.filter { $0.key.provider == provider })
-            )
-        }
+        let replacements = ProviderKind.orderedCases
+            .filter { supportedProviders.contains($0) }
+            .map { provider in
+                UsageScopedReplacement(
+                    scope: UsageReplacementScope(provider: provider, source: .builtInLocalLog, windows: Set(windows)),
+                    metrics: metrics(from: aggregates.filter { $0.key.provider == provider })
+                )
+            }
+        try store.replaceMetrics(replacements)
     }
 
     private static func process(
         lineData: Data.SubSequence,
         lineNumber: Int,
-        now: Date,
-        calendar: Calendar,
+        windows: [ExactUsageWindow],
         aggregates: inout [AggregateKey: AggregateValue],
         validEventCount: inout Int,
         malformedEventCount: inout Int,
-        malformed: inout [MalformedLocalUsageEvent]
+        malformed: inout [MalformedLocalUsageEvent],
+        hasFutureTimestampRejection: inout Bool,
+        now: Date
     ) throws {
+        try Task.checkCancellation()
         guard let line = String(data: lineData, encoding: .utf8) else {
             recordMalformed(LocalUsageEventError.malformedJSON, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
             return
@@ -287,13 +321,20 @@ public enum LocalUsageEventImporter {
         guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
+        let event: LocalUsageEvent
         do {
-            let event = try LocalUsageEventParser.parseLine(line)
-            validEventCount += 1
-            try add(event, now: now, calendar: calendar, to: &aggregates)
-        } catch let error as LocalUsageEventError where error != .tokenCountOverflow {
+            event = try LocalUsageEventParser.parseLine(line)
+        } catch let error as LocalUsageEventError {
             recordMalformed(error, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+            return
         }
+        guard event.timestamp <= now.addingTimeInterval(futureTolerance) else {
+            hasFutureTimestampRejection = true
+            recordMalformed(LocalUsageEventError.futureTimestamp, lineNumber: lineNumber, count: &malformedEventCount, events: &malformed)
+            return
+        }
+        validEventCount += 1
+        try add(event, windows: windows, to: &aggregates)
     }
 
     private static func recordMalformed(
@@ -310,16 +351,18 @@ public enum LocalUsageEventImporter {
 
     private static func add(
         _ event: LocalUsageEvent,
-        now: Date,
-        calendar: Calendar,
+        windows: [ExactUsageWindow],
         to aggregates: inout [AggregateKey: AggregateValue]
     ) throws {
-        for window in importedWindows {
-            let interval = window.interval(containing: now, calendar: calendar)
-            guard event.timestamp >= interval.start, event.timestamp < interval.end else {
+        for window in windows {
+            try Task.checkCancellation()
+            guard event.timestamp >= window.start, event.timestamp < window.end else {
                 continue
             }
-            let key = AggregateKey(provider: event.provider, timeWindow: window, model: event.model, deployment: event.deployment)
+            let key = AggregateKey(provider: event.provider, window: window, model: event.model, deployment: event.deployment)
+            if aggregates[key] == nil, aggregates.count >= maximumAggregateKeys {
+                throw LocalUsageEventError.tooManyAggregates
+            }
             var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
             value.inputTokens = try checkedSum(value.inputTokens, event.inputTokens)
             value.outputTokens = try checkedSum(value.outputTokens, event.outputTokens)
@@ -337,7 +380,7 @@ public enum LocalUsageEventImporter {
                 projectLabel: nil,
                 modelLabel: key.model,
                 deploymentLabel: key.deployment,
-                timeWindow: key.timeWindow,
+                provenance: .bounded(source: .builtInLocalLog, window: key.window),
                 tokenUsage: TokenUsage(
                     inputTokens: value.inputTokens,
                     outputTokens: value.outputTokens
@@ -361,6 +404,14 @@ public enum LocalUsageEventImporter {
             throw LocalUsageEventError.tokenCountOverflow
         }
         return sum
+    }
+
+    private static func readChunk(from fileHandle: FileHandle) throws -> Data? {
+        do {
+            return try fileHandle.read(upToCount: 64 * 1024)
+        } catch {
+            throw LocalUsageEventError.unreadableFile
+        }
     }
 
     private static func isFileNotFound(_ error: Error) -> Bool {

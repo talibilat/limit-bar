@@ -92,6 +92,21 @@ struct ClaudeRateLimitsTests {
         }
     }
 
+    @Test("percentage fields outside finite zero through one hundred are skipped")
+    func invalidPercentagesAreSkipped() throws {
+        let mixed = #"{"limits":[{"kind":"negative","percent":-1},{"kind":"over","percent":101},{"kind":"valid","percent":100}]}"#
+
+        let snapshot = try ClaudeUsageResponseMapper.rateLimits(from: Data(mixed.utf8), fetchedAt: Date())
+
+        #expect(snapshot.limits.map(\.kind) == ["valid"])
+        #expect(throws: ClaudeRateLimitFailure.malformedResponse) {
+            try ClaudeUsageResponseMapper.rateLimits(from: Data(#"{"five_hour":{"utilization":101}}"#.utf8), fetchedAt: Date())
+        }
+        #expect(throws: ClaudeRateLimitFailure.malformedResponse) {
+            try ClaudeUsageResponseMapper.rateLimits(from: Data(#"{"limits":[{"kind":"huge","percent":1e999}]}"#.utf8), fetchedAt: Date())
+        }
+    }
+
     @Test("client maps status codes to typed failures")
     func clientMapsStatusCodes() async {
         let unauthorized = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(response: HTTPResponse(statusCode: 401, data: Data())))
@@ -102,6 +117,9 @@ struct ClaudeRateLimitsTests {
 
         let offline = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(error: URLError(.notConnectedToInternet)))
         #expect(await offline.fetchRateLimits(accessToken: "token") == .failure(.networkUnavailable))
+
+        let cancelled = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(error: CancellationError()))
+        #expect(await cancelled.fetchRateLimits(accessToken: "token") == .failure(.cancelled))
     }
 
     @Test("client sends bearer token and beta header to the usage endpoint")

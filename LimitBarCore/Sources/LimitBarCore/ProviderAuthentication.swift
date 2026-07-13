@@ -53,6 +53,7 @@ public enum ProviderConnectionState: String, Codable, CaseIterable, Equatable, S
     case expired
     case unsupported
     case adminRequired
+    case cancelled
 
     public var displayText: String {
         switch self {
@@ -70,6 +71,8 @@ public enum ProviderConnectionState: String, Codable, CaseIterable, Equatable, S
             "Unsupported"
         case .adminRequired:
             "Admin credential required"
+        case .cancelled:
+            "Cancelled"
         }
     }
 }
@@ -172,6 +175,23 @@ public struct ProviderDiagnostic: Codable, Equatable, Sendable {
 
     public init(settings: ProviderSettings) {
         self.init(provider: settings.provider, state: settings.state, failureReason: settings.failureReason, updatedAt: settings.updatedAt)
+    }
+
+    public var shouldUpdateSettings: Bool {
+        state != .cancelled
+    }
+}
+
+public enum ProviderSettingsPersistenceDecision: Equatable, Sendable {
+    case persist
+    case suppress
+
+    public static func evaluate(
+        _ diagnostic: ProviderDiagnostic,
+        taskIsCancelled: Bool
+    ) -> ProviderSettingsPersistenceDecision {
+        guard !taskIsCancelled, diagnostic.shouldUpdateSettings else { return .suppress }
+        return .persist
     }
 }
 

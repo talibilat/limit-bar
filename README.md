@@ -1,83 +1,186 @@
 # LimitBar
 
-A free, open-source macOS menu bar app for AI coding usage: Claude Code, Codex, Azure OpenAI, and OpenAI-compatible providers you configure. Everything runs locally — no account, cloud sync, or telemetry.
+A free macOS menu bar app for AI coding usage from Claude Code, Codex, Azure OpenAI, Anthropic, OpenAI, and local tools you configure.
+LimitBar stores its settings and normalized metrics locally and requires no LimitBar account, cloud sync, or telemetry.
+Opening the Claude rate-limit view with an accessible login and triggering explicit provider refreshes make network requests to the relevant provider APIs.
 
-The menu bar gauge turns green, yellow, or red as your busiest rate limit fills up. Click it for two tabs:
+The menu bar gauge turns green, yellow, or red as the busiest confirmed rate limit fills up.
+Click it for two tabs:
 
-- **Rate Limit** — percent used, remaining, and reset time for Claude Code and Codex.
-- **Usage** — confirmed token counts and cost per provider and model, for Today or Current Week.
+- **Rate Limit** shows percent used, remaining, and reset time for Claude Code and Codex.
+- **Usage** shows confirmed token counts and costs by provider and model for Today or Current Week.
 
 ![LimitBar Rate Limit tab showing Claude session and weekly windows](docs/ss3.png)
 
 ## Features
 
-- **Claude Code** — session and weekly limits from your existing Keychain login.
-- **Codex** — limits from local session logs; pooled team seats can show credits estimates when pricing is configured in Settings.
-- **Usage tracking** — Anthropic, Azure OpenAI, and Codex from local CLI logs, with optional Admin API keys. A provider's card only appears once it actually has usage or a configured credential — nothing shows for tools you don't use.
-- **Any other tool** — add a custom local log source in Settings (name + file path) to track usage from any tool with no built-in support: Aider, Cursor, Windsurf, or anything else that can write a JSON line per response.
-- **Cost labels** — provider-reported or calculated estimates, clearly marked.
-- **Privacy-first** — credentials in Keychain, metrics in local SQLite, no prompts or telemetry stored.
+- **Claude Code** reads rate limits from the existing Claude Code Keychain login after an explicit or passive authorization check.
+- **Codex** reads limits from local session logs, and pooled team seats can show credit estimates when pricing is configured in Settings.
+- **Usage tracking** imports normalized LimitBar JSONL events and can fetch supported provider usage after an explicit action in Settings.
+- **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
+- **Cost labels** distinguish provider-reported values from calculated estimates.
+- **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
 ## Prerequisites
 
-- **macOS 14 (Sonoma) or later** — LimitBar is a native menu bar app and does not run on iOS, Linux, or Windows.
-- **Xcode 16 or later** — required to build and run LimitBar from source (the core package targets Swift 6). There is no pre-built download yet; install Xcode from the Mac App Store, then open it once so command-line tools are set up.
-- **Git** — to clone this repository.
+- **macOS 14 (Sonoma) or later** is required.
+- **Xcode 16 or later** is required to build the app from source because the core package targets Swift 6.
+- **Git** is required to clone the repository.
 
-Optional, for zero-setup rate limits: if you already use **Claude Code** (`claude`) or **Codex** (`codex`) on this Mac, the Rate Limit tab works immediately after launch — Claude from your existing Keychain login, Codex from local session logs at `~/.codex/sessions`.
+There is no pre-built download yet.
+If Claude Code or Codex is already used on this Mac, the Rate Limit tab can reuse those local resources without another LimitBar account.
 
 ## Run It
 
 ```sh
 git clone https://github.com/talibilat/limit-bar.git
-cd LimitBar
+cd limit-bar
 open LimitBar.xcodeproj
 ```
 
 1. In the Xcode toolbar, choose the **LimitBar** scheme and destination **My Mac**.
-2. Press **⌘R** (or click **Run**).
-3. After the build finishes, the gauge icon appears in the menu bar (upper-right, near Wi‑Fi and battery). Click it to open the popover.
-4. On first launch, macOS may ask to allow LimitBar to read the **Claude Code** Keychain item — approve if you want Claude rate limits without signing in again.
+2. Press **Command-R** or click **Run**.
+3. Click the gauge icon that appears in the menu bar.
+4. Use **Connect** if macOS says LimitBar must be authorized to read the Claude Code Keychain item.
 
-To stop the app while debugging, press **⌘.** in Xcode or quit LimitBar from the menu bar icon.
+To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar from the menu bar icon.
 
-## Usage
+## Refresh Behavior
 
-**Rate Limit** reuses Claude Code's login and reads Codex limits from `~/.codex/sessions`. Reset times show a countdown under 24 hours, otherwise the weekday and time.
+LimitBar starts one local refresh immediately and schedules another every five seconds.
+That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, and scans local Codex sessions.
+Concurrent ticks are coalesced, and a failed local component keeps its last successful in-process component in the published refresh snapshot.
 
-**Usage** shows one card per provider, broken down by model.
+The five-second loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
+It also does not poll macOS Keychain.
+Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
 
-**Today** rolls up confirmed token counts per model across every connected provider:
+### Claude Authorization
 
-![LimitBar Usage tab — Today, Anthropic models from local logs](docs/ss2.png)
+Opening the Claude rate-limit view and pressing **Check Again** or **Refresh** performs a passive Keychain read.
+Passive reads tell Keychain not to show authentication UI.
+If authorization is required, LimitBar shows **Connect** instead of causing a background prompt.
+Pressing **Connect** performs the interactive read that allows macOS to show its authorization UI, then fetches Claude limits if a credential is returned.
 
-**Current Week** uses the same layout with a wider window — handy when you want a running total instead of a single-day snapshot:
+Choosing **Always Allow** is not an unconditional permanent grant.
+macOS can require authorization again when LimitBar's signing identity or code requirement changes, which commonly happens across local debug builds, or when Claude Code deletes and recreates its `Claude Code-credentials` Keychain item.
+The permission belongs to the particular Keychain item and the requesting code identity rather than to the LimitBar name alone.
 
-![LimitBar Usage tab — Current Week, Azure OpenAI models](docs/ss1.png)
+Claude OAuth credentials with a future expiry can be retained only in the running LimitBar process.
+The broker does not proactively remove a cached credential at the exact expiry instant; on the next broker access at or after expiry, it treats the cached value as invalid, clears it, and reads Keychain again.
+Explicit invalidation clears the cached credential immediately.
+Configured provider credentials remain in macOS Keychain and are read into process memory only to make an explicit request.
+Secrets are not copied into UserDefaults, SQLite metrics, or diagnostics.
 
-Confirmed usage can also be imported from `~/Library/Application Support/LimitBar/usage-events.jsonl` — the path is shown in Settings.
+## Usage Windows And Snapshots
 
-### Tracking any other tool
+**Today** follows the current local calendar day, including daylight-saving transitions.
+**Current Week** always begins at local midnight on Monday and ends at the next local Monday, regardless of the calendar's configured first weekday.
 
-Settings has a **Custom Usage Sources** section for tools with no built-in adapter. Point it at a local log file where each line is JSON with `timestamp`, `model`, `inputTokens`, and `outputTokens`:
+Provider-reported billing costs use a separate Monday-to-Monday UTC billing week.
+UTC billing cost rows appear in their own **UTC Billing Week** section and are not mixed into local Today or Current Week cards.
+
+Every current metric snapshot records an exact start, exclusive end, calendar basis, source, and aggregation version.
+SQLite reads for the current UI only return bounded rows whose complete exact window matches the current local Today, current local week, or current UTC billing week.
+This prevents a row with the same broad `today` or `currentWeek` label but different boundaries from being presented as current.
+
+Older database rows that predate exact provenance migrate as **legacy** rows without invented boundaries.
+Legacy JSON also decodes as legacy provenance when it has only a `timeWindow` value.
+Legacy rows remain available to low-level storage reads and legacy replacement APIs, but current snapshots and provider cards intentionally exclude them.
+Rows with a `refreshedAt` older than 90 days are deleted during snapshot loading.
+
+If SQLite becomes unavailable after a valid snapshot, LimitBar returns that last valid in-process snapshot with unhealthy store status instead of replacing the display with empty data.
+If no valid snapshot exists yet, it returns empty metrics with unhealthy status.
+Custom-source failures similarly preserve that source's previously persisted metrics and emit a generic failure diagnostic.
+
+## Local Files And Custom Sources
+
+The default local paths are:
+
+- `~/.codex/sessions` for Codex session logs and local rate-limit snapshots.
+- `~/Library/Application Support/LimitBar/usage-events.jsonl` for normalized LimitBar usage events.
+- `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
+
+The app is intentionally not App Sandbox constrained.
+This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.
+LimitBar does not claim sandbox isolation from other files the running user can access.
+Custom source paths are explicit configuration, and importers accept regular files only.
+Each custom source UUID, display name, and file path is stored as JSON in UserDefaults under `LimitBar.customUsageSourcesJSON`.
+Successfully imported custom aggregates are persisted in `usage-metrics.sqlite` with their custom source UUID and exact usage window.
+
+### Normalized Usage Events
+
+LimitBar does not read native Anthropic, Azure OpenAI, or OpenAI CLI log formats for usage totals.
+An external producer or transform must append one normalized JSON object per line to `usage-events.jsonl`.
+Every built-in event requires `provider`, `timestamp`, `model`, `inputTokens`, and `outputTokens`, and may include `deployment`:
+
+```json
+{"provider":"azureOpenAI","timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","deployment":"production-chat","inputTokens":100,"outputTokens":20}
+```
+
+The exact built-in schema is:
+
+- `provider` is exactly `anthropic`, `azureOpenAI`, or `openAI`.
+- `timestamp` is an ISO 8601 timestamp, with or without fractional seconds.
+- `model` is a non-empty string after trimming whitespace.
+- `inputTokens` and `outputTokens` are non-negative integers whose aggregate sums must not overflow.
+- `deployment` is optional, but when present it must be a non-empty string after trimming whitespace.
+- Unknown JSON fields are ignored.
+
+Custom sources also require an external producer or transform because LimitBar does not parse a tool's native log format automatically.
+The supported custom fields are `timestamp`, `model`, `inputTokens`, and `outputTokens`; unknown fields are ignored, and `provider` or `deployment` fields do not change custom identity:
 
 ```json
 {"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}
 ```
 
-Give the source a name (e.g. "Aider") and LimitBar shows it as its own card on the Usage tab, broken down by model, the same as any built-in provider — as soon as the file has matching events, and not before.
+For custom events, `timestamp` must be ISO 8601, `model` must be non-empty after trimming whitespace, and both token fields must be non-negative integers.
+The configured custom source name supplies the card label, and its persisted UUID supplies source identity.
 
-## Build & Test
+Built-in and custom imports enforce the same resource and timestamp limits:
+
+- The source must be a regular file no larger than 100 MiB.
+- Each line may be at most 1 MiB.
+- One load may create at most 10,000 distinct aggregate keys.
+- A timestamp more than five minutes in the future is rejected, while the exact five-minute boundary is accepted.
+- Token arithmetic overflow fails the load rather than wrapping.
+
+Both importers check cancellation before loading and between streamed chunks.
+The built-in importer also checks cancellation during line and aggregate processing and immediately before its transactional replacement.
+When either importer observes cancellation, it stops without returning replacement metrics for that source; built-in pre-cancelled and mid-stream cases are covered by tests that verify the previous snapshot remains stored.
+
+Malformed JSON, invalid UTF-8, overlong lines, and future timestamps are rejected without exposing their content.
+Diagnostics retain the total rejected-line count and at most 20 samples containing only line number and typed reason.
+The UI projection exposes aggregate custom failure and rejection counts, not raw lines or paths.
+
+Successful built-in and custom imports may be reused from an in-process metadata cache when the file modification date, file size, and current local day and week boundaries are unchanged.
+The built-in fingerprint also includes the standardized file path, while each custom fingerprint includes its complete source configuration.
+This cache does not hash file contents, so a rewrite that preserves both file size and modification date may not be detected until the local day changes or LimitBar restarts.
+Any future-timestamp rejection disables cache reuse for that import so the unchanged file can be reconsidered as time advances.
+
+## Network And Privacy Boundary
+
+Provider HTTP uses an ephemeral `URLSession` with no URL cache, no cookie storage, and cookie setting disabled.
+Request timeout is 15 seconds and resource timeout is 30 seconds.
+Redirects carrying `Authorization`, `Proxy-Authorization`, `x-api-key`, or `api-key` credentials are refused unless scheme, host, and effective port remain the same.
+Uncredentialed requests may follow cross-origin redirects.
+
+Diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, and accepted or rejected event counts.
+They do not contain credentials, prompts, responses, request bodies, terminal output, source code, raw provider responses, or rejected JSONL content.
+Errors shown for custom import failures are generic and do not include private file paths.
+
+## Build And Test
 
 ```sh
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
+git diff --check
 ```
 
-## More Detail
-
-See [`docs/QA.md`](docs/QA.md) for acceptance checks and verification notes.
+See [`docs/QA.md`](docs/QA.md) for acceptance checks and verification evidence.
+See [`futures/README.md`](futures/README.md) for proposals that are not current commitments.
 
 ---
 
-Maintained by [Md Talib](https://github.com/talibilat) at Factor. If LimitBar is useful, star the repo or share it with your team.
+Maintained by [Md Talib](https://github.com/talibilat) at Factor.
+If LimitBar is useful, star the repository or share it with your team.
