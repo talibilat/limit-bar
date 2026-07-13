@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, not committed.
+Implemented in this branch, pending release validation.
 
 ## Problem
 
@@ -35,9 +35,10 @@ Importer provenance must remain bounded by source and exact window, and migratio
 
 ## Open Questions
 
-- Is a file writer, command-line helper, or local IPC service the smallest robust interface?
-- How should concurrent producers and file rotation work?
-- Is event-level idempotency necessary, and what identifier can remain privacy-safe?
+- The supported interfaces are a reusable Swift writer and the `limitbar-collect` command-line helper.
+- Cooperating producers serialize through an interprocess file lock and replace complete JSONL files atomically.
+- Producers use opaque UUIDs for active-file idempotency, and UUID reuse with different event content is rejected.
+- Rotation retains eight days in the active file and bounds archives by age and total bytes.
 
 ## Exit Criteria
 

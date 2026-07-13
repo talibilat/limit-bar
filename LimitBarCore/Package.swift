@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "LimitBarCore",
             targets: ["LimitBarCore"]
+        ),
+        .executable(
+            name: "limitbar-collect",
+            targets: ["CollectorCLI"]
         )
     ],
     targets: [
@@ -19,6 +23,10 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Security")
             ]
+        ),
+        .executableTarget(
+            name: "CollectorCLI",
+            dependencies: ["LimitBarCore"]
         ),
         .testTarget(
             name: "LimitBarCoreTests",
