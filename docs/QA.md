@@ -1,10 +1,10 @@
 # LimitBar QA
 
-Date: 2026-07-11.
+Date: 2026-07-13.
 Target: macOS 14 or newer.
-Scope: private daily-driver release verification for issue #10.
+Scope: reliability, security, privacy, exact usage windows, local refresh behavior, custom-source resource limits, and migration acceptance evidence.
 
-## Automated Verification
+## Verification Commands
 
 Run the complete core suite:
 
@@ -18,53 +18,100 @@ Build the native app:
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
 ```
 
-Check branch whitespace:
+Optionally smoke the built executable for three seconds with cleanup that also runs when the shell is interrupted:
 
 ```sh
-git diff --check origin/main...HEAD
+build_settings="$(DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' -showBuildSettings)"
+target_build_dir="$(awk -F ' = ' '/^[[:space:]]*TARGET_BUILD_DIR = / { print $2; exit }' <<<"$build_settings")"
+executable_path="$(awk -F ' = ' '/^[[:space:]]*EXECUTABLE_PATH = / { print $2; exit }' <<<"$build_settings")"
+app_executable="$target_build_dir/$executable_path"
+app_pid=""
+cleanup() {
+  if [ -n "${app_pid:-}" ]; then
+    if kill -0 "$app_pid" 2>/dev/null; then
+      kill "$app_pid"
+    fi
+    wait "$app_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+"$app_executable" &
+app_pid=$!
+sleep 3
+kill -0 "$app_pid"
 ```
 
-Launch the signed debug executable with all file writes denied:
+This optional smoke can access normal user resources and was not run as part of the recorded repository-only verification.
+It proves only that the built process remains alive for the interval.
+
+Check the worktree diff for whitespace errors:
 
 ```sh
-sandbox-exec -p '(version 1) (allow default) (deny file-write*)' <DerivedData>/Build/Products/Debug/LimitBar.app/Contents/MacOS/LimitBar
+git diff --check
 ```
 
-Result: the native app process remained alive for the three-second smoke interval and terminated cleanly on request.
-The sandbox prevented writes to Keychain, Application Support, caches, and other user resources.
+Verification on 2026-07-13 completed with 268 tests in 22 suites passing, the native app build succeeding, and `git diff --check` reporting no errors.
+
+Inspect the app target's sandbox configuration and default paths:
+
+```sh
+grep -n "ENABLE_APP_SANDBOX\|CODE_SIGN_ENTITLEMENTS" LimitBar.xcodeproj/project.pbxproj
+grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite" LimitBar LimitBarCore/Sources
+```
+
+The absence of `ENABLE_APP_SANDBOX`, `CODE_SIGN_ENTITLEMENTS`, and an entitlements file is acceptance evidence that this source target is intentionally unsandboxed.
+This check is not evidence of filesystem isolation.
 
 ## Acceptance Matrix
 
-| Area | Evidence |
+| Area | Acceptance evidence |
 | --- | --- |
-| App launch and menu bar compilation | Native app build plus successful three-second sandboxed executable smoke. |
-| Compact menu status | `AppStatusTests` and dynamic `MenuBarStatusLabel` loading normalized metrics. |
-| Popover rendering and provider order | `UsageModelTests` and `DemoUsageDataTests` exercise fixed cards and row presentation models. |
-| Today default and Current Week switching | `UsageModelTests` cover default selection, local-day boundaries, week boundaries, and stable order. |
-| Settings rendering | Native build compiles authentication, diagnostics, Azure integration, and pricing sections. |
-| Azure JSONL ingestion | `AzureUsageEventImporterTests` cover valid events, deployment metadata, idempotency, malformed lines, invalid UTF-8, oversized lines, and transactional replacement. |
-| Anthropic provider behavior | `AnthropicUsageProviderTests` cover official request grouping, pagination, nested cache tokens, exact labels, provider costs, safe failures, and stale retention. |
-| OpenAI OAuth feasibility | `OpenAIUsageProviderTests` cover Supported, Unsupported, Admin credential required, Expired, safe failures, explicit organization/project/model identity, and provider costs. |
-| Refresh staleness | SQLite, Anthropic, and OpenAI persistence tests retain confirmed values and mark only the failed provider stale. |
-| Cost labels | `PricingTests` cover Provider reported precedence, Calculated estimate, effective dates, and missing-price behavior. |
-| Unsupported limits | Usage and provider tests assert `Unsupported by provider API` unless a confirmed denominator exists. |
-| Privacy boundaries | SQLite schema tests and diagnostics encoding tests exclude credentials, prompts, responses, raw provider data, terminal output, and source code. |
+| Five-second local refresh | `LocalRefreshCoordinatorTests` verifies immediate start, exact five-second scheduling, coalescing, cancellation, generation isolation, ordered snapshots, and last successful component retention; `LocalRefreshProductionWiringTests` verifies the production seam contains local usage refresh and Codex scanning. |
+| No periodic provider or Keychain polling | `LimitBarState` wires only `ApplicationLocalUsageRefresher` and `CodexSessionScanner` into `LocalRefreshCoordinator`, provider clients are absent from `LocalRefreshDependencies`, and `ClaudeRateLimitsModelTests` verifies Claude work starts through view appearance or explicit model actions. |
+| Claude passive and interactive authorization | `ClaudeCredentialBrokerTests` verifies passive reads use authentication-UI-fail and interactive reads use authentication-UI-allow, while `ClaudeRateLimitsModelTests` verifies appearance is passive, no API request occurs when interaction is required, and explicit Connect permits interaction before fetching. |
+| Claude credential lifetime | `ClaudeCredentialBrokerTests` verifies future-expiry credentials are retained in process memory and explicit invalidation clears them, while `ClaudeCredentialBroker` checks expiry on each access and clears an expired cached value before rereading Keychain rather than proactively removing it at the expiry instant; `ProviderAuthenticationTests` verifies persisted settings exclude secret fields. |
+| Local Monday week and UTC billing week | `UsageModelTests` verifies local Monday boundaries independent of `firstWeekday`, exclusive following-Monday ends, DST-aware local days, and Monday-midnight UTC billing boundaries, while `UsagePresentationTests` verifies UTC billing rows are separate from local cards. |
+| Exact snapshots | `UsageModelTests`, `SQLiteUsageMetricStoreTests`, and `UsageDatabaseTests` verify validation, bounded provenance encoding, exact identity round trips, and selection of only current bounded rows. |
+| Legacy behavior | `UsageModelTests`, `SQLiteUsageMetricStoreTests`, and `UsagePresentationTests` verify legacy JSON decoding, physical v1 migration without invented bounds, and exclusion from provider cards. |
+| SQLite last-good behavior | `UsageDatabaseTests` verifies cancellation and exclusive-lock failures preserve the last valid metrics with unhealthy status before recovery and verifies failed custom refreshes preserve the prior source snapshot. |
+| Built-in JSONL safety | `LocalUsageEventImporterTests` verifies the 100 MiB file cap, 1 MiB line cap, 10,000 aggregate-key cap, regular-file checks, malformed and invalid UTF-8 handling, checked token sums, five-minute future-skew boundary, cancellation before and during streaming, current exact-window replacement, and preservation of previous metrics on failure or cancellation. |
+| Built-in JSONL schema | `LocalUsageEventImporterTests` verifies the normalized `provider`, timestamp, model, token, and optional deployment parser for `anthropic`, `azureOpenAI`, and `openAI`; there is no native Anthropic, Azure OpenAI, or OpenAI CLI log adapter. |
+| Custom parser and bounds | `CustomUsageSourceTests` verifies the custom timestamp, model, and token schema, aggregation under the source identity, the 100 MiB file cap, 1 MiB line cap, 20 sampled diagnostics, 10,000 aggregate cap, regular-file requirement, overflow failure, and five-minute future-skew boundary. |
+| Custom configuration | `CustomUsageSourceStore` encodes source UUIDs, names, and paths into UserDefaults and posts a refresh notification after changes; the native build compiles the Settings add and remove paths, but there is no dedicated app-target test for this store. |
+| Custom persistence and visibility | `UsageDatabaseTests` verifies custom aggregates persist by source UUID in SQLite, survive failed refreshes, update after rename, and disappear after source removal; `ProviderUsageCard.cards` includes providers with metrics, while custom-specific card visibility remains a manual UI acceptance check. |
+| Import metadata caches | `UsageDatabaseTests` verifies unchanged successful built-in and custom files reuse in-process results, local day changes invalidate built-in reuse, and future-timestamp rejection prevents reuse; the fingerprints use file modification date and size rather than a content hash, and the built-in test demonstrates that a same-size rewrite with a restored modification date remains cached until the day changes. |
+| Custom diagnostics and caching | `UsageDatabaseTests` and `CustomUsageSourceTests` verify generic failures preserve prior metrics and future-timestamp rejection prevents cache reuse even when that diagnostic is outside the 20-sample set; `CustomUsageAggregator` checks cancellation before loading and between streamed chunks. |
+| Unsandboxed file boundary | Project configuration has no App Sandbox entitlement, production defaults are `~/.codex/sessions`, `~/Library/Application Support/LimitBar/usage-events.jsonl`, and `~/Library/Application Support/LimitBar/usage-metrics.sqlite`, and custom sources can use explicit arbitrary regular-file paths. |
+| Process-only secret use | `CredentialStoreTests` and `ProviderAuthenticationTests` verify dedicated Keychain storage, exact byte handling, and secret-free settings and diagnostics, while provider refresh services pass credentials directly to request clients and persist only normalized results and safe diagnostics. |
+| HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
+| Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
+| Provider persistence safety | Anthropic and OpenAI provider tests verify cancellation preservation, scoped replacement, stale retained values after failure, exact local and UTC windows, and safe typed failure reasons. |
+| Native compilation | The Xcode build command compiles the menu bar app, popover, settings, Keychain integration, provider clients, and local refresh wiring, while repository inspection confirms no app UI test target is currently present. |
+
+## Manual Acceptance
+
+These checks require a local signed app and should not be inferred from fixture tests:
+
+1. Launch the current signed build and confirm the menu bar item and popover render.
+2. Open the Claude section without prior authorization and confirm no Keychain prompt appears from the passive check.
+3. Press **Connect** and confirm macOS presents the Keychain authorization UI.
+4. Choose **Always Allow**, relaunch the same signed build, and confirm the existing item can be read without another prompt.
+5. Change the build's code identity or recreate the `Claude Code-credentials` item, then confirm macOS may request authorization again.
+6. Press **Check Again** and confirm it remains a passive no-UI action.
+7. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
+8. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
+9. Disconnect the network and confirm the five-second local JSONL, custom, SQLite, and Codex refresh continues without provider polling.
+10. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
+11. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
 
 ## Repository-Only Boundary
 
-The user required all work to remain within the repository and GitHub.
-QA therefore does not write test credentials to the real user Keychain or append fixture events to the real Application Support path.
-Keychain behavior is verified through the fake credential store and injected Keychain operations seam.
-Provider behavior is verified through injected HTTP fixtures rather than production accounts.
-Application Support behavior is verified with temporary test file managers and in-memory or temporary SQLite databases.
+Automated tests use fake Keychain operations, injected HTTP clients, temporary files, and temporary or in-memory SQLite databases.
+They do not modify a real Claude Code Keychain item, use production provider accounts, or append events to the real Application Support file.
+Real-account Keychain authorization, code-identity changes, Finder activation, power use, and click-through visual behavior remain manual acceptance work.
 
-## Native Surface Review
+## Evidence Interpretation
 
-- Menu item: reviewed dynamic title/icon/color source and compact label style; native process launch succeeded.
-- Popover: reviewed 440 x 600 scroll layout, title, segmented time control, fixed provider cards, stale/failed banners, token pills, cost-only rows, and cost labels; native build succeeded.
-- Settings: reviewed 620 x 720 grouped scroll layout with separate Authentication, Diagnostics, Azure Integration, and Pricing sections; native build succeeded.
-- Secure fields: reviewed save/clear/auth-switch paths; fields clear and no path reads Keychain values back into UI bindings.
-- Finder reveal: reviewed present-file selection and absent-file directory opening branches.
-- Time switching: deterministic core tests confirm Today default, Current Week boundaries, and provider order.
-
-Real-account, real-Keychain prompt, Finder activation, and click-through visual interaction remain intentionally unexecuted because repository-only execution must not modify user resources or require Accessibility control.
+Passing core tests proves the tested pure and injected behaviors, not macOS prompt policy across every signing and distribution identity.
+A successful native build proves compilation, not visual correctness or real-account interoperability.
+The unsandboxed configuration is intentional for current local-file requirements, but it remains a security boundary decision that should be revisited before distribution.

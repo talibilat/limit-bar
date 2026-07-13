@@ -2,6 +2,7 @@ import SwiftUI
 import LimitBarCore
 
 struct MonitoringPopoverView: View {
+    let state: LimitBarState
     private enum PopoverTab: String, CaseIterable {
         case rateLimit
         case usage
@@ -18,19 +19,19 @@ struct MonitoringPopoverView: View {
 
     @State private var selectedTab = PopoverTab.rateLimit
     @State private var selectedWindow = TimeWindow.defaultSelection
-    @State private var metrics: [UsageMetric] = []
-    @State private var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
-    @State private var localImport = LocalUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     @AppStorage(PricingSettingsStore.storageKey) private var pricingJSON = PricingSettingsStore.defaultJSON
-    @State private var providerSettings = ProviderSettingsStore().settings
 
     private var cards: [ProviderUsageCard] {
-        let configured = Set(providerSettings.filter { $0.state != .missing }.map(\.provider))
-        return ProviderUsageCard.cards(from: metrics, timeWindow: selectedWindow, configuredProviders: configured)
+        let configured = Set(state.providerSettings.filter { $0.state != .missing }.map(\.provider))
+        return ProviderUsageCard.cards(from: state.local.metrics, timeWindow: selectedWindow, configuredProviders: configured)
     }
 
     private var pricingTable: PricingTable {
         PricingSettingsStore.table(from: pricingJSON)
+    }
+
+    private var utcBillingWeek: UTCBillingWeekPresentation? {
+        UTCBillingWeekPresentation.from(metrics: state.local.metrics)
     }
 
     var body: some View {
@@ -46,16 +47,16 @@ struct MonitoringPopoverView: View {
 
             switch selectedTab {
             case .rateLimit:
-                RateLimitView(metrics: metrics, pricingTable: pricingTable)
+                RateLimitView(state: state, pricingTable: pricingTable)
             case .usage:
                 usageTab
             }
 
             HStack {
                 if selectedTab == .usage {
-                    Text(localImportStatusText)
+                    Text(localImportStatusText + customImportStatusText)
                         .font(.footnote)
-                        .foregroundStyle(localImport.failureMessage == nil && localImport.malformedEventCount == 0 ? Color.secondary : Color.orange)
+                        .foregroundStyle(state.local.localImport.failureMessage == nil && state.local.localImport.malformedEventCount == 0 && state.local.customImportFailures == 0 && state.local.customRejectedLines == 0 ? Color.secondary : Color.orange)
                 }
 
                 Spacer()
@@ -67,16 +68,6 @@ struct MonitoringPopoverView: View {
         }
         .padding(20)
         .frame(width: 440, height: 600, alignment: .topLeading)
-        .task {
-            await loadStoredMetrics()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .providerSettingsDidChange)) { _ in
-            providerSettings = ProviderSettingsStore().settings
-            Task { await loadStoredMetrics() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .customUsageSourcesDidChange)) { _ in
-            Task { await loadStoredMetrics() }
-        }
     }
 
     @ViewBuilder
@@ -91,7 +82,10 @@ struct MonitoringPopoverView: View {
         ScrollView {
             VStack(spacing: 12) {
                 ForEach(cards, id: \.provider) { card in
-                    ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: providerSettings.first { $0.provider == card.provider }?.state)
+                    ProviderUsageCardView(card: card, selectedWindow: selectedWindow, pricingTable: pricingTable, providerState: state.providerSettings.first { $0.provider == card.provider }?.state)
+                }
+                if let utcBillingWeek {
+                    UTCBillingWeekView(presentation: utcBillingWeek, pricingTable: pricingTable)
                 }
             }
         }
@@ -105,8 +99,8 @@ struct MonitoringPopoverView: View {
             Text("Confirmed usage across connected providers")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            if !storeHealth.isOpen {
-                Text(storeHealth.message)
+            if !state.local.storeHealth.isOpen {
+                Text(state.local.storeHealth.message)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -114,33 +108,48 @@ struct MonitoringPopoverView: View {
     }
 
     private var localImportStatusText: String {
-        if localImport.failureMessage != nil {
+        if state.local.localImport.failureMessage != nil {
             return "Local events: Import failed"
         }
-        return "Local events: \(localImport.validEventCount) imported, \(localImport.malformedEventCount) malformed"
+        return "Local events: \(state.local.localImport.validEventCount) imported, \(state.local.localImport.malformedEventCount) malformed"
     }
 
-    private func loadStoredMetrics() async {
-        let snapshot = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
-        metrics = snapshot.metrics + Self.loadCustomSourceMetrics()
-        storeHealth = snapshot.health
-        localImport = snapshot.localImport
-        providerSettings = ProviderSettingsStore().settings
+    private var customImportStatusText: String {
+        var parts: [String] = []
+        if state.local.customImportFailures > 0 { parts.append("\(state.local.customImportFailures) failed") }
+        if state.local.customRejectedLines > 0 { parts.append("\(state.local.customRejectedLines) malformed") }
+        return parts.isEmpty ? "" : " · Custom sources: " + parts.joined(separator: ", ")
     }
 
-    // Custom sources are arbitrary external files LimitBar does not own, so
-    // they are re-read fresh on every load rather than persisted to SQLite.
-    private static func loadCustomSourceMetrics() -> [UsageMetric] {
-        let now = Date()
-        let calendar = Calendar.current
-        return CustomUsageSourceStore().sources.flatMap { source in
-            CustomUsageAggregator.metrics(
-                from: URL(fileURLWithPath: source.filePath),
-                sourceName: source.name,
-                now: now,
-                calendar: calendar
-            )
+}
+
+private struct UTCBillingWeekView: View {
+    let presentation: UTCBillingWeekPresentation
+    let pricingTable: PricingTable
+
+    private var intervalText: String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return "\(formatter.string(from: presentation.interval.start)) - \(formatter.string(from: presentation.interval.end)) UTC"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(presentation.title)
+                .font(.headline)
+            Text(intervalText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(Array(presentation.metrics.enumerated()), id: \.offset) { _, metric in
+                MetricRowView(metric: metric, pricingTable: pricingTable)
+            }
         }
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.quaternary, lineWidth: 1))
     }
 }
 
@@ -253,9 +262,11 @@ private struct MetricRowView: View {
                 }
             }
 
-            Text(metric.limitStatus.displayText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if metric.showsLimitStatus {
+                Text(metric.limitStatus.displayText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if let cost {
                 Text("\(cost.currencyCode) \(cost.amount.description) · \(cost.source.displayLabel)")
@@ -289,5 +300,5 @@ private struct TokenPill: View {
 }
 
 #Preview {
-    MonitoringPopoverView()
+    MonitoringPopoverView(state: .shared)
 }

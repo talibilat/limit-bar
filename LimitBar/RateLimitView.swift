@@ -2,26 +2,23 @@ import SwiftUI
 import LimitBarCore
 
 struct RateLimitView: View {
-    let metrics: [UsageMetric]
+    let state: LimitBarState
     let pricingTable: PricingTable
-
-    @State private var isClaudePresent = true
-    @State private var isCodexPresent = true
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if isClaudePresent {
+                if state.claudeModel.isPresent {
                     sectionHeader("Claude")
-                    ClaudeRateLimitsView(isPresent: $isClaudePresent)
+                    ClaudeRateLimitsView(model: state.claudeModel)
                 }
 
-                if isCodexPresent {
+                if let codexSnapshot = state.local.codexSnapshot {
                     sectionHeader("Codex")
-                    CodexRateLimitsView(metrics: metrics, pricingTable: pricingTable, isPresent: $isCodexPresent)
+                    CodexRateLimitsView(snapshot: codexSnapshot, metrics: state.local.metrics, pricingTable: pricingTable)
                 }
 
-                if !isClaudePresent && !isCodexPresent {
+                if !state.claudeModel.isPresent && state.local.codexSnapshot == nil {
                     Text("No Claude Code or Codex usage found on this machine yet.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -41,7 +38,7 @@ struct RateLimitView: View {
 }
 
 #Preview {
-    RateLimitView(metrics: [], pricingTable: .empty)
+    RateLimitView(state: .shared, pricingTable: .empty)
         .padding(20)
         .frame(width: 440, height: 600)
 }

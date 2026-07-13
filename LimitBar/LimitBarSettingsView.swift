@@ -174,7 +174,7 @@ struct LimitBarSettingsView: View {
         .padding(20)
         .frame(width: 620, height: 720)
         .task {
-            storedMetrics = await StoredUsageMetricsLoader.shared.loadFromApplicationSupport()
+            storedMetrics = await UsageDatabase.shared.snapshot()
         }
     }
 

@@ -2,7 +2,7 @@ import Foundation
 import LimitBarCore
 
 enum OpenAISettingsRefreshResult {
-    case supported(OpenAIRefreshResult)
+    case supported(OpenAIRefreshBatch)
     case unsupported
     case adminRequired
     case expired
@@ -12,42 +12,48 @@ enum OpenAISettingsRefreshResult {
 struct OpenAIRefreshService {
     private let client = OpenAIOrganizationClient(httpClient: URLSessionHTTPClient())
 
-    func fetch(credential: String, organization: String, method: ProviderAuthMethod) async -> OpenAISettingsRefreshResult {
+    struct Batch {
+        let result: OpenAISettingsRefreshResult
+        let windows: CurrentUsageWindows
+        let generation: UInt64
+    }
+
+    func fetch(credential: String, organization: String, method: ProviderAuthMethod) async -> Batch? {
+        let generation = await UsageDatabase.shared.providerConfigurationGeneration(for: .openAI)
         let now = Date()
         let calendar = Calendar.current
-        let interval = TimeWindow.currentWeek.interval(containing: now, calendar: calendar)
+        guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else { return nil }
+        let usageInterval = DateInterval(start: windows.currentWeek.start, end: min(now, windows.currentWeek.end))
         if method == .openAIOAuth {
-            switch await client.validateOAuth(accessToken: credential, interval: interval) {
+            let validation = await client.validateOAuth(accessToken: credential, interval: usageInterval)
+            guard !Task.isCancelled else { return nil }
+            switch validation {
             case .supported:
                 break
             case .unsupported:
-                return .unsupported
+                return Batch(result: .unsupported, windows: windows, generation: generation)
             case .adminCredentialRequired:
-                return .adminRequired
+                return Batch(result: .adminRequired, windows: windows, generation: generation)
             case .expired:
-                return .expired
+                return Batch(result: .expired, windows: windows, generation: generation)
             case let .failed(reason):
-                return .failure(reason)
+                return Batch(result: .failure(reason), windows: windows, generation: generation)
+            case .cancelled:
+                return nil
             }
         }
-        let usage = await client.fetchUsage(credential: credential, organization: organization, interval: interval, now: now, calendar: calendar)
-        guard case let .success(usageMetrics) = usage else {
-            if case let .failure(reason) = usage { return .failure(reason) }
-            return .failure(.refreshFailed)
-        }
-        let costs = await client.fetchCosts(credential: credential, organization: organization, interval: interval, now: now, calendar: calendar)
-        if case let .success(costMetrics) = costs {
-            return .supported(.success(usageMetrics + costMetrics))
-        }
-        return .supported(.success(usageMetrics))
+        let usage = await client.fetchUsage(credential: credential, organization: organization, windows: windows, now: now)
+        guard !Task.isCancelled else { return nil }
+        let costs = await client.fetchCosts(credential: credential, organization: organization, windows: windows, now: now)
+        guard !Task.isCancelled else { return nil }
+        return Batch(result: .supported(OpenAIRefreshBatch(usage: usage, cost: costs)), windows: windows, generation: generation)
     }
 
-    func apply(_ result: OpenAIRefreshResult) -> ProviderDiagnostic {
-        do {
-            let store = try SQLiteUsageMetricStore.applicationSupportStore()
-            return try OpenAIRefreshPersistence.apply(result, to: store)
-        } catch {
-            return ProviderDiagnostic(provider: .openAI, state: .failed, failureReason: .refreshFailed, updatedAt: Date())
-        }
+    func apply(_ result: OpenAIRefreshResult, windows: CurrentUsageWindows, generation: UInt64) async -> ProviderDiagnostic {
+        await UsageDatabase.shared.applyOpenAI(result, windows: windows, expectedGeneration: generation)
+    }
+
+    func apply(_ batch: OpenAIRefreshBatch, windows: CurrentUsageWindows, generation: UInt64) async -> ProviderDiagnostic {
+        await UsageDatabase.shared.applyOpenAI(batch, windows: windows, expectedGeneration: generation)
     }
 }

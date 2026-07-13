@@ -22,17 +22,29 @@ public enum DemoUsageData {
         cost: Cost? = nil,
         freshness: Freshness = .fresh
     ) -> UsageMetric {
-        UsageMetric(
+        let refreshedAt = Date(timeIntervalSince1970: refreshedAt)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let interval = timeWindow.interval(containing: refreshedAt, calendar: calendar)
+        guard let window = try? ExactUsageWindow(
+            timeWindow: timeWindow,
+            start: interval.start,
+            end: interval.end,
+            basis: .localCalendar
+        ) else {
+            preconditionFailure("Demo windows must be valid")
+        }
+        return UsageMetric(
             provider: provider,
             accountLabel: accountLabel,
             projectLabel: projectLabel,
             modelLabel: modelLabel,
             deploymentLabel: deploymentLabel,
-            timeWindow: timeWindow,
+            provenance: .bounded(source: .providerAPI, window: window),
             tokenUsage: TokenUsage(inputTokens: inputTokens, outputTokens: outputTokens),
             cost: cost,
             limitStatus: .unsupportedByProviderAPI,
-            refreshedAt: Date(timeIntervalSince1970: refreshedAt),
+            refreshedAt: refreshedAt,
             freshness: freshness
         )
     }

@@ -6,11 +6,23 @@ public enum OpenAIFeasibilityOutcome: Equatable, Sendable {
     case adminCredentialRequired
     case expired
     case failed(ProviderFailureReason)
+    case cancelled
 }
 
 public enum OpenAIRefreshResult: Equatable, Sendable {
     case success([UsageMetric])
     case failure(ProviderFailureReason)
+    case cancelled
+}
+
+public struct OpenAIRefreshBatch: Equatable, Sendable {
+    public let usage: OpenAIRefreshResult
+    public let cost: OpenAIRefreshResult
+
+    public init(usage: OpenAIRefreshResult, cost: OpenAIRefreshResult) {
+        self.usage = usage
+        self.cost = cost
+    }
 }
 
 public struct OpenAIOrganizationClient: Sendable {
@@ -38,22 +50,41 @@ public struct OpenAIOrganizationClient: Sendable {
             default:
                 return .failed(.refreshFailed)
             }
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failed(.networkUnavailable)
         }
     }
 
     public func fetchUsage(credential: String, organization: String, interval: DateInterval, now: Date, calendar: Calendar) async -> OpenAIRefreshResult {
+        guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else { return .failure(.refreshFailed) }
+        return await fetchUsage(credential: credential, organization: organization, interval: interval, windows: windows)
+    }
+
+    public func fetchUsage(credential: String, organization: String, windows: CurrentUsageWindows, now: Date) async -> OpenAIRefreshResult {
+        await fetchUsage(
+            credential: credential,
+            organization: organization,
+            interval: DateInterval(start: windows.currentWeek.start, end: min(now, windows.currentWeek.end)),
+            windows: windows
+        )
+    }
+
+    public func fetchUsage(credential: String, organization: String, interval: DateInterval, windows: CurrentUsageWindows) async -> OpenAIRefreshResult {
         var page: String?
+        var pagination = PaginationGuard()
         var buckets: [OpenAIUsageMapper.Bucket] = []
         do {
             repeat {
+                try pagination.registerRequest(token: page)
                 let response = try await httpClient.send(request(credential: credential, interval: interval, page: page))
                 switch response.statusCode {
                 case 200:
                     let decoded = try OpenAIUsageMapper.decode(response.data)
                     buckets.append(contentsOf: decoded.data)
-                    page = decoded.hasMore == true ? decoded.nextPage : nil
+                    page = try pagination.nextToken(hasMore: decoded.hasMore, token: decoded.nextPage)
                 case 401:
                     return .failure(.authenticationRejected)
                 case 403:
@@ -62,29 +93,55 @@ public struct OpenAIOrganizationClient: Sendable {
                     return .failure(.refreshFailed)
                 }
             } while page != nil
-            return .success(try OpenAIUsageMapper.metrics(from: buckets, organization: organization, now: now, calendar: calendar))
-        } catch is DecodingError {
+            return .success(try OpenAIUsageMapper.metrics(from: buckets, organization: organization, windows: windows))
+        } catch is DecodingError, is PaginationError {
             return .failure(.refreshFailed)
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failure(.networkUnavailable)
         }
     }
 
     public func fetchCosts(credential: String, organization: String, interval: DateInterval, now: Date, calendar: Calendar) async -> OpenAIRefreshResult {
+        guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else { return .failure(.refreshFailed) }
+        return await fetchCosts(credential: credential, organization: organization, interval: interval, windows: windows)
+    }
+
+    public func fetchCosts(credential: String, organization: String, windows: CurrentUsageWindows) async -> OpenAIRefreshResult {
+        await fetchCosts(credential: credential, organization: organization, windows: windows, now: Date())
+    }
+
+    public func fetchCosts(credential: String, organization: String, windows: CurrentUsageWindows, now: Date) async -> OpenAIRefreshResult {
+        await fetchCosts(
+            credential: credential,
+            organization: organization,
+            interval: DateInterval(start: windows.utcBillingWeek.start, end: min(now, windows.utcBillingWeek.end)),
+            windows: windows
+        )
+    }
+
+    public func fetchCosts(credential: String, organization: String, interval: DateInterval, windows: CurrentUsageWindows) async -> OpenAIRefreshResult {
         var page: String?
+        var pagination = PaginationGuard()
         var buckets: [OpenAICostMapper.Bucket] = []
         do {
             repeat {
+                try pagination.registerRequest(token: page)
                 let response = try await httpClient.send(costRequest(credential: credential, interval: interval, page: page))
                 guard response.statusCode == 200 else { return .failure(.refreshFailed) }
                 let decoded = try OpenAICostMapper.decode(response.data)
                 buckets.append(contentsOf: decoded.data)
-                page = decoded.hasMore == true ? decoded.nextPage : nil
+                page = try pagination.nextToken(hasMore: decoded.hasMore, token: decoded.nextPage)
             } while page != nil
-            return .success(try OpenAICostMapper.metrics(from: buckets, organization: organization, now: now, calendar: calendar))
-        } catch is DecodingError {
+            return .success(try OpenAICostMapper.metrics(from: buckets, organization: organization, windows: windows))
+        } catch is DecodingError, is PaginationError {
             return .failure(.refreshFailed)
+        } catch is CancellationError {
+            return .cancelled
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
             return .failure(.networkUnavailable)
         }
     }
@@ -160,18 +217,23 @@ public enum OpenAIUsageMapper {
         }
     }
 
-    private struct Key: Hashable { let window: TimeWindow; let organization: String; let project: String; let model: String }
+    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let model: String }
     private struct Aggregate { var input = 0; var output = 0; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
 
     public static func metrics(from data: Data, organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: decode(data).data, organization: organization, now: now, calendar: calendar)
+        try metrics(from: decode(data).data, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        try metrics(from: buckets, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
+    }
+
+    static func metrics(from buckets: [Bucket], organization: String, windows current: CurrentUsageWindows) throws -> [UsageMetric] {
         let organization = organization.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !organization.isEmpty else { return [] }
+        let windows = [current.today, current.currentWeek]
         var aggregates: [Key: Aggregate] = [:]
         for bucket in buckets {
             let start = Date(timeIntervalSince1970: TimeInterval(bucket.startTime))
@@ -182,9 +244,8 @@ public enum OpenAIUsageMapper {
                 let model = row.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !projectID.isEmpty, !model.isEmpty, row.inputTokens >= 0, row.outputTokens >= 0 else { continue }
                 let project = projectName?.isEmpty == false ? projectName! : projectID
-                for window in [TimeWindow.today, .currentWeek] {
-                    let interval = window.interval(containing: now, calendar: calendar)
-                    guard start >= interval.start, end <= interval.end else { continue }
+                for window in windows {
+                    guard start >= window.start, end <= window.end else { continue }
                     let key = Key(window: window, organization: organization, project: project, model: model)
                     var aggregate = aggregates[key] ?? Aggregate(latest: end)
                     aggregate.input = try checkedSum(aggregate.input, row.inputTokens)
@@ -196,7 +257,7 @@ public enum OpenAIUsageMapper {
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, timeWindow: key.window, tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
         }.sorted { ($0.timeWindow.rawValue, $0.accountLabel ?? "", $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.accountLabel ?? "", $1.projectLabel ?? "", $1.modelLabel) }
     }
 
@@ -207,7 +268,10 @@ public enum OpenAIUsageMapper {
     }
 }
 
-public enum OpenAIMappingError: Error, Equatable { case tokenOverflow }
+public enum OpenAIMappingError: Error, Equatable {
+    case tokenOverflow
+    case costOverflow
+}
 
 public enum OpenAICostMapper {
     struct Response: Decodable {
@@ -229,18 +293,23 @@ public enum OpenAICostMapper {
         enum CodingKeys: String, CodingKey { case projectID = "project_id"; case lineItem = "line_item"; case amount }
     }
     struct Amount: Decodable { let value: Decimal; let currency: String }
-    private struct Key: Hashable { let window: TimeWindow; let organization: String; let project: String; let lineItem: String; let currency: String }
+    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let lineItem: String; let currency: String }
     private struct Aggregate { var amount: Decimal; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
 
     public static func metrics(from data: Data, organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: decode(data).data, organization: organization, now: now, calendar: calendar)
+        try metrics(from: decode(data).data, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
+        try metrics(from: buckets, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
+    }
+
+    static func metrics(from buckets: [Bucket], organization: String, windows: CurrentUsageWindows) throws -> [UsageMetric] {
         let organization = organization.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !organization.isEmpty else { return [] }
+        let window = windows.utcBillingWeek
         var aggregates: [Key: Aggregate] = [:]
         for bucket in buckets {
             let start = Date(timeIntervalSince1970: TimeInterval(bucket.startTime))
@@ -248,34 +317,132 @@ public enum OpenAICostMapper {
             for row in bucket.results {
                 let project = row.projectID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let lineItem = row.lineItem?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !project.isEmpty, !lineItem.isEmpty, let amount = row.amount else { continue }
-                for window in [TimeWindow.today, .currentWeek] {
-                    let interval = window.interval(containing: now, calendar: calendar)
-                    guard start >= interval.start, end <= interval.end else { continue }
+                guard !project.isEmpty,
+                      !lineItem.isEmpty,
+                      let amount = row.amount,
+                      amount.value.isFinite,
+                      amount.value >= 0 else { continue }
+                for window in [window] {
+                    guard start >= window.start, end <= window.end else { continue }
                     let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
                     var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
-                    aggregate.amount += amount.value
+                    aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
                     aggregate.latest = max(aggregate.latest, end)
                     aggregates[key] = aggregate
                 }
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, timeWindow: key.window, tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
         }
+    }
+
+    private static func checkedAdd(_ lhs: Decimal, _ rhs: Decimal) throws -> Decimal {
+        var lhs = lhs
+        var rhs = rhs
+        var result = Decimal()
+        guard NSDecimalAdd(&result, &lhs, &rhs, .plain) == .noError else {
+            throw OpenAIMappingError.costOverflow
+        }
+        return result
     }
 }
 
 public enum OpenAIRefreshPersistence {
-    public static func apply(_ result: OpenAIRefreshResult, to store: SQLiteUsageMetricStore, now: Date = Date()) throws -> ProviderDiagnostic {
+    public static func apply(
+        _ batch: OpenAIRefreshBatch,
+        to store: SQLiteUsageMetricStore,
+        windows: CurrentUsageWindows,
+        now: Date = Date()
+    ) throws -> ProviderDiagnostic {
+        if case .cancelled = batch.usage, case .cancelled = batch.cost {
+            return ProviderDiagnostic(provider: .openAI, state: .cancelled, failureReason: nil, updatedAt: now)
+        }
+        try store.markMetricsInitialized()
+        var succeeded = false
+        var failure: ProviderFailureReason?
+        var wasCancelled = false
+
+        switch batch.usage {
+        case let .success(metrics):
+            try store.replaceMetrics(
+                in: UsageReplacementScope(provider: .openAI, source: .providerAPI, windows: [windows.today, windows.currentWeek]),
+                with: metrics
+            )
+            succeeded = true
+        case let .failure(reason):
+            try store.markMetricsStale(
+                in: UsageReplacementScope(provider: .openAI, source: .providerAPI, windows: [windows.today, windows.currentWeek]),
+                missedRefreshes: 2
+            )
+            failure = reason
+        case .cancelled:
+            wasCancelled = true
+        }
+
+        switch batch.cost {
+        case let .success(metrics):
+            try store.replaceMetrics(
+                in: UsageReplacementScope(provider: .openAI, source: .providerAPI, windows: [windows.utcBillingWeek]),
+                with: metrics
+            )
+            succeeded = true
+        case let .failure(reason):
+            try ProviderCostRefreshPersistence.markFailed(provider: .openAI, in: store, window: windows.utcBillingWeek)
+            failure = failure ?? reason
+        case .cancelled:
+            wasCancelled = true
+        }
+
+        let state: ProviderConnectionState = if succeeded {
+            .connected
+        } else if failure != nil {
+            .failed
+        } else if wasCancelled {
+            .cancelled
+        } else {
+            .failed
+        }
+        return ProviderDiagnostic(
+            provider: .openAI,
+            state: state,
+            failureReason: failure,
+            updatedAt: now
+        )
+    }
+
+    public static func apply(
+        _ result: OpenAIRefreshResult,
+        to store: SQLiteUsageMetricStore,
+        windows: CurrentUsageWindows? = nil,
+        now: Date = Date()
+    ) throws -> ProviderDiagnostic {
         switch result {
         case let .success(metrics):
             try store.markMetricsInitialized()
-            try store.replaceMetrics(provider: .openAI, timeWindows: [.today, .currentWeek], with: metrics)
+            let exactWindows = Set(metrics.compactMap(\.provenance.exactWindow))
+            if !exactWindows.isEmpty || windows != nil {
+                let replacementWindows = windows.map { Set([$0.today, $0.currentWeek, $0.utcBillingWeek]) } ?? exactWindows
+                try store.replaceMetrics(
+                    in: UsageReplacementScope(provider: .openAI, source: .providerAPI, windows: replacementWindows),
+                    with: metrics
+                )
+            } else {
+                try store.replaceMetrics(provider: .openAI, timeWindows: [.today, .currentWeek], with: metrics)
+            }
             return ProviderDiagnostic(provider: .openAI, state: .connected, failureReason: nil, updatedAt: now)
         case let .failure(reason):
-            try store.markMetricsStale(provider: .openAI, timeWindows: [.today, .currentWeek], missedRefreshes: 2)
+            if let windows {
+                try store.markMetricsStale(
+                    in: UsageReplacementScope(provider: .openAI, source: .providerAPI, windows: [windows.today, windows.currentWeek, windows.utcBillingWeek]),
+                    missedRefreshes: 2
+                )
+            } else {
+                try store.markMetricsStale(provider: .openAI, timeWindows: [.today, .currentWeek], missedRefreshes: 2)
+            }
             return ProviderDiagnostic(provider: .openAI, state: .failed, failureReason: reason, updatedAt: now)
+        case .cancelled:
+            return ProviderDiagnostic(provider: .openAI, state: .cancelled, failureReason: nil, updatedAt: now)
         }
     }
 }

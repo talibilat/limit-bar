@@ -50,6 +50,15 @@ struct AnthropicUsageProviderTests {
         #expect(outcome == .failed(.networkUnavailable))
     }
 
+    @Test("cancellation is not reported as an Anthropic provider failure")
+    func cancellationIsTyped() async {
+        let client = AnthropicAdminClient(httpClient: RecordingHTTPClient(error: CancellationError()))
+        let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
+
+        #expect(await client.validate(apiKey: "secret", interval: interval) == .cancelled)
+        #expect(await client.fetchUsage(apiKey: "secret", interval: interval, now: Date(timeIntervalSince1970: 30), calendar: .current) == .cancelled)
+    }
+
     @Test("fixture mapping preserves returned labels tokens costs and limits")
     func fixtureMapping() throws {
         let data = Data(#"""
@@ -77,6 +86,23 @@ struct AnthropicUsageProviderTests {
         #expect(cloudDesign.tokenUsage == TokenUsage(inputTokens: 7, outputTokens: 4))
         #expect(cloudDesign.limitStatus == .confirmed(used: 11, limit: 100))
         #expect(metrics.filter { $0.timeWindow == .currentWeek }.count == 2)
+        #expect(metrics.allSatisfy { $0.provenance.source == .providerAPI })
+        #expect(metrics.allSatisfy { $0.provenance.exactWindow?.basis == .localCalendar })
+    }
+
+    @Test("cost report uses UTC billing week in a non-UTC calendar")
+    func costReportUsesUTCBillingWeek() throws {
+        let data = Data(#"{"data":[{"starting_at":"2026-07-06T00:00:00Z","ending_at":"2026-07-07T00:00:00Z","results":[{"description":"Claude API Usage","amount":"100","currency":"USD"}]}]}"#.utf8)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let now = try date("2026-07-06T01:00:00Z")
+        let expected = try CurrentUsageWindows.resolve(at: now, calendar: calendar).utcBillingWeek
+
+        let metrics = try AnthropicCostMapper.metrics(from: data, now: now, calendar: calendar)
+
+        #expect(metrics.count == 1)
+        #expect(metrics.first?.provenance == .bounded(source: .providerAPI, window: expected))
+        #expect(metrics.first?.timeWindow == .currentWeek)
     }
 
     @Test("cost report maps returned descriptions and cents")
@@ -84,11 +110,27 @@ struct AnthropicUsageProviderTests {
         let data = Data(#"{"data":[{"starting_at":"2026-07-10T00:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T12:00:00Z","ending_at":"2026-07-11T00:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
 
         let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
-        let metric = try #require(metrics.first { $0.timeWindow == .today })
+        let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
 
         #expect(metric.modelLabel == "Claude API Usage")
         #expect(metric.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
         #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+    }
+
+    @Test("cost report skips negative and non-finite amounts")
+    func costReportRejectsInvalidAmounts() throws {
+        let windows = try CurrentUsageWindows.resolve(at: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
+        let rows = [
+            AnthropicCostMapper.Row(description: "negative", amount: "-1", currency: "USD"),
+            AnthropicCostMapper.Row(description: "nan", amount: "NaN", currency: "USD")
+        ]
+        let bucket = AnthropicCostMapper.Bucket(
+            startingAt: "2026-07-10T00:00:00Z",
+            endingAt: "2026-07-10T01:00:00Z",
+            results: rows
+        )
+
+        #expect(try AnthropicCostMapper.metrics(from: [bucket], windows: windows).isEmpty)
     }
 
     @Test("usage fetch follows pagination")
@@ -106,6 +148,41 @@ struct AnthropicUsageProviderTests {
         #expect(requests[1].url.absoluteString.contains("page=page-2"))
     }
 
+    @Test("pagination rejects a repeated token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
+    func paginationRejectsRepeatedToken(endpoint: AnthropicEndpoint) async {
+        let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
+        let http = RecordingHTTPClient(responses: [page, page])
+
+        let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
+
+        #expect(result == .failure(.refreshFailed))
+        #expect(await http.requests.count == 2)
+    }
+
+    @Test("pagination rejects a missing token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
+    func paginationRejectsMissingToken(endpoint: AnthropicEndpoint) async {
+        let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
+        let http = RecordingHTTPClient(response: page)
+
+        let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
+
+        #expect(result == .failure(.refreshFailed))
+        #expect(await http.requests.count == 1)
+    }
+
+    @Test("pagination permits at most 100 pages including the initial Anthropic request", arguments: AnthropicEndpoint.allCases)
+    func paginationIsBounded(endpoint: AnthropicEndpoint) async {
+        let responses = (1...100).map { index in
+            HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
+        }
+        let http = RecordingHTTPClient(responses: responses)
+
+        let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
+
+        #expect(result == .failure(.refreshFailed))
+        #expect(await http.requests.count == 100)
+    }
+
     @Test("cost fetch groups descriptions and follows pagination")
     func costFetchFollowsPagination() async {
         let first = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"cost-2"}"#.utf8))
@@ -120,6 +197,40 @@ struct AnthropicUsageProviderTests {
         #expect(requests.count == 2)
         #expect(requests[0].url.absoluteString.contains("group_by%5B%5D=description"))
         #expect(requests[1].url.absoluteString.contains("page=cost-2"))
+    }
+
+    @Test("cost fetch requests the immutable UTC billing week")
+    func costFetchRequestsUTCBillingWeek() async throws {
+        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
+        let client = AnthropicAdminClient(httpClient: http)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let windows = try CurrentUsageWindows.resolve(at: try date("2026-07-06T01:00:00Z"), calendar: calendar)
+
+        let now = try date("2026-07-08T12:34:56Z")
+        _ = await client.fetchCost(apiKey: "secret", windows: windows, now: now)
+        let request = try #require(await http.lastRequest)
+        let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
+
+        #expect(query.first { $0.name == "starting_at" }?.value == "2026-07-06T00:00:00Z")
+        #expect(query.first { $0.name == "ending_at" }?.value == "2026-07-08T12:34:56Z")
+    }
+
+    @Test("usage fetch ends at now while retaining the full exact window")
+    func usageFetchEndsAtNow() async throws {
+        let response = Data(#"{"data":[{"starting_at":"2026-07-08T10:00:00Z","ending_at":"2026-07-08T11:00:00Z","results":[{"model":"claude","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
+        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
+        let client = AnthropicAdminClient(httpClient: http)
+        let now = try date("2026-07-08T12:34:56Z")
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: try utcCalendar())
+
+        let result = await client.fetchUsage(apiKey: "secret", windows: windows, now: now)
+        let request = try #require(await http.lastRequest)
+        let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
+        guard case let .success(metrics) = result else { Issue.record("Expected success"); return }
+
+        #expect(query.first { $0.name == "ending_at" }?.value == "2026-07-08T12:34:56Z")
+        #expect(metrics.first?.provenance.exactWindow == windows.today || metrics.first?.provenance.exactWindow == windows.currentWeek)
     }
 
     @Test("fixture mapping does not invent missing labels")
@@ -164,6 +275,106 @@ struct AnthropicUsageProviderTests {
         #expect(diagnostic.failureReason == .networkUnavailable)
     }
 
+    @Test("usage success with cost failure replaces usage and preserves prior cost")
+    func usageSuccessCostFailurePersistsPartialOutcome() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let oldUsage = boundedMetric(provider: .anthropic, model: "old usage", window: windows.today, cost: nil)
+        let oldCost = boundedMetric(provider: .anthropic, model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
+        let priorWindow = try ExactUsageWindow(timeWindow: .currentWeek, start: windows.utcBillingWeek.start.addingTimeInterval(-604_800), end: windows.utcBillingWeek.end.addingTimeInterval(-604_800), basis: .utcBilling)
+        let priorCost = boundedMetric(provider: .anthropic, model: "prior cost", window: priorWindow, cost: Cost(amount: 2, currencyCode: "USD", source: .providerReported))
+        let freshUsage = boundedMetric(provider: .anthropic, model: "fresh usage", window: windows.today, cost: nil)
+        try store.save([oldUsage, oldCost, priorCost])
+
+        let diagnostic = try AnthropicRefreshPersistence.apply(
+            AnthropicRefreshBatch(usage: .success([freshUsage]), cost: .failure(.networkUnavailable)),
+            to: store,
+            windows: windows,
+            now: now
+        )
+        let rows = try store.allMetrics()
+        let retainedCost = try #require(rows.first { $0.modelLabel == "old cost" })
+        let untouchedPriorCost = try #require(rows.first { $0.modelLabel == "prior cost" })
+
+        #expect(rows.contains(freshUsage))
+        #expect(retainedCost.freshness == .stale(missedRefreshes: 2))
+        #expect(untouchedPriorCost.freshness == .fresh)
+        #expect(!rows.contains(oldUsage))
+        #expect(diagnostic.state == .connected)
+        #expect(diagnostic.failureReason == .networkUnavailable)
+    }
+
+    @Test("cost success with usage failure updates cost and stales retained usage")
+    func costSuccessUsageFailurePersistsPartialOutcome() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let oldUsage = boundedMetric(provider: .anthropic, model: "old usage", window: windows.today, cost: nil)
+        let oldCost = boundedMetric(provider: .anthropic, model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
+        let freshCost = boundedMetric(provider: .anthropic, model: "fresh cost", window: windows.utcBillingWeek, cost: Cost(amount: 4, currencyCode: "USD", source: .providerReported))
+        try store.save([oldUsage, oldCost])
+
+        _ = try AnthropicRefreshPersistence.apply(
+            AnthropicRefreshBatch(usage: .failure(.networkUnavailable), cost: .success([freshCost])),
+            to: store,
+            windows: windows,
+            now: now
+        )
+        let rows = try store.allMetrics()
+        let retainedUsage = try #require(rows.first { $0.modelLabel == "old usage" })
+
+        #expect(retainedUsage.freshness == .stale(missedRefreshes: 2))
+        #expect(rows.contains(freshCost))
+        #expect(!rows.contains(oldCost))
+    }
+
+    @Test("cancelled Anthropic persistence preserves rows and returns cancelled")
+    func cancelledPersistencePreservesRows() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let retained = metric(provider: .anthropic, model: "retained")
+        try store.save([retained])
+
+        let diagnostic = try AnthropicRefreshPersistence.apply(.cancelled, to: store)
+
+        #expect(try store.allMetrics() == [retained])
+        #expect(diagnostic.state == .cancelled)
+        #expect(diagnostic.failureReason == nil)
+    }
+
+    @Test("fully cancelled Anthropic batch preserves rows and returns cancelled")
+    func cancelledBatchPreservesRows() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let retained = boundedMetric(provider: .anthropic, model: "retained", window: windows.today, cost: nil)
+        try store.save([retained])
+        let initializedBefore = try store.hasInitializedMetrics()
+
+        let diagnostic = try AnthropicRefreshPersistence.apply(
+            AnthropicRefreshBatch(usage: .cancelled, cost: .cancelled),
+            to: store,
+            windows: windows,
+            now: now
+        )
+
+        #expect(try store.allMetrics() == [retained])
+        #expect(try store.hasInitializedMetrics() == initializedBefore)
+        #expect(diagnostic.state == .cancelled)
+    }
+
+    @Test("generic confirmed limits reject non-finite or negative ratios")
+    func invalidConfirmedLimitsAreSkipped() throws {
+        let data = Data(#"{"data":[{"starting_at":"2026-07-10T10:00:00Z","ending_at":"2026-07-10T11:00:00Z","results":[{"model":"bad","input_tokens":1,"output_tokens":1,"limit_used":-1,"limit_value":100},{"model":"valid-overage","input_tokens":1,"output_tokens":1,"limit_used":120,"limit_value":100}]}]}"#.utf8)
+
+        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
+
+        #expect(metrics.filter { $0.modelLabel == "bad" }.allSatisfy { $0.limitStatus == .unsupportedByProviderAPI })
+        #expect(metrics.filter { $0.modelLabel == "valid-overage" }.allSatisfy { $0.limitStatus == .confirmed(used: 120, limit: 100) })
+        #expect(LimitStatus.confirmed(used: .nan, limit: 100).confirmedUsageRatio == nil)
+        #expect(LimitStatus.confirmed(used: 1, limit: .infinity).confirmedUsageRatio == nil)
+    }
+
     private func metric(provider: ProviderKind, model: String, input: Int = 1, output: Int = 1) -> UsageMetric {
         UsageMetric(
             provider: provider,
@@ -180,6 +391,20 @@ struct AnthropicUsageProviderTests {
         )
     }
 
+    private func boundedMetric(provider: ProviderKind, model: String, window: ExactUsageWindow, cost: Cost?) -> UsageMetric {
+        UsageMetric(provider: provider, accountLabel: nil, projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: cost == nil ? 1 : 0, outputTokens: 0), cost: cost, limitStatus: .unsupportedByProviderAPI, refreshedAt: window.start, freshness: .fresh)
+    }
+
+    private func fetch(_ endpoint: AnthropicEndpoint, client: AnthropicAdminClient) async -> AnthropicRefreshResult {
+        let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
+        switch endpoint {
+        case .usage:
+            return await client.fetchUsage(apiKey: "secret", interval: interval, now: Date(timeIntervalSince1970: 30), calendar: .current)
+        case .cost:
+            return await client.fetchCost(apiKey: "secret", interval: interval, now: Date(timeIntervalSince1970: 30), calendar: .current)
+        }
+    }
+
     private func date(_ value: String) throws -> Date {
         try #require(ISO8601DateFormatter().date(from: value))
     }
@@ -190,6 +415,13 @@ struct AnthropicUsageProviderTests {
         calendar.firstWeekday = 2
         return calendar
     }
+}
+
+enum AnthropicEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
+    case usage
+    case cost
+
+    var testDescription: String { String(describing: self) }
 }
 
 private actor RecordingHTTPClient: HTTPClient {

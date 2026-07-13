@@ -40,7 +40,7 @@ struct StoredUsageMetricsTests {
     }
 
     @Test("JSONL import failure does not hide healthy SQLite store")
-    func jsonlImportFailureDoesNotHideHealthySQLiteStore() throws {
+    func jsonlImportFailureDoesNotHideHealthySQLiteStore() async throws {
         let applicationSupport = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileManager = TemporaryApplicationSupportFileManager(applicationSupport: applicationSupport)
@@ -48,7 +48,7 @@ struct StoredUsageMetricsTests {
         try FileManager.default.createDirectory(at: limitBarDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: limitBarDirectory.appendingPathComponent("usage-events.jsonl"), withIntermediateDirectories: true)
 
-        let snapshot = StoredUsageMetrics.loadFromApplicationSupport(fileManager: fileManager)
+        let snapshot = await UsageDatabase.applicationSupport(fileManager: fileManager).snapshot()
 
         #expect(snapshot.health.isOpen)
         #expect(snapshot.health.message == "SQLite store opened")
@@ -57,7 +57,7 @@ struct StoredUsageMetricsTests {
     }
 
     @Test("JSONL import populates only confirmed Azure metrics")
-    func jsonlImportPopulatesOnlyAzureMetrics() throws {
+    func jsonlImportPopulatesOnlyAzureMetrics() async throws {
         let applicationSupport = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileManager = TemporaryApplicationSupportFileManager(applicationSupport: applicationSupport)
@@ -67,7 +67,7 @@ struct StoredUsageMetricsTests {
         try #"{"provider":"azureOpenAI","timestamp":"\#(timestamp)","model":"imported-model","inputTokens":10,"outputTokens":5}"#
             .write(to: limitBarDirectory.appendingPathComponent("usage-events.jsonl"), atomically: true, encoding: .utf8)
 
-        let snapshot = StoredUsageMetrics.loadFromApplicationSupport(fileManager: fileManager)
+        let snapshot = await UsageDatabase.applicationSupport(fileManager: fileManager).snapshot()
         let azureMetrics = snapshot.metrics.filter { $0.provider == .azureOpenAI }
 
         #expect(!azureMetrics.isEmpty)
