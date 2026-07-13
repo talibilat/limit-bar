@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented in this branch, pending release validation.
+Implemented, pending release validation.
 
 ## Problem
 
@@ -33,7 +33,7 @@ Local IPC, if chosen, must authenticate the local boundary and enforce size and 
 Events need an explicit schema version and stable idempotency strategy.
 Importer provenance must remain bounded by source and exact window, and migration must preserve current JSONL compatibility only if a concrete external consumer requires it.
 
-## Open Questions
+## Resolved Questions
 
 - The supported interfaces are a reusable Swift writer and the `limitbar-collect` command-line helper.
 - Cooperating producers serialize through an interprocess file lock and replace complete JSONL files atomically.
