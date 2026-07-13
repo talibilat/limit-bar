@@ -12,10 +12,10 @@ Run the complete core suite:
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
 ```
 
-Build the native app:
+Build the native app using the unsigned Release configuration used by CI:
 
 ```sh
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
 Optionally smoke the built executable for three seconds with cleanup that also runs when the shell is interrupted:
@@ -48,6 +48,12 @@ Check the worktree diff for whitespace errors:
 
 ```sh
 git diff --check
+```
+
+To reproduce the check for committed pull request changes, run:
+
+```sh
+git diff --check <base-commit> HEAD
 ```
 
 Verification on 2026-07-13 completed with 268 tests in 22 suites passing, the native app build succeeding, and `git diff --check` reporting no errors.
