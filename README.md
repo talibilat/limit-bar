@@ -174,8 +174,12 @@ Errors shown for custom import failures are generic and do not include private f
 ```sh
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
 DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
+DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' test
 git diff --check
 ```
+
+The native test command runs app integration tests and hermetic UI automation without real credentials or accounts.
+The terminal or CI agent launching UI tests must have macOS Developer Tools permission.
 
 See [`docs/QA.md`](docs/QA.md) for acceptance checks and verification evidence.
 See [`futures/README.md`](futures/README.md) for proposals that are not current commitments.

@@ -4,7 +4,20 @@ import Observation
 
 @main
 struct LimitBarApp: App {
-    @State private var state = LimitBarState.shared
+#if DEBUG
+    @NSApplicationDelegateAdaptor(AppUITestAppDelegate.self) private var appDelegate
+#endif
+    @State private var state: LimitBarState
+
+    init() {
+#if DEBUG
+        if AppTestConfiguration.isEnabled {
+            _state = State(initialValue: AppTestConfiguration.state())
+            return
+        }
+#endif
+        _state = State(initialValue: .shared)
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -15,7 +28,15 @@ struct LimitBarApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
+#if DEBUG
+            if AppTestConfiguration.isEnabled {
+                EmptyView()
+            } else {
+                LimitBarSettingsView()
+            }
+#else
             LimitBarSettingsView()
+#endif
         }
     }
 }
@@ -26,14 +47,16 @@ final class LimitBarState {
     static let shared = LimitBarState()
 
     let local = LimitBarLocalStateProjection()
-    private(set) var providerSettings = ProviderSettingsStore().settings
+    private(set) var providerSettings: [ProviderSettings]
     let claudeModel: ClaudeRateLimitsModel
 
     private let coordinator: LocalRefreshCoordinator
+    private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
 
     private init() {
         let sessionsDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
+        providerSettings = ProviderSettingsStore().settings
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
             codex: CodexSessionScanner(sessionsDirectory: sessionsDirectory)
@@ -42,9 +65,22 @@ final class LimitBarState {
             credentials: ClaudeCredentialBroker.shared,
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         )
+        usesLiveRefresh = true
+    }
+
+    init(
+        providerSettings: [ProviderSettings],
+        claudeModel: ClaudeRateLimitsModel,
+        coordinator: LocalRefreshCoordinator
+    ) {
+        self.providerSettings = providerSettings
+        self.claudeModel = claudeModel
+        self.coordinator = coordinator
+        usesLiveRefresh = false
     }
 
     func start() {
+        guard usesLiveRefresh else { return }
         guard observationTask == nil else { return }
         observationTask = Task { [weak self, coordinator] in
             await coordinator.start()
@@ -56,6 +92,7 @@ final class LimitBarState {
     }
 
     func requestLocalRefresh() {
+        guard usesLiveRefresh else { return }
         providerSettings = ProviderSettingsStore().settings
         Task { [coordinator] in await coordinator.requestRefresh() }
     }

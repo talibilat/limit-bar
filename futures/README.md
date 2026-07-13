@@ -6,11 +6,12 @@ They preserve concrete next questions while keeping current behavior honest.
 ## Prioritized Next Steps
 
 1. Establish a stable signed distribution path and complete real-account Keychain authorization QA.
-2. Add a native app test target and UI automation if the repository still lacks one.
-3. Profile five-second local refresh I/O, CPU, and power before making cadence configurable.
-4. Add CI for core tests, native builds, whitespace checks, and migration fixtures.
-5. Decide the long-term App Sandbox and file-access model before public distribution.
-6. Run release-level migration QA against copied databases from every shipped schema.
+2. Profile five-second local refresh I/O, CPU, and power before making cadence configurable.
+3. Add CI for core tests, native builds, whitespace checks, and migration fixtures.
+4. Decide the long-term App Sandbox and file-access model before public distribution.
+5. Run release-level migration QA against copied databases from every shipped schema.
+
+Native app integration tests and UI automation are implemented in [`03-native-app-test-target-ui-automation.md`](03-native-app-test-target-ui-automation.md).
 
 The consolidated operational list is in [`next-steps.md`](next-steps.md).
 

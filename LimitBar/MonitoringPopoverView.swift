@@ -64,6 +64,7 @@ struct MonitoringPopoverView: View {
                 SettingsLink {
                     Text("Settings")
                 }
+                .accessibilityIdentifier("settings-action")
             }
         }
         .padding(20)
@@ -96,6 +97,7 @@ struct MonitoringPopoverView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("LimitBar")
                 .font(.title2.weight(.semibold))
+                .accessibilityIdentifier("app-title")
             Text("Confirmed usage across connected providers")
                 .font(.callout)
                 .foregroundStyle(.secondary)

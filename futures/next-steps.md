@@ -7,7 +7,7 @@ This document records follow-up work and residual risks rather than commitments.
 
 ## Problem
 
-Core behavior has deterministic test coverage, but distribution identity, real-account authorization, native UI automation, operational performance, CI, sandbox policy, and release migration behavior need broader evidence.
+Core behavior and critical native fixture flows have deterministic test coverage, but distribution identity, real-account authorization, operational performance, CI, sandbox policy, and release migration behavior need broader evidence.
 
 ## User Outcome
 
@@ -17,11 +17,10 @@ Users receive a predictable signed app whose local refresh, authorization, migra
 
 1. Produce a stable signed and notarized distribution identity so Keychain access behavior is tested against an identity users will keep.
 2. Run real-account Keychain QA for passive checks, Connect, Check Again, Always Allow, app updates, changed identity, and a recreated Claude item.
-3. Add an app test target and UI automation if the repository still has no native test target.
-4. Profile five-second refresh I/O, CPU, memory, wakeups, and power with unchanged and changing JSONL files.
-5. Add CI for `swift test`, the macOS app build, `git diff --check`, and migration fixtures.
-6. Make an explicit App Sandbox decision, including security-scoped bookmarks or a documented unsandboxed distribution if arbitrary files remain required.
-7. Test release migrations using copies of databases from every distributed schema and include rollback or recovery guidance.
+3. Profile five-second refresh I/O, CPU, memory, wakeups, and power with unchanged and changing JSONL files.
+4. Add CI for `swift test`, the macOS app build, `git diff --check`, and migration fixtures.
+5. Make an explicit App Sandbox decision, including security-scoped bookmarks or a documented unsandboxed distribution if arbitrary files remain required.
+6. Test release migrations using copies of databases from every distributed schema and include rollback or recovery guidance.
 
 ## Explicit Non-Goals
 
