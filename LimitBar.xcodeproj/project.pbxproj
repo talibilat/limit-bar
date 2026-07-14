@@ -21,6 +21,14 @@
 		AA000000000000000000000D /* RateLimitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* RateLimitView.swift */; };
 		AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001D /* PercentRateLimitRowView.swift */; };
 		AA000000000000000000000F /* CustomUsageSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001E /* CustomUsageSourceStore.swift */; };
+		AA0000000000000000000101 /* AppUITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000111 /* AppUITestSupport.swift */; };
+		AA0000000000000000000102 /* LimitBarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000112 /* LimitBarUITests.swift */; };
+		AA0000000000000000000103 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000114 /* XCTest.framework */; };
+		AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */; };
+		AA0000000000000000000105 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000114 /* XCTest.framework */; };
+		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
+		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
+		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,8 +45,34 @@
 		AA000000000000000000001C /* RateLimitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitView.swift; sourceTree = "<group>"; };
 		AA000000000000000000001D /* PercentRateLimitRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PercentRateLimitRowView.swift; sourceTree = "<group>"; };
 		AA000000000000000000001E /* CustomUsageSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomUsageSourceStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E0 /* AlertSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertNotificationCoordinator.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E2 /* AlertSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000111 /* AppUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUITestSupport.swift; sourceTree = "<group>"; };
+		AA0000000000000000000112 /* LimitBarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitBarUITests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000113 /* LimitBarUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimitBarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000114 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomUsageSourceStoreTests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000116 /* LimitBarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimitBarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		AA0000000000000000000121 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000070 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA0000000000000000000050;
+			remoteInfo = LimitBar;
+		};
+		AA0000000000000000000122 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000070 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA0000000000000000000050;
+			remoteInfo = LimitBar;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AA0000000000000000000031 /* Frameworks */ = {
@@ -49,6 +83,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA0000000000000000000131 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000103 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000133 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000105 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -56,6 +106,8 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000041 /* LimitBar */,
+				AA0000000000000000000142 /* LimitBarTests */,
+				AA0000000000000000000141 /* LimitBarUITests */,
 				AA0000000000000000000042 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -76,6 +128,10 @@
 				AA000000000000000000001C /* RateLimitView.swift */,
 				AA000000000000000000001D /* PercentRateLimitRowView.swift */,
 				AA000000000000000000001E /* CustomUsageSourceStore.swift */,
+				AA0000000000000000000111 /* AppUITestSupport.swift */,
+				AA00000000000000000000E0 /* AlertSettingsStore.swift */,
+				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
+				AA00000000000000000000E2 /* AlertSettingsView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -84,8 +140,26 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000021 /* LimitBar.app */,
+				AA0000000000000000000116 /* LimitBarTests.xctest */,
+				AA0000000000000000000113 /* LimitBarUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000141 /* LimitBarUITests */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000112 /* LimitBarUITests.swift */,
+			);
+			path = LimitBarUITests;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000142 /* LimitBarTests */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */,
+			);
+			path = LimitBarTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -110,7 +184,58 @@
 			productReference = AA0000000000000000000021 /* LimitBar.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AA0000000000000000000150 /* LimitBarUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000190 /* Build configuration list for PBXNativeTarget "LimitBarUITests" */;
+			buildPhases = (
+				AA0000000000000000000132 /* Sources */,
+				AA0000000000000000000131 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA0000000000000000000161 /* PBXTargetDependency */,
+			);
+			name = LimitBarUITests;
+			packageProductDependencies = (
+			);
+			productName = LimitBarUITests;
+			productReference = AA0000000000000000000113 /* LimitBarUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		AA0000000000000000000151 /* LimitBarTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000195 /* Build configuration list for PBXNativeTarget "LimitBarTests" */;
+			buildPhases = (
+				AA0000000000000000000134 /* Sources */,
+				AA0000000000000000000133 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA0000000000000000000162 /* PBXTargetDependency */,
+			);
+			name = LimitBarTests;
+			packageProductDependencies = (
+			);
+			productName = LimitBarTests;
+			productReference = AA0000000000000000000116 /* LimitBarTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		AA0000000000000000000161 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA0000000000000000000050 /* LimitBar */;
+			targetProxy = AA0000000000000000000121 /* PBXContainerItemProxy */;
+		};
+		AA0000000000000000000162 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA0000000000000000000050 /* LimitBar */;
+			targetProxy = AA0000000000000000000122 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		AA0000000000000000000070 /* Project object */ = {
@@ -122,6 +247,14 @@
 				TargetAttributes = {
 					AA0000000000000000000050 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					AA0000000000000000000150 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = AA0000000000000000000050;
+					};
+					AA0000000000000000000151 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = AA0000000000000000000050;
 					};
 				};
 			};
@@ -144,6 +277,8 @@
 			projectRoot = "";
 			targets = (
 				AA0000000000000000000050 /* LimitBar */,
+				AA0000000000000000000151 /* LimitBarTests */,
+				AA0000000000000000000150 /* LimitBarUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -166,6 +301,26 @@
 				AA000000000000000000000D /* RateLimitView.swift in Sources */,
 				AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */,
 				AA000000000000000000000F /* CustomUsageSourceStore.swift in Sources */,
+				AA0000000000000000000101 /* AppUITestSupport.swift in Sources */,
+				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
+				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
+				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000132 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000102 /* LimitBarUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000134 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -329,6 +484,68 @@
 			};
 			name = Release;
 		};
+		AA0000000000000000000191 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.talibilat.LimitBarUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = LimitBar;
+			};
+			name = Debug;
+		};
+		AA0000000000000000000192 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.talibilat.LimitBarUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = LimitBar;
+			};
+			name = Release;
+		};
+		AA0000000000000000000193 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.talibilat.LimitBarTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LimitBar.app/Contents/MacOS/LimitBar";
+			};
+			name = Debug;
+		};
+		AA0000000000000000000194 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.talibilat.LimitBarTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LimitBar.app/Contents/MacOS/LimitBar";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -346,6 +563,24 @@
 			buildConfigurations = (
 				AA0000000000000000000091 /* Debug */,
 				AA0000000000000000000092 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000190 /* Build configuration list for PBXNativeTarget "LimitBarUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000191 /* Debug */,
+				AA0000000000000000000192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000195 /* Build configuration list for PBXNativeTarget "LimitBarTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000193 /* Debug */,
+				AA0000000000000000000194 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

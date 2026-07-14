@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 45
+    environment: release
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+      - name: Verify blocking toolchain
+        run: scripts/check-toolchain.sh
+      - name: Validate tag and protected secrets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/release-preflight.sh
+      - name: Test and validate release migrations
+        run: |
+          swift test --package-path LimitBarCore
+          scripts/validate-migrations.sh
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: scripts/import-signing-certificate.sh
+      - name: Build, sign, notarize, and verify
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_BUILD_NUMBER: ${{ github.run_number }}
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/build-release.sh
+      - name: Delete ephemeral signing keychain
+        if: always()
+        run: |
+          if [[ -n "${LIMITBAR_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$LIMITBAR_SIGNING_KEYCHAIN" || true
+          fi
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release create "$RELEASE_TAG" dist/LimitBar-*.zip dist/LimitBar-*.zip.sha256 --draft --verify-tag --generate-notes

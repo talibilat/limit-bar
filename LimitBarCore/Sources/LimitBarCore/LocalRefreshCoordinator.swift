@@ -1,13 +1,20 @@
 import Foundation
 import Observation
+import os
 
 public struct LocalUsageRefresh: Equatable, Sendable {
     public let snapshot: StoredUsageMetricsSnapshot
     public let customDiagnostics: [CustomUsageRefreshDiagnostic]
+    public let history: HistoricalUsageSnapshot
 
-    public init(snapshot: StoredUsageMetricsSnapshot, customDiagnostics: [CustomUsageRefreshDiagnostic]) {
+    public init(
+        snapshot: StoredUsageMetricsSnapshot,
+        customDiagnostics: [CustomUsageRefreshDiagnostic],
+        history: HistoricalUsageSnapshot = .loading
+    ) {
         self.snapshot = snapshot
         self.customDiagnostics = customDiagnostics
+        self.history = history
     }
 }
 
@@ -81,12 +88,26 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
     public let usage: LocalUsageRefresh?
     public let codex: CodexRateLimitSnapshot?
     public let refreshedAt: Date
+    public let triggeredAt: ContinuousClock.Instant
+    public let usageRefreshed: Bool
+    public let codexRefreshed: Bool
 
-    public init(sequence: UInt64, usage: LocalUsageRefresh?, codex: CodexRateLimitSnapshot?, refreshedAt: Date) {
+    public init(
+        sequence: UInt64,
+        usage: LocalUsageRefresh?,
+        codex: CodexRateLimitSnapshot?,
+        refreshedAt: Date,
+        triggeredAt: ContinuousClock.Instant = .now,
+        usageRefreshed: Bool = true,
+        codexRefreshed: Bool = true
+    ) {
         self.sequence = sequence
         self.usage = usage
         self.codex = codex
         self.refreshedAt = refreshedAt
+        self.triggeredAt = triggeredAt
+        self.usageRefreshed = usageRefreshed
+        self.codexRefreshed = codexRefreshed
     }
 }
 
@@ -100,6 +121,7 @@ public final class LimitBarLocalStateProjection {
     public private(set) var customImportFailures = 0
     public private(set) var customRejectedLines = 0
     public private(set) var codexSnapshot: CodexRateLimitSnapshot?
+    public private(set) var history = HistoricalUsageSnapshot.loading
 
     public init() {}
 
@@ -110,9 +132,19 @@ public final class LimitBarLocalStateProjection {
             localImport = usage.snapshot.localImport
             customImportFailures = usage.customDiagnostics.filter { $0.failureMessage != nil }.count
             customRejectedLines = usage.customDiagnostics.reduce(0) { $0 + $1.rejectedLineCount }
+            history = usage.history
             status = AppStatus.from(menuBarStatus: MenuBarStatus.from(metrics: metrics))
         }
         codexSnapshot = refresh.codex
+    }
+
+    public func clearHistory() {
+        history = HistoricalUsageSnapshot(
+            dailyBuckets: [],
+            weeklyBuckets: [],
+            health: UsageStoreHealth(isOpen: true, message: "Historical usage database opened"),
+            retention: history.retention
+        )
     }
 }
 
@@ -123,16 +155,22 @@ public actor LocalRefreshCoordinator {
         let task: Task<Void, Never>
     }
 
+    private struct PendingRefresh {
+        let generation: UInt64
+        let triggeredAt: ContinuousClock.Instant
+    }
+
     public nonisolated let snapshots: AsyncStream<LocalRefreshSnapshot>
 
     private let dependencies: LocalRefreshDependencies
     private let clock: LocalRefreshClock
+    private let refreshInterval: TimeInterval
     private let now: @Sendable () -> Date
     private let calendar: Calendar
     private let continuation: AsyncStream<LocalRefreshSnapshot>.Continuation
     private var periodicTask: Task<Void, Never>?
     private var refreshExecution: RefreshExecution?
-    private var pendingGeneration: UInt64?
+    private var pendingRefresh: PendingRefresh?
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
     private var lastUsage: LocalUsageRefresh?
@@ -141,11 +179,14 @@ public actor LocalRefreshCoordinator {
     public init(
         dependencies: LocalRefreshDependencies,
         clock: LocalRefreshClock = .continuous,
+        refreshInterval: TimeInterval = 5,
         now: @escaping @Sendable () -> Date = Date.init,
         calendar: Calendar = .current
     ) {
+        precondition(refreshInterval > 0)
         self.dependencies = dependencies
         self.clock = clock
+        self.refreshInterval = refreshInterval
         self.now = now
         self.calendar = calendar
         let pair = AsyncStream<LocalRefreshSnapshot>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -163,11 +204,12 @@ public actor LocalRefreshCoordinator {
         guard periodicTask == nil else { return }
         let startGeneration = generation
         let clock = clock
-        periodicTask = Task { [weak self, startGeneration, clock] in
+        let refreshInterval = refreshInterval
+        periodicTask = Task { [weak self, startGeneration, clock, refreshInterval] in
             await self?.scheduleRefresh(for: startGeneration)
             while !Task.isCancelled {
                 do {
-                    try await clock.sleep(for: 5)
+                    try await clock.sleep(for: refreshInterval)
                 } catch {
                     return
                 }
@@ -183,7 +225,7 @@ public actor LocalRefreshCoordinator {
         periodicTask?.cancel()
         periodicTask = nil
         refreshExecution?.task.cancel()
-        pendingGeneration = nil
+        pendingRefresh = nil
     }
 
     public func requestRefresh() async {
@@ -196,49 +238,62 @@ public actor LocalRefreshCoordinator {
         guard requestedGeneration == generation else {
             return Task {}
         }
+        let triggeredAt = ContinuousClock.now
         if let refreshExecution {
-            pendingGeneration = requestedGeneration
+            if pendingRefresh?.generation != requestedGeneration {
+                pendingRefresh = PendingRefresh(generation: requestedGeneration, triggeredAt: triggeredAt)
+            }
             return refreshExecution.task
         }
 
         let id = UUID()
-        let task = Task { [weak self, id, requestedGeneration] in
+        let task = Task { [weak self, id, requestedGeneration, triggeredAt] in
             guard let self else { return }
-            await self.runRefreshes(id: id, generation: requestedGeneration)
+            await self.runRefreshes(id: id, generation: requestedGeneration, triggeredAt: triggeredAt)
         }
         refreshExecution = RefreshExecution(id: id, generation: requestedGeneration, task: task)
         return task
     }
 
-    private func runRefreshes(id: UUID, generation refreshGeneration: UInt64) async {
-        repeat {
-            if pendingGeneration == refreshGeneration {
-                pendingGeneration = nil
-            }
-            await performRefresh(generation: refreshGeneration)
-        } while pendingGeneration == refreshGeneration
-            && refreshGeneration == generation
-            && !Task.isCancelled
+    private func runRefreshes(
+        id: UUID,
+        generation refreshGeneration: UInt64,
+        triggeredAt firstTriggeredAt: ContinuousClock.Instant
+    ) async {
+        var triggeredAt = firstTriggeredAt
+        while refreshGeneration == generation, !Task.isCancelled {
+            await performRefresh(generation: refreshGeneration, triggeredAt: triggeredAt)
+            guard let pendingRefresh, pendingRefresh.generation == refreshGeneration else { break }
+            self.pendingRefresh = nil
+            triggeredAt = pendingRefresh.triggeredAt
+        }
 
         guard refreshExecution?.id == id else { return }
         refreshExecution = nil
-        if pendingGeneration == generation {
-            let pending = generation
-            pendingGeneration = nil
-            scheduleRefresh(for: pending)
+        if let pendingRefresh, pendingRefresh.generation == generation {
+            self.pendingRefresh = nil
+            scheduleRefresh(for: pendingRefresh.generation)
         }
     }
 
-    private func performRefresh(generation refreshGeneration: UInt64) async {
+    private func performRefresh(
+        generation refreshGeneration: UInt64,
+        triggeredAt: ContinuousClock.Instant
+    ) async {
+        let signpostLog = OSLog(subsystem: "com.factor.limitbar", category: "LocalRefresh")
+        os_signpost(.begin, log: signpostLog, name: "LocalRefreshCycle")
+        defer { os_signpost(.end, log: signpostLog, name: "LocalRefreshCycle") }
         let refreshDate = now()
         async let usageResult = asyncResult { try await dependencies.refreshUsage(refreshDate, calendar) }
         async let codexResult = asyncResult { try await dependencies.scanCodex(refreshDate) }
 
-        if case let .success(usage) = await usageResult {
+        let resolvedUsage = await usageResult
+        let resolvedCodex = await codexResult
+        if case let .success(usage) = resolvedUsage {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastUsage = usage
         }
-        if case let .success(codex) = await codexResult {
+        if case let .success(codex) = resolvedCodex {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastCodex = codex
         }
@@ -250,8 +305,18 @@ public actor LocalRefreshCoordinator {
             sequence: sequence,
             usage: lastUsage,
             codex: lastCodex,
-            refreshedAt: refreshDate
+            refreshedAt: refreshDate,
+            triggeredAt: triggeredAt,
+            usageRefreshed: resolvedUsage.isSuccess,
+            codexRefreshed: resolvedCodex.isSuccess
         ))
+    }
+}
+
+private extension Result {
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
     }
 }
 

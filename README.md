@@ -9,6 +9,7 @@ Click it for two tabs:
 
 - **Rate Limit** shows percent used, remaining, and reset time for Claude Code and Codex.
 - **Usage** shows confirmed token counts and costs by provider and model for Today or Current Week.
+- **History** shows local 30-day and 12-week token trends, exact gaps, in-progress periods, and costs grouped by currency.
 
 ![LimitBar Rate Limit tab showing Claude session and weekly windows](docs/ss3.png)
 
@@ -19,6 +20,7 @@ Click it for two tabs:
 - **Usage tracking** imports normalized LimitBar JSONL events and can fetch supported provider usage after an explicit action in Settings.
 - **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
 - **Cost labels** distinguish provider-reported values from calculated estimates.
+- **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
 ## Prerequisites
@@ -55,6 +57,27 @@ The five-second loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude pr
 It also does not poll macOS Keychain.
 Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
 
+Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
+Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.
+
+## Local Alerts
+
+Alerts are disabled by default.
+Settings lets you explicitly request macOS notification permission and configure unique percentage thresholds from 1% through 100%, with 70% and 90% suggested.
+
+Quota alerts require a fresh Claude Code or Codex observation with a provider-reported future reset boundary.
+Cost budgets specify an API product, currency, provider-reported or calculated provenance, exact period, cap, and percentage thresholds.
+Provider-reported costs use their UTC billing week, while calculated estimates use local Today or Current Week windows.
+
+LimitBar sends at most one notification for each configured threshold and exact subject window.
+If one observation newly passes several thresholds, only the highest notification is shown and all passed thresholds are recorded.
+The delivery ledger is stored locally in `usage-metrics.sqlite` so relaunching does not repeat an accepted notification.
+
+Lock-screen text contains only the coarse provider product, threshold, currency when relevant, and reported or estimated provenance.
+It excludes exact spend, budget caps, account, organization, project, model, deployment, and source labels.
+Stale, unhealthy, unsupported, legacy, expired, malformed, and inferred observations do not alert.
+Cost measurements older than 24 hours are stale for alerting even when their exact budget window remains active.
+
 ### Claude Authorization
 
 Opening the Claude rate-limit view and pressing **Check Again** or **Refresh** performs a passive Keychain read.
@@ -89,9 +112,19 @@ Legacy JSON also decodes as legacy provenance when it has only a `timeWindow` va
 Legacy rows remain available to low-level storage reads and legacy replacement APIs, but current snapshots and provider cards intentionally exclude them.
 Rows with a `refreshedAt` older than 90 days are deleted during snapshot loading.
 
+Successful refreshes also preserve privacy-safe historical aggregates in `historical-usage-trends.sqlite`.
+Historical periods retain exact boundaries and timezone identity, distinguish unavailable gaps from observed zero usage, and preserve corrected values as explicit revisions rather than silently rewriting them.
+Provider API measurements are preferred for totals when local measurements cover the same provider, while local model attribution remains non-additive supporting detail.
+Calculated historical costs are frozen against the configured price effective at the usage window start and retain a pricing revision.
+Settings offers bounded 30, 90, 365, and 730-day retention, with 365 days as the default, plus deletion that leaves current usage, settings, credentials, and source files untouched.
+
 If SQLite becomes unavailable after a valid snapshot, LimitBar returns that last valid in-process snapshot with unhealthy store status instead of replacing the display with empty data.
 If no valid snapshot exists yet, it returns empty metrics with unhealthy status.
 Custom-source failures similarly preserve that source's previously persisted metrics and emit a generic failure diagnostic.
+
+Schema migrations accept only known schema fingerprints and run transactionally.
+An unsupported database remains in place, and Settings provides retry and explicit archival recovery actions instead of silently replacing it.
+See [`docs/MIGRATIONS_AND_RECOVERY.md`](docs/MIGRATIONS_AND_RECOVERY.md) for the release matrix and recovery procedure.
 
 ## Local Files And Custom Sources
 
@@ -100,6 +133,7 @@ The default local paths are:
 - `~/.codex/sessions` for Codex session logs and local rate-limit snapshots.
 - `~/Library/Application Support/LimitBar/usage-events.jsonl` for normalized LimitBar usage events.
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
+- `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.
@@ -111,6 +145,12 @@ Successfully imported custom aggregates are persisted in `usage-metrics.sqlite` 
 ### Normalized Usage Events
 
 LimitBar does not read native Anthropic, Azure OpenAI, or OpenAI CLI log formats for usage totals.
+New producers should use the supported [`limitbar-collect` CLI or reusable Swift collector](docs/CollectorSchemaV1.md).
+The collector validates explicit schema v1, coordinates cooperating concurrent writers, rejects unknown fields, enforces resource limits, and rotates bounded local files.
+Its token values are immutable per-operation deltas rather than cumulative counters.
+
+The shapes below document the existing permissive ingestion boundary that collector v1 deliberately targets.
+They remain available for compatibility, but direct JSONL writing is not the supported producer interface for new integrations.
 An external producer or transform must append one normalized JSON object per line to `usage-events.jsonl`.
 Every built-in event requires `provider`, `timestamp`, `model`, `inputTokens`, and `outputTokens`, and may include `deployment`:
 
@@ -172,10 +212,19 @@ Errors shown for custom import failures are generic and do not include private f
 ## Build And Test
 
 ```sh
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path LimitBarCore
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' build
+export DEVELOPER_DIR="/Applications/Xcode_16.2.app/Contents/Developer"
+scripts/check-toolchain.sh
+swift test --package-path LimitBarCore
+xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -configuration Release -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project LimitBar.xcodeproj -scheme LimitBar -destination 'platform=macOS' test
 git diff --check
 ```
+
+The native test command runs app integration tests and hermetic UI automation without real credentials or accounts.
+The terminal or CI agent launching UI tests must have macOS Developer Tools permission.
+
+Pull requests and pushes to `main` run these checks on macOS 14 with Xcode 16.2.
+To check committed branch changes from their merge base, run `git diff --check <base-commit>...HEAD`.
 
 See [`docs/QA.md`](docs/QA.md) for acceptance checks and verification evidence.
 See [`futures/README.md`](futures/README.md) for proposals that are not current commitments.

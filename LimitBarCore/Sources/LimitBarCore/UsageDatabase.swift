@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 public typealias CustomUsageLoader = @Sendable (URL, CustomUsageSource, Date, Calendar) async throws -> CustomUsageLoadResult
 
@@ -7,22 +8,28 @@ public actor UsageDatabase {
 
     private let pathFactory: @Sendable () throws -> String
     private let localEventsURLFactory: @Sendable () throws -> URL
+    private let historicalPathFactory: @Sendable () throws -> String
     private let busyTimeoutMilliseconds: Int32
     private let customUsageLoader: CustomUsageLoader
     private var store: SQLiteUsageMetricStore?
+    private var historicalStore: HistoricalUsageTrendStore?
     private var lastValidSnapshot: StoredUsageMetricsSnapshot?
+    private var lastValidHistory: HistoricalUsageSnapshot?
     private var localImportCache: LocalImportCacheEntry?
     private var customRefreshGeneration = UUID()
     private var customSourceCache: [UUID: CustomSourceCacheEntry] = [:]
     private var providerConfigurationGenerations: [ProviderKind: UInt64] = [:]
+    private var observedProviderWindows: [ProviderKind: Set<ExactUsageWindow>] = [:]
 
     public init(
         pathFactory: @escaping @Sendable () throws -> String,
         localEventsURL: URL,
+        historicalPathFactory: (@Sendable () throws -> String)? = nil,
         busyTimeoutMilliseconds: Int32 = 5_000
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
+        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = defaultCustomUsageLoader
     }
@@ -30,11 +37,13 @@ public actor UsageDatabase {
     init(
         pathFactory: @escaping @Sendable () throws -> String,
         localEventsURL: URL,
+        historicalPathFactory: (@Sendable () throws -> String)? = nil,
         busyTimeoutMilliseconds: Int32 = 5_000,
         customUsageLoader: @escaping CustomUsageLoader
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
+        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = customUsageLoader
     }
@@ -42,10 +51,12 @@ public actor UsageDatabase {
     private init(
         pathFactory: @escaping @Sendable () throws -> String,
         localEventsURLFactory: @escaping @Sendable () throws -> URL,
+        historicalPathFactory: @escaping @Sendable () throws -> String,
         busyTimeoutMilliseconds: Int32 = 5_000
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = localEventsURLFactory
+        self.historicalPathFactory = historicalPathFactory
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = defaultCustomUsageLoader
     }
@@ -54,8 +65,25 @@ public actor UsageDatabase {
         let fileManager = SendableFileManager(fileManager)
         return UsageDatabase(
             pathFactory: { try applicationSupportDatabasePath(fileManager: fileManager.value) },
-            localEventsURLFactory: { try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager.value) }
+            localEventsURLFactory: { try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager.value) },
+            historicalPathFactory: { try applicationSupportHistoricalDatabasePath(fileManager: fileManager.value) }
         )
+    }
+
+    public func databaseDirectoryURL() throws -> URL {
+        URL(fileURLWithPath: try pathFactory()).deletingLastPathComponent()
+    }
+
+    public func createCleanDatabaseRecovery(at date: Date = Date()) throws -> URL {
+        let databaseURL = URL(fileURLWithPath: try pathFactory())
+        store = nil
+
+        let archive = try archiveDatabaseFiles(at: databaseURL, date: date)
+        lastValidSnapshot = nil
+        localImportCache = nil
+        customSourceCache = [:]
+        _ = try openStore()
+        return archive
     }
 
     public func snapshot(now: Date = Date(), calendar: Calendar = .current) -> StoredUsageMetricsSnapshot {
@@ -109,6 +137,91 @@ public actor UsageDatabase {
         }
     }
 
+    public func historicalUsage(
+        metrics: [UsageMetric],
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        pricing: PricingTable = .empty,
+        pricingRevision: String = PricingTable.bundledDefaultsVersion,
+        observedSources: Set<UsageMetricSource> = []
+    ) -> HistoricalUsageSnapshot {
+        do {
+            let store = try openHistoricalStore()
+            var samples = try metrics.compactMap { metric -> HistoricalUsageTrendSample? in
+                guard case let .bounded(source, window) = metric.provenance,
+                      window.basis == .localCalendar else { return nil }
+                let timeZone = window.basis == .utcBilling ? "UTC" : calendar.timeZone.identifier
+                let period = try HistoricalUsageTrendPeriod(window: window, timeZoneIdentifier: timeZone)
+                let providerCost = metric.cost?.source == .providerReported ? metric.cost : nil
+                let calculated: HistoricalUsageCalculatedCost?
+                if providerCost == nil,
+                   let entry = pricing.price(for: metric, usageDate: window.start),
+                   let cost = CostCalculator.cost(for: metric, pricing: pricing, usageDate: window.start) {
+                    calculated = try HistoricalUsageCalculatedCost(
+                        cost: cost,
+                        pricingRevision: pricingRevision,
+                        pricingEffectiveAt: entry.effectiveAt
+                    )
+                } else {
+                    calculated = nil
+                }
+                return try HistoricalUsageTrendSample(
+                    provider: metric.provider,
+                    source: source,
+                    coverage: .model(metric.modelLabel),
+                    period: period,
+                    tokenUsage: metric.tokenUsage,
+                    providerReportedCost: providerCost,
+                    calculatedCost: calculated
+                )
+            }
+            samples.append(contentsOf: try providerTotalSamples(from: samples))
+            let observedScopes = try historicalObservedScopes(
+                sources: observedSources,
+                samples: samples,
+                now: now,
+                calendar: calendar
+            )
+            try store.record(samples, observedScopes: observedScopes, now: now)
+            let snapshot = try loadHistory(from: store, now: now, calendar: calendar)
+            lastValidHistory = snapshot
+            return snapshot
+        } catch {
+            return historicalFallback()
+        }
+    }
+
+    public func historicalRetention() -> HistoricalUsageRetention {
+        (try? openHistoricalStore().retention()) ?? lastValidHistory?.retention ?? .default
+    }
+
+    @discardableResult
+    public func setHistoricalRetention(_ retention: HistoricalUsageRetention, now: Date = Date()) -> Bool {
+        do {
+            try openHistoricalStore().setRetention(retention, now: now)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    public func deleteHistoricalUsage() -> Bool {
+        do {
+            let store = try openHistoricalStore()
+            try store.deleteAll()
+            lastValidHistory = HistoricalUsageSnapshot(
+                dailyBuckets: [],
+                weeklyBuckets: [],
+                health: UsageStoreHealth(isOpen: true, message: "Historical usage database opened"),
+                retention: try store.retention()
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
     public func applyAnthropic(
         _ result: AnthropicRefreshResult,
         windows: CurrentUsageWindows,
@@ -116,9 +229,11 @@ public actor UsageDatabase {
         now: Date = Date()
     ) -> ProviderDiagnostic {
         guard generationIsCurrent(expectedGeneration, provider: .anthropic) else { return staleDiagnostic(provider: .anthropic, now: now) }
-        return apply(provider: .anthropic, now: now) { store in
+        let diagnostic = apply(provider: .anthropic, now: now) { store in
             try AnthropicRefreshPersistence.apply(result, to: store, windows: windows, now: now)
         }
+        rememberObservedProviderWindows(diagnostic, windows: windows)
+        return diagnostic
     }
 
     public func applyAnthropic(
@@ -128,9 +243,11 @@ public actor UsageDatabase {
         now: Date = Date()
     ) -> ProviderDiagnostic {
         guard generationIsCurrent(expectedGeneration, provider: .anthropic) else { return staleDiagnostic(provider: .anthropic, now: now) }
-        return apply(provider: .anthropic, now: now) { store in
+        let diagnostic = apply(provider: .anthropic, now: now) { store in
             try AnthropicRefreshPersistence.apply(batch, to: store, windows: windows, now: now)
         }
+        rememberObservedProviderWindows(diagnostic, windows: windows)
+        return diagnostic
     }
 
     public func applyOpenAI(
@@ -140,9 +257,11 @@ public actor UsageDatabase {
         now: Date = Date()
     ) -> ProviderDiagnostic {
         guard generationIsCurrent(expectedGeneration, provider: .openAI) else { return staleDiagnostic(provider: .openAI, now: now) }
-        return apply(provider: .openAI, now: now) { store in
+        let diagnostic = apply(provider: .openAI, now: now) { store in
             try OpenAIRefreshPersistence.apply(result, to: store, windows: windows, now: now)
         }
+        rememberObservedProviderWindows(diagnostic, windows: windows)
+        return diagnostic
     }
 
     public func applyOpenAI(
@@ -152,9 +271,11 @@ public actor UsageDatabase {
         now: Date = Date()
     ) -> ProviderDiagnostic {
         guard generationIsCurrent(expectedGeneration, provider: .openAI) else { return staleDiagnostic(provider: .openAI, now: now) }
-        return apply(provider: .openAI, now: now) { store in
+        let diagnostic = apply(provider: .openAI, now: now) { store in
             try OpenAIRefreshPersistence.apply(batch, to: store, windows: windows, now: now)
         }
+        rememberObservedProviderWindows(diagnostic, windows: windows)
+        return diagnostic
     }
 
     public func providerConfigurationGeneration(for provider: ProviderKind) -> UInt64 {
@@ -246,6 +367,55 @@ public actor UsageDatabase {
         }
     }
 
+    private func rememberObservedProviderWindows(
+        _ diagnostic: ProviderDiagnostic,
+        windows: CurrentUsageWindows
+    ) {
+        guard diagnostic.state == .connected else { return }
+        observedProviderWindows[diagnostic.provider] = [windows.today, windows.currentWeek]
+    }
+
+    private func historicalObservedScopes(
+        sources: Set<UsageMetricSource>,
+        samples: [HistoricalUsageTrendSample],
+        now: Date,
+        calendar: Calendar
+    ) throws -> Set<HistoricalUsageObservedScope> {
+        var result = Set(samples.map {
+            HistoricalUsageObservedScope(provider: $0.provider, source: $0.source, period: $0.period)
+        })
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let periods = try [windows.today, windows.currentWeek].map {
+            try HistoricalUsageTrendPeriod(window: $0, timeZoneIdentifier: calendar.timeZone.identifier)
+        }
+        for source in sources {
+            let providers: [ProviderKind]
+            switch source {
+            case .builtInLocalLog:
+                providers = LocalUsageEventImporter.supportedProviders.sorted { $0.rawValue < $1.rawValue }
+            case .custom:
+                providers = [.custom]
+            case .providerAPI:
+                providers = []
+            }
+            for provider in providers {
+                for period in periods {
+                    result.insert(HistoricalUsageObservedScope(provider: provider, source: source, period: period))
+                }
+            }
+        }
+        for (provider, providerWindows) in observedProviderWindows {
+            for window in providerWindows where window.basis == .localCalendar {
+                let period = try HistoricalUsageTrendPeriod(
+                    window: window,
+                    timeZoneIdentifier: calendar.timeZone.identifier
+                )
+                result.insert(HistoricalUsageObservedScope(provider: provider, source: .providerAPI, period: period))
+            }
+        }
+        return result
+    }
+
     private func generationIsCurrent(_ expected: UInt64?, provider: ProviderKind) -> Bool {
         expected.map { providerConfigurationGenerations[provider, default: 0] == $0 } ?? true
     }
@@ -259,6 +429,106 @@ public actor UsageDatabase {
         let opened = try SQLiteUsageMetricStore(path: pathFactory(), busyTimeoutMilliseconds: busyTimeoutMilliseconds)
         store = opened
         return opened
+    }
+
+    private func openHistoricalStore() throws -> HistoricalUsageTrendStore {
+        if let historicalStore { return historicalStore }
+        let opened = try HistoricalUsageTrendStore(
+            path: historicalPathFactory(),
+            busyTimeoutMilliseconds: busyTimeoutMilliseconds
+        )
+        historicalStore = opened
+        return opened
+    }
+
+    private func loadHistory(
+        from store: HistoricalUsageTrendStore,
+        now: Date,
+        calendar: Calendar
+    ) throws -> HistoricalUsageSnapshot {
+        let daily = try periodsIncludingStoredTimeZones(
+            store: store,
+            window: .today,
+            count: 30,
+            now: now,
+            calendar: calendar
+        )
+        let weekly = try periodsIncludingStoredTimeZones(
+            store: store,
+            window: .currentWeek,
+            count: 12,
+            now: now,
+            calendar: calendar
+        )
+        return HistoricalUsageSnapshot(
+            dailyBuckets: try store.buckets(for: daily),
+            weeklyBuckets: try store.buckets(for: weekly),
+            health: UsageStoreHealth(isOpen: true, message: "Historical usage database opened"),
+            retention: try store.retention()
+        )
+    }
+
+    private func periodsIncludingStoredTimeZones(
+        store: HistoricalUsageTrendStore,
+        window: TimeWindow,
+        count: Int,
+        now: Date,
+        calendar: Calendar
+    ) throws -> [HistoricalUsageTrendPeriod] {
+        let expected = try historicalPeriods(window: window, count: count, now: now, calendar: calendar)
+        guard let first = expected.first, let last = expected.last else { return [] }
+        let stored = try store.periods(
+            from: first.window.start.addingTimeInterval(-2 * 24 * 60 * 60),
+            through: last.window.end.addingTimeInterval(2 * 24 * 60 * 60),
+            window: window
+        )
+        let storedDateKeys = Set(stored.map(historicalCalendarKey))
+        return Array(Set(expected.filter { !storedDateKeys.contains(historicalCalendarKey($0)) } + stored)).sorted {
+            if $0.window.start != $1.window.start { return $0.window.start < $1.window.start }
+            return $0.timeZoneIdentifier < $1.timeZoneIdentifier
+        }
+    }
+
+    private func providerTotalSamples(
+        from samples: [HistoricalUsageTrendSample]
+    ) throws -> [HistoricalUsageTrendSample] {
+        let apiModels = samples.filter { sample in
+            guard sample.source == .providerAPI else { return false }
+            if case .model = sample.coverage { return true }
+            return false
+        }
+        let grouped = Dictionary(grouping: apiModels) {
+            HistoricalProviderPeriodKey(provider: $0.provider, period: $0.period)
+        }
+        return try grouped.map { key, values in
+            var input = 0
+            var output = 0
+            for value in values {
+                let inputResult = input.addingReportingOverflow(value.tokenUsage.inputTokens)
+                let outputResult = output.addingReportingOverflow(value.tokenUsage.outputTokens)
+                guard !inputResult.overflow, !outputResult.overflow else {
+                    throw HistoricalUsageTrendStoreError.executeFailed("Historical provider total overflow")
+                }
+                input = inputResult.partialValue
+                output = outputResult.partialValue
+            }
+            return try HistoricalUsageTrendSample(
+                provider: key.provider,
+                source: .providerAPI,
+                coverage: .providerTotal,
+                period: key.period,
+                tokenUsage: TokenUsage(inputTokens: input, outputTokens: output)
+            )
+        }
+    }
+
+    private func historicalFallback() -> HistoricalUsageSnapshot {
+        HistoricalUsageSnapshot(
+            dailyBuckets: lastValidHistory?.dailyBuckets ?? [],
+            weeklyBuckets: lastValidHistory?.weeklyBuckets ?? [],
+            health: UsageStoreHealth(isOpen: false, message: "Historical usage unavailable"),
+            retention: lastValidHistory?.retention ?? .default
+        )
     }
 
     private func fallbackSnapshot() -> StoredUsageMetricsSnapshot {
@@ -279,6 +549,81 @@ public actor UsageDatabase {
     private func cancellationSnapshot() -> StoredUsageMetricsSnapshot {
         lastValidSnapshot ?? fallbackSnapshot()
     }
+
+    private func archiveDatabaseFiles(at databaseURL: URL, date: Date) throws -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: databaseURL.path) else {
+            throw UsageDatabaseRecoveryError.databaseMissing
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime, .withDashSeparatorInDate]
+        let archiveURL = databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("Recovery", isDirectory: true)
+            .appendingPathComponent(
+                "usage-metrics-\(formatter.string(from: date).replacingOccurrences(of: ":", with: "-"))-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
+
+        var lockDatabase: OpaquePointer?
+        let openResult = sqlite3_open_v2(
+            databaseURL.path,
+            &lockDatabase,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        var holdsExclusiveLock = false
+        if openResult == SQLITE_OK {
+            sqlite3_busy_timeout(lockDatabase, 1_000)
+            let lockResult = sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil)
+            if lockResult == SQLITE_OK {
+                holdsExclusiveLock = true
+            } else if lockResult == SQLITE_BUSY || lockResult == SQLITE_LOCKED {
+                sqlite3_close(lockDatabase)
+                try? fileManager.removeItem(at: archiveURL)
+                throw UsageDatabaseRecoveryError.databaseBusy
+            } else if fileManager.isWritableFile(atPath: databaseURL.path),
+                      ![SQLITE_NOTADB, SQLITE_CORRUPT].contains(sqlite3_extended_errcode(lockDatabase)) {
+                sqlite3_close(lockDatabase)
+                try? fileManager.removeItem(at: archiveURL)
+                throw UsageDatabaseRecoveryError.databaseBusy
+            }
+        } else if fileManager.isWritableFile(atPath: databaseURL.path) {
+            sqlite3_close(lockDatabase)
+            try? fileManager.removeItem(at: archiveURL)
+            throw UsageDatabaseRecoveryError.databaseBusy
+        }
+        defer {
+            if holdsExclusiveLock {
+                sqlite3_exec(lockDatabase, "ROLLBACK;", nil, nil, nil)
+            }
+            sqlite3_close(lockDatabase)
+        }
+
+        // Inventory sidecars only after excluding writers so a newly committed WAL cannot be omitted.
+        let sourceURLs = [
+            databaseURL,
+            URL(fileURLWithPath: databaseURL.path + "-wal"),
+            URL(fileURLWithPath: databaseURL.path + "-shm")
+        ].filter { fileManager.fileExists(atPath: $0.path) }
+        do {
+            for source in sourceURLs {
+                let destination = archiveURL.appendingPathComponent(source.lastPathComponent)
+                try fileManager.copyItem(at: source, to: destination)
+            }
+            for source in sourceURLs {
+                try fileManager.removeItem(at: source)
+            }
+        } catch {
+            throw error
+        }
+        return archiveURL
+    }
+}
+
+public enum UsageDatabaseRecoveryError: Error, Equatable {
+    case databaseMissing
+    case databaseBusy
 }
 
 private struct LocalEventsFingerprint: Equatable {
@@ -371,6 +716,65 @@ private func applicationSupportDatabasePath(fileManager: FileManager) throws -> 
     let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
     try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.appendingPathComponent("usage-metrics.sqlite").path
+}
+
+private func applicationSupportHistoricalDatabasePath(fileManager: FileManager) throws -> String {
+    let applicationSupport = try fileManager.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    )
+    let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.appendingPathComponent("historical-usage-trends.sqlite").path
+}
+
+private func historicalDatabasePath(from currentPath: String) throws -> String {
+    if currentPath == ":memory:" { return ":memory:" }
+    return currentPath + ".history.sqlite"
+}
+
+private func historicalPeriods(
+    window: TimeWindow,
+    count: Int,
+    now: Date,
+    calendar: Calendar
+) throws -> [HistoricalUsageTrendPeriod] {
+    let current = window.interval(containing: now, calendar: calendar)
+    return try (0..<count).reversed().map { offset in
+        let component: Calendar.Component = window == .today ? .day : .weekOfYear
+        guard let start = calendar.date(byAdding: component, value: -offset, to: current.start),
+              let end = calendar.date(byAdding: component, value: 1, to: start) else {
+            throw CurrentUsageWindows.ResolutionError.unableToResolveBoundary
+        }
+        let exact = try ExactUsageWindow(timeWindow: window, start: start, end: end, basis: .localCalendar)
+        return try HistoricalUsageTrendPeriod(window: exact, timeZoneIdentifier: calendar.timeZone.identifier)
+    }
+}
+
+private func historicalCalendarKey(_ period: HistoricalUsageTrendPeriod) -> HistoricalCalendarKey {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: period.timeZoneIdentifier) ?? .gmt
+    let components = calendar.dateComponents([.year, .month, .day], from: period.window.start)
+    return HistoricalCalendarKey(
+        window: period.window.timeWindow,
+        year: components.year ?? 0,
+        month: components.month ?? 0,
+        day: components.day ?? 0
+    )
+}
+
+private struct HistoricalCalendarKey: Hashable {
+    let window: TimeWindow
+    let year: Int
+    let month: Int
+    let day: Int
+}
+
+private struct HistoricalProviderPeriodKey: Hashable {
+    let provider: ProviderKind
+    let period: HistoricalUsageTrendPeriod
 }
 
 // Only transfers FileManager into factories invoked under UsageDatabase actor isolation.

@@ -3,6 +3,8 @@ import LimitBarCore
 import AppKit
 
 struct LimitBarSettingsView: View {
+    var showsProviderAuthentication = true
+    var state = LimitBarState.shared
     private let pricingStore = PricingSettingsStore()
     private let localEventsPath = (try? LocalUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
@@ -16,11 +18,11 @@ struct LimitBarSettingsView: View {
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
     @State private var localEventsRevealMessage: String?
-
-    private let customSourceStore = CustomUsageSourceStore()
-    @State private var customSources = CustomUsageSourceStore().sources
-    @State private var customSourceName = ""
-    @State private var customSourceFilePath = ""
+    @State private var databaseRecoveryMessage: String?
+    @State private var confirmsCleanDatabase = false
+    @State private var historyRetention = HistoricalUsageRetention.default
+    @State private var showsDeleteHistoryConfirmation = false
+    @State private var historyMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -36,11 +38,15 @@ struct LimitBarSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Provider Authentication") {
-                Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ProviderSettingsView(settings: $providerSettings)
+            AlertSettingsView(store: state.alertSettingsStore, coordinator: state.alertCoordinator)
+
+            if showsProviderAuthentication {
+                Section("Provider Authentication") {
+                    Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ProviderSettingsView(settings: $providerSettings)
+                }
             }
 
             Section("Diagnostics") {
@@ -61,6 +67,34 @@ struct LimitBarSettingsView: View {
                 }
                 if let storedMetrics {
                     LabeledContent("Usage database", value: storedMetrics.health.message)
+                    if !storedMetrics.health.isOpen {
+                        Text("The existing database has been left unchanged. Retry with this or a newer LimitBar version before creating a clean database.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Button("Retry") {
+                                    retryDatabase()
+                                }
+                                Button("Open Recovery Guide") {
+                                    openRecoveryGuide()
+                                }
+                            }
+                            HStack {
+                                Button("Reveal Database Folder") {
+                                    revealDatabaseFolder()
+                                }
+                                Button("Create Clean Database", role: .destructive) {
+                                    confirmsCleanDatabase = true
+                                }
+                            }
+                        }
+                    }
+                    if let databaseRecoveryMessage {
+                        Text(databaseRecoveryMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     LabeledContent("Local events imported", value: "\(storedMetrics.localImport.validEventCount)")
                     LabeledContent("Local malformed events", value: "\(storedMetrics.localImport.malformedEventCount)")
                     if storedMetrics.localImport.failureMessage != nil {
@@ -93,48 +127,37 @@ struct LimitBarSettingsView: View {
                 }
             }
 
-            Section("Custom Usage Sources") {
-                Text("Track any tool LimitBar has no built-in support for. Point at a local log file where each line is JSON with timestamp, model, inputTokens, and outputTokens, one line per response - works for Aider, Cursor, Windsurf, or anything else that can write a log line. A source only appears on the Usage tab once its file actually has matching events; nothing shows for tools you don't use.")
+            Section("Historical Usage") {
+                Text("Normalized daily and weekly aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(#"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-
-                TextField("Name (e.g. Aider)", text: $customSourceName)
-                HStack {
-                    TextField("Log file path", text: $customSourceFilePath)
-                    Button("Choose File...") {
-                        chooseCustomSourceFile()
+                Picker("Retention", selection: $historyRetention) {
+                    ForEach(HistoricalUsageRetention.allCases, id: \.rawValue) { retention in
+                        Text(retention.displayName).tag(retention)
                     }
                 }
-                Button("Add Source") {
-                    addCustomSource()
-                }
-                .disabled(customSourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || customSourceFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if customSources.isEmpty {
-                    Text("No custom sources configured.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(customSources) { source in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(source.name)
-                                Text(source.filePath)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Remove") {
-                                removeCustomSource(id: source.id)
-                            }
+                .onChange(of: historyRetention) { _, retention in
+                    Task {
+                        if await UsageDatabase.shared.setHistoricalRetention(retention) {
+                            historyMessage = "Retention updated."
+                            NotificationCenter.default.post(name: .historicalUsageDidChange, object: nil)
+                        } else {
+                            historyMessage = "Could not update historical retention."
                         }
                     }
                 }
+                Button("Delete Historical Usage", role: .destructive) {
+                    showsDeleteHistoryConfirmation = true
+                }
+                .accessibilityIdentifier("delete-historical-usage")
+                if let historyMessage {
+                    Text(historyMessage)
+                        .font(.caption)
+                        .foregroundStyle(historyMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
             }
+
+            CustomUsageSourcesSection()
 
             Section("Pricing") {
                 Text("Manual prices are used only when a provider does not report spend.")
@@ -175,6 +198,38 @@ struct LimitBarSettingsView: View {
         .frame(width: 620, height: 720)
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
+            historyRetention = await UsageDatabase.shared.historicalRetention()
+        }
+        .confirmationDialog(
+            "Delete all historical usage?",
+            isPresented: $showsDeleteHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete History", role: .destructive) {
+                Task {
+                    if await UsageDatabase.shared.deleteHistoricalUsage() {
+                        state.clearHistoricalUsage()
+                        historyMessage = "Historical usage deleted. Source files and current usage were not changed."
+                    } else {
+                        historyMessage = "Could not delete historical usage."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained aggregates only. Settings, credentials, current usage, and source JSONL files remain unchanged.")
+        }
+        .confirmationDialog(
+            "Archive the existing usage database and create a clean one?",
+            isPresented: $confirmsCleanDatabase,
+            titleVisibility: .visible
+        ) {
+            Button("Archive and Create Clean Database", role: .destructive) {
+                createCleanDatabase()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Metrics that cannot be reimported remain only in the local Recovery folder. Settings and Keychain credentials are not changed.")
         }
     }
 
@@ -190,34 +245,11 @@ struct LimitBarSettingsView: View {
             modelLabel: modelLabel.trimmingCharacters(in: .whitespacesAndNewlines),
             inputPricePerMillionTokens: input,
             outputPricePerMillionTokens: output,
-            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
             effectiveAt: effectiveAt
         )
         if pricingStore.add(entry) {
             pricingEntries = pricingStore.entries
-        }
-    }
-
-    private func addCustomSource() {
-        if customSourceStore.add(name: customSourceName, filePath: customSourceFilePath) {
-            customSources = customSourceStore.sources
-            customSourceName = ""
-            customSourceFilePath = ""
-        }
-    }
-
-    private func removeCustomSource(id: UUID) {
-        customSourceStore.remove(id: id)
-        customSources = customSourceStore.sources
-    }
-
-    private func chooseCustomSourceFile() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        if panel.runModal() == .OK, let url = panel.url {
-            customSourceFilePath = url.path
         }
     }
 
@@ -239,8 +271,135 @@ struct LimitBarSettingsView: View {
             localEventsRevealMessage = "Could not create the local events directory."
         }
     }
+
+    private func retryDatabase() {
+        Task {
+            storedMetrics = await UsageDatabase.shared.snapshot()
+            databaseRecoveryMessage = storedMetrics?.health.isOpen == true
+                ? "The usage database opened successfully."
+                : "The usage database is still unavailable."
+        }
+    }
+
+    private func openRecoveryGuide() {
+        guard let url = URL(string: "https://github.com/talibilat/limit-bar/blob/main/docs/MIGRATIONS_AND_RECOVERY.md") else { return }
+        if !NSWorkspace.shared.open(url) {
+            databaseRecoveryMessage = "Could not open the recovery guide."
+        }
+    }
+
+    private func revealDatabaseFolder() {
+        Task {
+            do {
+                let directory = try await UsageDatabase.shared.databaseDirectoryURL()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                databaseRecoveryMessage = NSWorkspace.shared.open(directory)
+                    ? nil
+                    : "Could not reveal the usage database folder."
+            } catch {
+                databaseRecoveryMessage = "Could not reveal the usage database folder."
+            }
+        }
+    }
+
+    private func createCleanDatabase() {
+        Task {
+            do {
+                let archive = try await UsageDatabase.shared.createCleanDatabaseRecovery()
+                storedMetrics = await UsageDatabase.shared.snapshot()
+                databaseRecoveryMessage = "The original database was retained in \(archive.lastPathComponent)."
+            } catch {
+                databaseRecoveryMessage = "Could not create a clean database. The original database was not intentionally deleted."
+            }
+        }
+    }
+}
+
+struct CustomUsageSourcesSection: View {
+    private let store: CustomUsageSourceStore
+    private let chooseFile: () -> String?
+
+    @State private var sources: [CustomUsageSource]
+    @State private var name = ""
+    @State private var filePath = ""
+
+    init(
+        store: CustomUsageSourceStore = CustomUsageSourceStore(),
+        chooseFile: @escaping () -> String? = CustomUsageSourcesSection.chooseFileWithPanel
+    ) {
+        self.store = store
+        self.chooseFile = chooseFile
+        _sources = State(initialValue: store.sources)
+    }
+
+    var body: some View {
+        Section("Custom Usage Sources") {
+            Text("Track any tool LimitBar has no built-in support for. Point at a local log file where each line is JSON with timestamp, model, inputTokens, and outputTokens, one line per response - works for Aider, Cursor, Windsurf, or anything else that can write a log line. A source only appears on the Usage tab once its file actually has matching events; nothing shows for tools you don't use.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(#"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            TextField("Name (e.g. Aider)", text: $name)
+                .accessibilityIdentifier("custom-source-name")
+            HStack {
+                TextField("Log file path", text: $filePath)
+                    .accessibilityIdentifier("custom-source-path")
+                Button("Choose File...") {
+                    if let selectedPath = chooseFile() {
+                        filePath = selectedPath
+                    }
+                }
+                .accessibilityIdentifier("custom-source-choose-file")
+            }
+            Button("Add Source") {
+                if store.add(name: name, filePath: filePath) {
+                    sources = store.sources
+                    name = ""
+                    filePath = ""
+                }
+            }
+            .accessibilityIdentifier("custom-source-add")
+            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if sources.isEmpty {
+                Text("No custom sources configured.")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("custom-sources-empty")
+            } else {
+                ForEach(sources) { source in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(source.name)
+                            Text(source.filePath)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Remove") {
+                            store.remove(id: source.id)
+                            sources = store.sources
+                        }
+                        .accessibilityIdentifier("custom-source-remove")
+                    }
+                    .accessibilityIdentifier("custom-source-row")
+                }
+            }
+        }
+    }
+
+    private static func chooseFileWithPanel() -> String? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
 }
 
 #Preview {
-    LimitBarSettingsView()
+    LimitBarSettingsView(state: .shared)
 }

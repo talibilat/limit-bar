@@ -189,6 +189,232 @@ struct SQLiteUsageMetricStoreTests {
         #expect(try provenanceColumns(at: path) == ["legacy", nil, nil, nil, nil, nil])
     }
 
+    @Test("legacy migration rebuilds the canonical constrained schema")
+    func legacyMigrationRebuildsCanonicalSchema() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try createV1Database(at: path)
+
+        _ = try SQLiteUsageMetricStore(path: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+
+        #expect(throws: UsageMetricStoreError.self) {
+            try execute("UPDATE usage_metrics SET source_kind = 'providerAPI' WHERE id = 'old';", in: database)
+        }
+        #expect(try tableColumns(in: database) == canonicalColumns)
+    }
+
+    @Test("unknown version zero schema is rejected without mutation")
+    func unknownVersionZeroSchemaIsRejectedWithoutMutation() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("CREATE TABLE usage_metrics (id TEXT PRIMARY KEY, time_window TEXT NOT NULL);", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 0")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try databaseUserVersion(in: database) == 0)
+        #expect(try tableColumns(in: database) == ["id", "time_window"])
+    }
+
+    @Test("version zero database with unrelated objects is not treated as empty")
+    func versionZeroDatabaseWithUnrelatedObjectsIsRejected() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("CREATE TABLE unrelated (value TEXT);", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 0")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try databaseUserVersion(in: database) == 0)
+    }
+
+    @Test("unlisted schema version is rejected without mutation")
+    func unlistedSchemaVersionIsRejected() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try createV1Database(at: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("PRAGMA user_version = 1;", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema version 1")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try databaseUserVersion(in: database) == 1)
+    }
+
+    @Test("legacy schema with unknown objects is rejected without mutation")
+    func legacySchemaWithUnknownObjectsIsRejected() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try createV1Database(at: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("CREATE TABLE unexpected_data (value TEXT);", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 0")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try databaseUserVersion(in: database) == 0)
+        #expect(try tableColumns(in: database) == Array(canonicalColumns.prefix(7)) + Array(canonicalColumns.suffix(11)))
+    }
+
+    @Test("corrupt database is rejected without changing its bytes")
+    func corruptDatabaseIsRejectedWithoutMutation() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let original = Data("not a sqlite database".utf8)
+        try original.write(to: URL(fileURLWithPath: path))
+
+        #expect(throws: UsageMetricStoreError.self) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == original)
+    }
+
+    @Test("current schema repairs missing supporting indexes")
+    func currentSchemaRepairsMissingSupportingIndexes() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        _ = try SQLiteUsageMetricStore(path: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("DROP INDEX usage_metrics_current_windows;", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        _ = try SQLiteUsageMetricStore(path: path)
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try indexNames(in: database).contains("usage_metrics_current_windows"))
+    }
+
+    @Test("current schema repairs a unique supporting index")
+    func currentSchemaRepairsUniqueSupportingIndex() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        _ = try SQLiteUsageMetricStore(path: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("""
+        DROP INDEX usage_metrics_current_windows;
+        CREATE UNIQUE INDEX usage_metrics_current_windows
+        ON usage_metrics (time_window, window_start, window_end, window_basis);
+        """, in: database)
+        sqlite3_close(database)
+        database = nil
+
+        _ = try SQLiteUsageMetricStore(path: path)
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try indexIsUnique("usage_metrics_current_windows", in: database) == false)
+    }
+
+    @Test("current schema rejects noncanonical metadata constraints")
+    func currentSchemaRejectsNoncanonicalMetadataConstraints() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        _ = try SQLiteUsageMetricStore(path: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("""
+        DROP TABLE app_metadata;
+        CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL CHECK (length(value) > 0));
+        """, in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported app metadata schema fingerprint for version 2")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+    }
+
+    @Test("current schema with weakened constraints is rebuilt canonically")
+    func currentSchemaWithWeakenedConstraintsIsRebuilt() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try createWeakV2Database(at: path)
+
+        _ = try SQLiteUsageMetricStore(path: path)
+
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        let sql = try tableSQL(in: database)
+        #expect(sql.contains("source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom')"))
+    }
+
+    @Test("malformed current schema is rejected without repair")
+    func malformedCurrentSchemaIsRejectedWithoutRepair() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("CREATE TABLE usage_metrics (id TEXT PRIMARY KEY); PRAGMA user_version = 2;", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 2")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try tableColumns(in: database) == ["id"])
+        #expect(try databaseUserVersion(in: database) == 2)
+    }
+
+    @Test("future schema is rejected without mutation")
+    func futureSchemaIsRejectedWithoutMutation() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        _ = try SQLiteUsageMetricStore(path: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("PRAGMA user_version = 99;", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        #expect(throws: UsageMetricStoreError.executeFailed("Unsupported usage metric schema version 99")) {
+            _ = try SQLiteUsageMetricStore(path: path)
+        }
+
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        #expect(try databaseUserVersion(in: database) == 99)
+        #expect(try tableColumns(in: database) == canonicalColumns)
+    }
+
     @Test("migration rolls back schema changes when a later step fails")
     func migrationRollsBackSchemaChangesWhenLaterStepFails() throws {
         let path = temporaryDatabasePath()
@@ -723,6 +949,25 @@ struct SQLiteUsageMetricStoreTests {
         """, in: database)
     }
 
+    private func createWeakV2Database(at path: String) throws {
+        try createV1Database(at: path)
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        defer { sqlite3_close(database) }
+        try execute("""
+        ALTER TABLE usage_metrics ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom'));
+        ALTER TABLE usage_metrics ADD COLUMN source_identifier TEXT;
+        ALTER TABLE usage_metrics ADD COLUMN window_start INTEGER CHECK (window_start IS NULL OR typeof(window_start) = 'integer');
+        ALTER TABLE usage_metrics ADD COLUMN window_end INTEGER CHECK (window_end IS NULL OR typeof(window_end) = 'integer');
+        ALTER TABLE usage_metrics ADD COLUMN window_basis TEXT CHECK (window_basis IS NULL OR window_basis IN ('localCalendar', 'utcBilling'));
+        ALTER TABLE usage_metrics ADD COLUMN aggregation_version INTEGER CHECK (aggregation_version IS NULL OR (typeof(aggregation_version) = 'integer' AND aggregation_version > 0));
+        CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE INDEX usage_metrics_current_windows ON usage_metrics (time_window, window_start, window_end, window_basis);
+        CREATE INDEX usage_metrics_replacement_scope ON usage_metrics (provider, time_window, source_kind, source_identifier);
+        PRAGMA user_version = 2;
+        """, in: database)
+    }
+
     private func openDatabase(at path: String, into database: inout OpaquePointer?) throws {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
             throw UsageMetricStoreError.openFailed("Unable to create test database")
@@ -793,6 +1038,54 @@ struct SQLiteUsageMetricStoreTests {
             columns.append(String(cString: sqlite3_column_text(statement, 1)))
         }
         return columns
+    }
+
+    private func indexNames(in database: OpaquePointer?) throws -> Set<String> {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA index_list(usage_metrics);", -1, &statement, nil) == SQLITE_OK else {
+            throw UsageMetricStoreError.prepareFailed("Unable to inspect test indexes")
+        }
+        defer { sqlite3_finalize(statement) }
+        var indexes = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            indexes.insert(String(cString: sqlite3_column_text(statement, 1)))
+        }
+        return indexes
+    }
+
+    private func indexIsUnique(_ name: String, in database: OpaquePointer?) throws -> Bool? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA index_list(usage_metrics);", -1, &statement, nil) == SQLITE_OK else {
+            throw UsageMetricStoreError.prepareFailed("Unable to inspect test indexes")
+        }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard String(cString: sqlite3_column_text(statement, 1)) == name else { continue }
+            return sqlite3_column_int(statement, 2) == 1
+        }
+        return nil
+    }
+
+    private func tableSQL(in database: OpaquePointer?) throws -> String {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usage_metrics';", -1, &statement, nil) == SQLITE_OK else {
+            throw UsageMetricStoreError.prepareFailed("Unable to inspect test table SQL")
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw UsageMetricStoreError.executeFailed("Unable to inspect test table SQL")
+        }
+        return String(cString: sqlite3_column_text(statement, 0))
+    }
+
+    private var canonicalColumns: [String] {
+        [
+            "id", "provider", "account_label", "project_label", "model_label", "deployment_label",
+            "time_window", "source_kind", "source_identifier", "window_start", "window_end", "window_basis",
+            "aggregation_version", "input_tokens", "output_tokens", "cost_amount", "cost_currency_code",
+            "cost_source", "limit_status", "limit_used", "limit_value", "refreshed_at", "freshness_status",
+            "missed_refreshes"
+        ]
     }
 
     private func provenanceColumns(at path: String) throws -> [String?] {

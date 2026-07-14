@@ -10,7 +10,7 @@ struct RateLimitView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if state.claudeModel.isPresent {
                     sectionHeader("Claude")
-                    ClaudeRateLimitsView(model: state.claudeModel)
+                    ClaudeRateLimitsView(model: state.claudeModel, onActionCompleted: state.claudeActionCompleted)
                 }
 
                 if let codexSnapshot = state.local.codexSnapshot {

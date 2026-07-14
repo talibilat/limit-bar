@@ -30,6 +30,103 @@ struct UsageDatabaseTests {
         #expect(second.metrics == first.metrics)
     }
 
+    @Test("archives bounded metrics and exposes gaps separately from confirmed zero")
+    func archivesHistoricalUsage() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        let zero = metric(model: "confirmed-zero", window: windows.today, refreshedAt: now, input: 0, output: 0)
+
+        let history = await database.historicalUsage(metrics: [zero], now: now, calendar: calendar)
+
+        #expect(history.health.isOpen)
+        #expect(history.dailyBuckets.last?.value != .gap)
+        guard case let .observed(observations) = history.dailyBuckets.last?.value else {
+            Issue.record("Expected an observed zero bucket")
+            return
+        }
+        #expect(observations.first?.sample.tokenUsage.totalTokens == 0)
+        #expect(history.dailyBuckets.last?.authoritativeTotals.count == 1)
+        #expect(history.dailyBuckets.last?.modelAttributions.count == 1)
+        #expect(history.dailyBuckets.last?.preferredTokenObservations.count == 1)
+        #expect(history.dailyBuckets.last?.preferredTokenObservations.first?.sample.coverage == .providerTotal)
+        #expect(history.dailyBuckets.dropLast().allSatisfy { $0.value == HistoricalUsageTrendBucket.Value.gap })
+    }
+
+    @Test("history deletion preserves current metrics")
+    func deletesOnlyHistoricalUsage() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let retained = metric(model: "retained", window: windows.today, refreshedAt: now)
+        let currentStore = try SQLiteUsageMetricStore(path: currentPath)
+        try currentStore.save([retained])
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        _ = await database.historicalUsage(metrics: [retained], now: now, calendar: calendar)
+
+        #expect(await database.deleteHistoricalUsage())
+        let current = await database.snapshot(now: now, calendar: calendar)
+        let history = await database.historicalUsage(metrics: [], now: now, calendar: calendar)
+
+        #expect(current.metrics == [retained])
+        #expect(history.dailyBuckets.allSatisfy { $0.value == HistoricalUsageTrendBucket.Value.gap })
+    }
+
+    @Test("successful empty local source records observed zero")
+    func emptyLocalSourceRecordsZero() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        let local = metric(
+            model: "removed",
+            window: windows.today,
+            refreshedAt: now,
+            source: .builtInLocalLog
+        )
+        _ = await database.historicalUsage(metrics: [local], now: now, calendar: calendar)
+
+        let history = await database.historicalUsage(
+            metrics: [],
+            now: now.addingTimeInterval(60),
+            calendar: calendar,
+            observedSources: [.builtInLocalLog]
+        )
+
+        #expect(history.dailyBuckets.last?.preferredTotalTokens == 0)
+    }
+
     @Test("retries opening after failure instead of caching a broken connection")
     func retriesOpenAfterFailure() async {
         let attempts = LockedCounter()
@@ -45,6 +142,92 @@ struct UsageDatabaseTests {
         #expect(!failed.health.isOpen)
         #expect(recovered.health.isOpen)
         #expect(attempts.value == 2)
+    }
+
+    @Test("clean database recovery archives the database and sidecars before replacement")
+    func cleanDatabaseRecoveryArchivesOriginalFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        _ = try SQLiteUsageMetricStore(path: path)
+        try Data("synthetic wal".utf8).write(to: URL(fileURLWithPath: path + "-wal"))
+        try Data("synthetic shm".utf8).write(to: URL(fileURLWithPath: path + "-shm"))
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery(
+            at: Date(timeIntervalSince1970: 1_783_716_000)
+        )
+
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-wal").path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-shm").path))
+        let snapshot = await database.snapshot(now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
+        #expect(snapshot.health.isOpen)
+        #expect(snapshot.metrics.isEmpty)
+    }
+
+    @Test("clean database recovery refuses a database held by another writer")
+    func cleanDatabaseRecoveryRefusesLockedDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let retained = metric(model: "retained", window: try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar()).today, refreshedAt: now)
+        do {
+            let store = try SQLiteUsageMetricStore(path: path)
+            try store.save([retained])
+        }
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        #expect(await database.snapshot(now: now, calendar: utcCalendar()).metrics == [retained])
+        var lockDatabase: OpaquePointer?
+        guard sqlite3_open(path, &lockDatabase) == SQLITE_OK else { throw TestError.openFailed }
+        defer { sqlite3_close(lockDatabase) }
+        guard sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil) == SQLITE_OK else {
+            throw TestError.openFailed
+        }
+        await #expect(throws: UsageDatabaseRecoveryError.databaseBusy) {
+            try await database.createCleanDatabaseRecovery()
+        }
+
+        #expect(FileManager.default.fileExists(atPath: path))
+        let fallback = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(fallback.metrics == [retained])
+        #expect(!fallback.health.isOpen)
+    }
+
+    @Test("clean database recovery retains a corrupt database before replacement")
+    func cleanDatabaseRecoveryRetainsCorruptDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let corruptBytes = Data("not a sqlite database".utf8)
+        try corruptBytes.write(to: URL(fileURLWithPath: path))
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery()
+
+        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics.sqlite")) == corruptBytes)
+        #expect((try? SQLiteUsageMetricStore(path: path)) != nil)
+    }
+
+    @Test("clean database recovery retains a read-only database before replacement")
+    func cleanDatabaseRecoveryRetainsReadOnlyDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        _ = try SQLiteUsageMetricStore(path: path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery()
+
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
+        #expect((try? SQLiteUsageMetricStore(path: path)) != nil)
     }
 
     @Test("provider apply and reads are serialized through the actor")
@@ -370,8 +553,15 @@ struct UsageDatabaseTests {
         #expect(recovered.metrics == valid.metrics)
     }
 
-    private func metric(model: String, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {
-        UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: 1, outputTokens: 1), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
+    private func metric(
+        model: String,
+        window: ExactUsageWindow,
+        refreshedAt: Date,
+        input: Int = 1,
+        output: Int = 1,
+        source: UsageMetricSource = .providerAPI
+    ) -> UsageMetric {
+        UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: source, window: window), tokenUsage: TokenUsage(inputTokens: input, outputTokens: output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
     }
 
     private func customMetric(source: CustomUsageSource, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {
