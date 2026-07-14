@@ -12,7 +12,15 @@ struct CustomUsageSourceStore {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults? = nil) {
-        self.defaults = defaults ?? AppUITestConfiguration.userDefaults ?? .standard
+        self.defaults = defaults ?? Self.defaultDefaults
+    }
+
+    private static var defaultDefaults: UserDefaults {
+#if DEBUG
+        AppUITestConfiguration.userDefaults ?? .standard
+#else
+        .standard
+#endif
     }
 
     var sources: [CustomUsageSource] {

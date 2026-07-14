@@ -302,6 +302,9 @@
 				AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */,
 				AA000000000000000000000F /* CustomUsageSourceStore.swift in Sources */,
 				AA0000000000000000000101 /* AppUITestSupport.swift in Sources */,
+				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
+				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
+				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -318,9 +321,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */,
-				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
-				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
-				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
