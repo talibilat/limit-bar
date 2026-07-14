@@ -23,6 +23,9 @@ struct LimitBarSettingsView: View {
     @State private var historyRetention = HistoricalUsageRetention.default
     @State private var showsDeleteHistoryConfirmation = false
     @State private var historyMessage: String?
+    @State private var refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary] = [:]
+    @State private var showsClearRefreshHistoryConfirmation = false
+    @State private var refreshHistoryMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -107,6 +110,26 @@ struct LimitBarSettingsView: View {
                     }
                 } else {
                     ProgressView("Loading diagnostics")
+                }
+            }
+
+            Section("Provider Refresh History") {
+                Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(ProviderRefreshProduct.allCases, id: \.self) { product in
+                    let summary = refreshHistory[product]
+                    LabeledContent("\(product.displayName) latest", value: ProviderRefreshHistoryStatusText.latest(summary?.latest))
+                    LabeledContent("\(product.displayName) last full success", value: ProviderRefreshHistoryStatusText.lastFullSuccess(summary?.lastFullSuccess))
+                }
+                Button("Clear Provider Refresh History", role: .destructive) {
+                    showsClearRefreshHistoryConfirmation = true
+                }
+                .accessibilityIdentifier("clear-provider-refresh-history")
+                if let refreshHistoryMessage {
+                    Text(refreshHistoryMessage)
+                        .font(.caption)
+                        .foregroundStyle(refreshHistoryMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
                 }
             }
 
@@ -199,6 +222,29 @@ struct LimitBarSettingsView: View {
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
             historyRetention = await UsageDatabase.shared.historicalRetention()
+            refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerRefreshHistoryDidChange)) { _ in
+            Task { refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries() }
+        }
+        .confirmationDialog(
+            "Clear provider refresh history?",
+            isPresented: $showsClearRefreshHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Refresh History", role: .destructive) {
+                Task {
+                    if await ProviderRefreshHistoryRepository.shared.deleteAll() {
+                        refreshHistory = [:]
+                        refreshHistoryMessage = "Provider refresh history cleared. Usage, settings, and credentials were not changed."
+                    } else {
+                        refreshHistoryMessage = "Could not clear provider refresh history."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes refresh outcomes only. Current and historical usage, provider settings, and Keychain credentials remain unchanged.")
         }
         .confirmationDialog(
             "Delete all historical usage?",
@@ -311,6 +357,29 @@ struct LimitBarSettingsView: View {
             } catch {
                 databaseRecoveryMessage = "Could not create a clean database. The original database was not intentionally deleted."
             }
+        }
+    }
+}
+
+enum ProviderRefreshHistoryStatusText {
+    static func latest(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No explicit refresh recorded" }
+        return "\(outcome(entry.outcome)) \(entry.startedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    static func lastFullSuccess(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No full success recorded" }
+        return entry.startedAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func outcome(_ outcome: ProviderRefreshOutcome) -> String {
+        switch outcome {
+        case .success: "Succeeded"
+        case .partialFailure: "Partially failed"
+        case .cancelled: "Cancelled"
+        case .authenticationFailure: "Authentication failed"
+        case .networkFailure: "Network failed"
+        case .failed: "Failed"
         }
     }
 }

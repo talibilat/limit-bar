@@ -17,108 +17,141 @@ struct ProviderRefreshHistoryTests {
         #expect(try ProviderRefreshDurationBucket(duration: duration) == expected)
     }
 
-    @Test("invalid durations and empty windows are rejected")
-    func rejectsInvalidValues() throws {
-        #expect(throws: ProviderRefreshHistoryValidationError.invalidDuration) {
+    @Test("invalid duration and duplicate windows are rejected")
+    func validation() throws {
+        #expect(throws: ProviderRefreshHistoryError.invalidDuration) {
             try ProviderRefreshDurationBucket(duration: -.infinity)
         }
-        #expect(throws: ProviderRefreshHistoryValidationError.noAffectedWindows) {
-            try entry(startedAt: Date(timeIntervalSince1970: 0), windows: [])
+        let window = try #require(windows.first)
+        #expect(throws: ProviderRefreshHistoryError.invalidWindows) {
+            try ProviderRefreshHistoryEntry(
+                product: .anthropicAPI,
+                outcome: .success,
+                startedAt: Date(timeIntervalSince1970: 4_000_000),
+                duration: 1,
+                affectedWindows: [window, window]
+            )
         }
     }
 
-    @Test("history retains thirty days inclusively")
-    func ageRetention() async throws {
-        let history = ProviderRefreshHistory()
-        let now = Date(timeIntervalSince1970: 4_000_000)
-        try await history.record(entry(startedAt: now.addingTimeInterval(-(30 * 24 * 60 * 60))), now: now)
-        try await history.record(entry(startedAt: now.addingTimeInterval(-(30 * 24 * 60 * 60) - 0.001)), now: now)
-
-        let retained = await history.entries(for: .anthropic, now: now)
-
-        #expect(retained.map(\.startedAt) == [now.addingTimeInterval(-(30 * 24 * 60 * 60))])
+    @Test("component outcomes preserve partial failure and cancellation")
+    func batchOutcomeClassification() {
+        #expect(ProviderRefreshOutcome(usage: AnthropicRefreshResult.success([]), cost: .failure(.networkUnavailable)) == .partialFailure)
+        #expect(ProviderRefreshOutcome(usage: OpenAIRefreshResult.cancelled, cost: .cancelled) == .cancelled)
+        #expect(ProviderRefreshOutcome(usage: OpenAIRefreshResult.failure(.authenticationRejected), cost: .failure(.networkUnavailable)) == .authenticationFailure)
+        #expect(ProviderRefreshOutcome(usage: AnthropicRefreshResult.failure(.networkUnavailable), cost: .failure(.networkUnavailable)) == .networkFailure)
     }
 
-    @Test("history retains at most two hundred newest entries per provider")
-    func countRetention() async throws {
-        let history = ProviderRefreshHistory()
-        let now = Date(timeIntervalSince1970: 20_000_000)
-
-        for offset in 0...ProviderRefreshHistory.maximumEntriesPerProvider {
-            try await history.record(entry(startedAt: now.addingTimeInterval(TimeInterval(-offset))), now: now)
-        }
-
-        let retained = await history.entries(for: .anthropic, now: now)
-        #expect(retained.count == 200)
-        #expect(retained.first?.startedAt == now)
-        #expect(retained.last?.startedAt == now.addingTimeInterval(-199))
-    }
-
-    @Test("provider deletion is independent")
-    func independentDeletion() async throws {
-        let history = ProviderRefreshHistory()
-        let now = Date(timeIntervalSince1970: 2_000_000)
-        try await history.record(entry(provider: .anthropic, startedAt: now), now: now)
-        try await history.record(entry(provider: .openAI, startedAt: now), now: now)
-
-        await history.deleteEntries(for: .anthropic)
-
-        #expect(await history.entries(for: .anthropic, now: now).isEmpty)
-        #expect(await history.entries(for: .openAI, now: now).count == 1)
-    }
-
-    @Test("entry schema has only allow-listed fields")
+    @Test("schema contains only allow-listed tables and columns")
     func schemaAllowList() throws {
-        let encoded = try JSONEncoder().encode(entry(startedAt: Date(timeIntervalSince1970: 1_000)))
-        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let store = try SQLiteProviderRefreshHistoryStore.inMemory()
 
-        #expect(Set(object.keys) == [
-            "schemaVersion", "provider", "operation", "outcome", "startedAt", "duration", "affectedWindows",
+        #expect(try store.schemaObjects() == [
+            "table:provider_refresh_history", "table:provider_refresh_windows",
+            "index:provider_refresh_history_product_started",
         ])
-        let windows = try #require(object["affectedWindows"] as? [[String: Any]])
-        #expect(Set(try #require(windows.first).keys) == ["kind", "start", "end", "basis", "aggregationVersion"])
-        #expect(object["schemaVersion"] as? Int == ProviderRefreshHistoryEntry.currentSchemaVersion)
+        #expect(try store.columnNames(table: "provider_refresh_history") == [
+            "id", "schema_version", "product", "operation", "outcome", "started_at", "duration_bucket",
+        ])
+        #expect(try store.columnNames(table: "provider_refresh_windows") == [
+            "entry_id", "ordinal", "window_kind", "window_start", "window_end", "calendar_basis", "aggregation_version",
+        ])
     }
 
-    @Test("entry schema cannot carry prohibited content")
-    func prohibitedContentSentinels() throws {
-        let text = try #require(String(data: JSONEncoder().encode(entry(startedAt: Date(timeIntervalSince1970: 1_000))), encoding: .utf8))
-        let prohibitedSentinels = [
-            "HEADER_SECRET", "QUERY_VALUE", "REQUEST_BODY", "RESPONSE_BODY", "TOKEN_SECRET",
-            "STACK_TRACE", "ARBITRARY_ERROR", "PROMPT_SECRET", "SOURCE_CODE", "MODEL_RESPONSE",
-            "TERMINAL_OUTPUT", "PRIVATE_PATH", "PROVIDER_PAYLOAD", "ACCOUNT_LABEL", "PROJECT_LABEL",
-            "MODEL_LABEL", "DEPLOYMENT_LABEL", "SOURCE_NAME", "FILE_NAME",
-        ]
+    @Test("history persists across store instances")
+    func persistence() throws {
+        let path = temporaryPath()
+        let now = Date(timeIntervalSince1970: 4_000_000)
+        try SQLiteProviderRefreshHistoryStore(path: path).record(try entry(startedAt: now), now: now)
 
-        for sentinel in prohibitedSentinels {
-            #expect(!text.contains(sentinel))
+        let reopened = try SQLiteProviderRefreshHistoryStore(path: path)
+
+        #expect(try reopened.entries(for: .anthropicAPI, now: now) == [entry(startedAt: now)])
+    }
+
+    @Test("history retains thirty days inclusively and two hundred newest entries per product")
+    func retention() throws {
+        let store = try SQLiteProviderRefreshHistoryStore.inMemory()
+        let now = Date(timeIntervalSince1970: 20_000_000)
+        try store.record(entry(startedAt: now.addingTimeInterval(-SQLiteProviderRefreshHistoryStore.retentionInterval)), now: now)
+        try store.record(entry(startedAt: now.addingTimeInterval(-SQLiteProviderRefreshHistoryStore.retentionInterval - 0.001)), now: now)
+        #expect(try store.entries(for: .anthropicAPI, now: now).map(\.startedAt) == [
+            now.addingTimeInterval(-SQLiteProviderRefreshHistoryStore.retentionInterval),
+        ])
+        for offset in 0...SQLiteProviderRefreshHistoryStore.maximumEntriesPerProduct {
+            try store.record(entry(startedAt: now.addingTimeInterval(TimeInterval(-offset))), now: now)
         }
+        try store.record(entry(product: .openAIAPI, startedAt: now), now: now)
+
+        let anthropic = try store.entries(for: .anthropicAPI, now: now)
+        #expect(anthropic.count == 200)
+        #expect(anthropic.first?.startedAt == now)
+        #expect(anthropic.last?.startedAt == now.addingTimeInterval(-199))
+        #expect(try store.entries(for: .openAIAPI, now: now).count == 1)
+    }
+
+    @Test("summary separates latest outcome from last full success")
+    func summary() throws {
+        let store = try SQLiteProviderRefreshHistoryStore.inMemory()
+        let now = Date(timeIntervalSince1970: 4_000_000)
+        try store.record(entry(outcome: .success, startedAt: now.addingTimeInterval(-10)), now: now)
+        try store.record(entry(outcome: .partialFailure, startedAt: now), now: now)
+
+        let summary = try store.summary(for: .anthropicAPI, now: now)
+
+        #expect(summary.latest?.outcome == .partialFailure)
+        #expect(summary.lastFullSuccess?.startedAt == now.addingTimeInterval(-10))
+    }
+
+    @Test("clear history is independent from other application data")
+    func clearHistory() throws {
+        let store = try SQLiteProviderRefreshHistoryStore.inMemory()
+        let now = Date(timeIntervalSince1970: 4_000_000)
+        try store.record(entry(startedAt: now), now: now)
+
+        try store.deleteAll()
+
+        #expect(try store.entries(for: .anthropicAPI, now: now).isEmpty)
+    }
+
+    @Test("repository failures are best effort")
+    func repositoryFailureDoesNotEscape() async throws {
+        let repository = ProviderRefreshHistoryRepository { throw ProviderRefreshHistoryError.openFailed }
+        let now = Date(timeIntervalSince1970: 4_000_000)
+        let historyEntry = try entry(startedAt: now)
+
+        #expect(await repository.record(historyEntry, now: now) == false)
+        #expect(await repository.summaries(now: now).isEmpty)
+        #expect(await repository.deleteAll() == false)
     }
 
     private func entry(
-        provider: ProviderRefreshHistoryProvider = .anthropic,
-        startedAt: Date,
-        windows: [ProviderRefreshWindow]? = nil
+        product: ProviderRefreshProduct = .anthropicAPI,
+        outcome: ProviderRefreshOutcome = .success,
+        startedAt: Date
     ) throws -> ProviderRefreshHistoryEntry {
         try ProviderRefreshHistoryEntry(
-            provider: provider,
-            operation: .usageAndRateLimits,
-            outcome: .success,
+            product: product,
+            outcome: outcome,
             startedAt: startedAt,
             duration: 1.5,
-            affectedWindows: windows ?? [window]
+            affectedWindows: windows
         )
     }
 
-    private var window: ProviderRefreshWindow {
+    private var windows: [ExactUsageWindow] {
         get throws {
-            try ProviderRefreshWindow(
-                kind: .today,
-                start: Date(timeIntervalSince1970: 0),
-                end: Date(timeIntervalSince1970: 86_400),
-                basis: .localCalendar,
-                aggregationVersion: 1
+            let current = try CurrentUsageWindows.resolve(
+                at: Date(timeIntervalSince1970: 4_000_000),
+                calendar: Calendar(identifier: .gregorian)
             )
+            return [current.today, current.currentWeek, current.utcBillingWeek]
         }
+    }
+
+    private func temporaryPath() -> String {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("provider-refresh-history-\(UUID().uuidString).sqlite")
+            .path
     }
 }

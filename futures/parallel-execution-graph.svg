@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title description">
   <title id="title">Future tickets parallel execution graph</title>
-  <desc id="description">Ten tickets can start immediately. Tickets 02, 08, and 11 become available after tickets 01, 04, and 10. Quota Doctor starts after tickets 09, 10, 11, 12, and 13.</desc>
+  <desc id="description">Ticket 11 can start because its ticket 10 dependency is complete. Tickets 02 and 08 become available after tickets 01 and 04. Quota Doctor starts after tickets 09, 11, 12, and 13; all except ticket 11 are complete.</desc>
   <defs>
     <style>
       .background { fill: #f8fafc; }
@@ -33,7 +33,7 @@
 
   <rect class="group" x="35" y="92" width="570" height="650" rx="16"/>
   <text class="group-title" x="60" y="125">Can start now</text>
-  <text class="group-note" x="60" y="148">Maximum initial concurrency: 10</text>
+  <text class="group-note" x="60" y="148">Maximum initial concurrency: 9</text>
 
   <rect class="group" x="655" y="92" width="345" height="650" rx="16"/>
   <text class="group-title" x="680" y="125">Individually unblocked</text>
@@ -41,7 +41,7 @@
 
   <rect class="group" x="1050" y="92" width="315" height="650" rx="16"/>
   <text class="group-title" x="1075" y="125">Final join</text>
-  <text class="group-note" x="1075" y="148">Starts after all five inputs</text>
+  <text class="group-note" x="1075" y="148">Starts after all four inputs</text>
 
   <!-- Immediate work, dependency-bearing column -->
   <g>
@@ -54,8 +54,8 @@
     <text class="label" x="78" y="320">Refresh performance profiling</text>
 
     <rect class="node now" x="60" y="365" width="240" height="72"/>
-    <text class="number" x="78" y="392">10</text>
-    <text class="label" x="78" y="415">Provider health and history</text>
+    <text class="number" x="78" y="392">11</text>
+    <text class="label" x="78" y="415">Privacy-safe diagnostic export</text>
 
     <rect class="node now" x="60" y="460" width="240" height="72"/>
     <text class="number" x="78" y="487">09</text>
@@ -99,9 +99,6 @@
     <text class="number" x="698" y="297">08</text>
     <text class="label" x="698" y="320">Configurable refresh cadence</text>
 
-    <rect class="node next" x="680" y="365" width="290" height="72"/>
-    <text class="number" x="698" y="392">11</text>
-    <text class="label" x="698" y="415">Privacy-safe diagnostic export</text>
   </g>
 
   <!-- Final work -->
@@ -114,11 +111,9 @@
   <!-- Single-prerequisite edges -->
   <path class="edge" d="M300 211 H680" marker-end="url(#arrow)"/>
   <path class="edge" d="M300 306 H680" marker-end="url(#arrow)"/>
-  <path class="edge" d="M300 401 H680" marker-end="url(#arrow)"/>
 
   <!-- Quota Doctor prerequisite join -->
-  <path class="join" d="M970 401 H1020 V505 H1080" marker-end="url(#arrow-final)"/>
-  <path class="join" d="M300 401 H625 V755 H1020 V505"/>
+  <path class="join" d="M300 401 H625 V755 H1020 V505 H1080" marker-end="url(#arrow-final)"/>
   <path class="join" d="M300 496 H625"/>
   <path class="join" d="M300 591 H625"/>
   <path class="join" d="M300 686 H625"/>
@@ -134,5 +129,5 @@
   <rect class="node next" x="170" y="772" width="20" height="20" rx="4"/>
   <text class="legend" x="200" y="788">Waits for one ticket</text>
   <rect class="node final" x="380" y="772" width="20" height="20" rx="4"/>
-  <text class="legend" x="410" y="788">Waits for five tickets</text>
+  <text class="legend" x="410" y="788">Waits for four tickets</text>
 </svg>
