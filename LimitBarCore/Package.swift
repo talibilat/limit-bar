@@ -15,6 +15,10 @@ let package = Package(
         .executable(
             name: "limitbar-collect",
             targets: ["CollectorCLI"]
+        ),
+        .executable(
+            name: "LimitBarRefreshProfiler",
+            targets: ["LimitBarRefreshProfiler"]
         )
     ],
     targets: [
@@ -26,6 +30,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "CollectorCLI",
+            dependencies: ["LimitBarCore"]
+        ),
+        .executableTarget(
+            name: "LimitBarRefreshProfiler",
             dependencies: ["LimitBarCore"]
         ),
         .testTarget(
