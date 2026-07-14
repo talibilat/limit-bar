@@ -28,6 +28,7 @@
 		AA0000000000000000000105 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000114 /* XCTest.framework */; };
 		AA0000000000000000000201 /* LocalRefreshSettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */; };
 		AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */; };
+		AA0000000000000000000106 /* ProviderRefreshHistoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */; };
 		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
 		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
 		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
@@ -59,6 +60,7 @@
 		AA0000000000000000000116 /* LimitBarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimitBarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRefreshSettingsStoreTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRefreshSettingsStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRefreshHistoryPresentationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -164,6 +166,7 @@
 			children = (
 				AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */,
 				AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */,
+				AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */,
 			);
 			path = LimitBarTests;
 			sourceTree = "<group>";
@@ -329,6 +332,7 @@
 			files = (
 				AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */,
 				AA0000000000000000000201 /* LocalRefreshSettingsStoreTests.swift in Sources */,
+				AA0000000000000000000106 /* ProviderRefreshHistoryPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

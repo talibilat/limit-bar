@@ -59,6 +59,11 @@ The local refresh loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude 
 It also does not poll macOS Keychain.
 Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
 
+Explicit Anthropic API and OpenAI API usage and cost refreshes record a local, privacy-safe outcome history in `provider-refresh-history.sqlite`.
+Entries contain only the provider product, fixed operation and outcome categories, start time, a duration bucket, and affected exact windows.
+History is limited to 30 days and 200 entries per provider product; Settings shows the latest outcome and last full success and can clear this history without changing usage, settings, or credentials.
+History persistence is best effort and never changes the provider refresh result.
+
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
 Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.
 
@@ -207,7 +212,7 @@ Request timeout is 15 seconds and resource timeout is 30 seconds.
 Redirects carrying `Authorization`, `Proxy-Authorization`, `x-api-key`, or `api-key` credentials are refused unless scheme, host, and effective port remain the same.
 Uncredentialed requests may follow cross-origin redirects.
 
-Diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, and accepted or rejected event counts.
+Diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, accepted or rejected event counts, and bounded allow-listed provider refresh outcomes.
 They do not contain credentials, prompts, responses, request bodies, terminal output, source code, raw provider responses, or rejected JSONL content.
 Errors shown for custom import failures are generic and do not include private file paths.
 
