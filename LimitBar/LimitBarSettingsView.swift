@@ -28,6 +28,8 @@ struct LimitBarSettingsView: View {
     @State private var refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary] = [:]
     @State private var showsClearRefreshHistoryConfirmation = false
     @State private var refreshHistoryMessage: String?
+    @State private var showsDeleteQuotaConfirmation = false
+    @State private var quotaDeletionMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -116,6 +118,23 @@ struct LimitBarSettingsView: View {
             }
 
             DiagnosticExportSection(state: state)
+
+            Section("Quota Observations") {
+                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per exact quota window. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Quota Observations", role: .destructive) {
+                    showsDeleteQuotaConfirmation = true
+                }
+                if let quotaDeletionMessage {
+                    Text(quotaDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
 
             Section("Provider Refresh History") {
                 Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
@@ -250,6 +269,22 @@ struct LimitBarSettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .providerRefreshHistoryDidChange)) { _ in
             Task { refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries() }
+        }
+        .confirmationDialog(
+            "Delete all quota observations?",
+            isPresented: $showsDeleteQuotaConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Quota Observations", role: .destructive) {
+                Task {
+                    quotaDeletionMessage = await state.deleteQuotaObservations()
+                        ? "Retained quota observations deleted. Current reports may be observed again on a later refresh."
+                        : "Could not delete quota observations."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained quota history and calculated findings only. Current reports remain available and may be observed again on a later refresh. Alert rules and delivery state, settings, credentials, and usage remain unchanged.")
         }
         .confirmationDialog(
             "Clear provider refresh history?",

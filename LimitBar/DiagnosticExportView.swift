@@ -20,7 +20,8 @@ enum DiagnosticExportInputBuilder {
             rejectedImportCount: state.local.localImport.malformedEventCount,
             customImportFailures: state.local.customImportFailures,
             customRejectedLines: state.local.customRejectedLines,
-            refreshHistory: await ProviderRefreshHistoryRepository.shared.summaries()
+            refreshHistory: await ProviderRefreshHistoryRepository.shared.summaries(),
+            quotaInsights: state.quotaInsights
         )
     }
 
@@ -36,7 +37,8 @@ enum DiagnosticExportInputBuilder {
         rejectedImportCount: Int,
         customImportFailures: Int,
         customRejectedLines: Int,
-        refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary]
+        refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary],
+        quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:]
     ) throws -> DiagnosticExportInput {
         let rejected = rejectedImportCount.addingReportingOverflow(customRejectedLines)
         guard !rejected.overflow,
@@ -70,6 +72,7 @@ enum DiagnosticExportInputBuilder {
             if $0.product != $1.product { return $0.product.rawValue < $1.product.rawValue }
             return $0.role.rawValue < $1.role.rawValue
         }
+        let projectedQuota = try quotaFindings(from: quotaInsights, generatedAt: generatedAt)
 
         return try DiagnosticExportInput(
             generatedAt: generatedAt,
@@ -84,7 +87,8 @@ enum DiagnosticExportInputBuilder {
             databaseState: databaseIsAvailable ? .available : .unavailable,
             importCounts: DiagnosticImportCounts(accepted: acceptedImportCount, rejected: rejected.partialValue),
             resourceLimitReasons: [],
-            refreshHistory: projectedHistory.isEmpty ? nil : projectedHistory
+            refreshHistory: projectedHistory.isEmpty ? nil : projectedHistory,
+            quotaFindings: projectedQuota.isEmpty ? nil : projectedQuota
         )
     }
 
@@ -163,6 +167,67 @@ enum DiagnosticExportInputBuilder {
             duration: projectedDuration,
             affectedWindowKinds: windowKinds
         )
+    }
+
+    private static func quotaFindings(
+        from insights: [QuotaWindowIdentity: QuotaInsightState],
+        generatedAt: Date
+    ) throws -> [DiagnosticQuotaFinding] {
+        var findings: [DiagnosticQuotaFinding] = []
+        let current = insights.filter { $0.key.resetBoundary > generatedAt }
+            .sorted { ($0.key.product.rawValue, $0.key.identifier) < ($1.key.product.rawValue, $1.key.identifier) }
+            .prefix(DiagnosticExport.maximumQuotaFindings)
+        for (identity, state) in current {
+            let product: DiagnosticQuotaProduct = identity.product == .claudeCode ? .claudeCode : .codex
+            let kind: DiagnosticQuotaWindowKind = switch identity.insightWindowKind {
+            case .session: .session
+            case .weekly: .weekly
+            case .other: .other
+            }
+            switch state {
+            case let .unavailable(reason, count, span):
+                findings.append(try DiagnosticQuotaFinding(
+                    product: product,
+                    windowKind: kind,
+                    status: diagnosticStatus(reason),
+                    measuredObservationCount: count,
+                    measuredSpanMinutes: min(43_200, max(0, Int(span / 60)))
+                ))
+            case let .qualified(finding):
+                let burnLower = min(10_000, max(0, finding.calculatedBurnPercentPerHour.lower))
+                let burnUpper = min(10_000, max(burnLower, finding.calculatedBurnPercentPerHour.upper))
+                let exhaustion = try finding.calculatedExhaustionRange.map {
+                    try DiagnosticNumberRange(
+                        lower: min(10_000, max(0, $0.lowerBound.timeIntervalSince(generatedAt) / 60)),
+                        upper: min(10_000, max(0, $0.upperBound.timeIntervalSince(generatedAt) / 60))
+                    )
+                }
+                findings.append(try DiagnosticQuotaFinding(
+                    product: product,
+                    windowKind: kind,
+                    status: .qualified,
+                    measuredObservationCount: finding.measuredObservationCount,
+                    measuredSpanMinutes: min(43_200, max(0, Int(finding.measuredSpan / 60))),
+                    calculatedBurnPercentPerHour: try DiagnosticNumberRange(
+                        lower: burnLower,
+                        upper: burnUpper
+                    ),
+                    calculatedExhaustionMinutes: exhaustion
+                ))
+            }
+        }
+        return findings
+    }
+
+    private static func diagnosticStatus(_ reason: QuotaInsightUnavailableReason) -> DiagnosticQuotaFindingStatus {
+        switch reason {
+        case .insufficientObservations: .insufficientObservations
+        case .insufficientSpan: .insufficientSpan
+        case .staleEvidence: .staleEvidence
+        case .resetOrExpired: .resetOrExpired
+        case .counterDecreased: .counterDecreased
+        case .noPositiveBurn: .noPositiveBurn
+        }
     }
 }
 

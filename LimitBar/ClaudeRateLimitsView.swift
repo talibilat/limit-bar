@@ -3,6 +3,8 @@ import LimitBarCore
 
 struct ClaudeRateLimitsView: View {
     @Bindable var model: ClaudeRateLimitsModel
+    let insights: [QuotaWindowIdentity: QuotaInsightState]
+    let insightsStorageAvailable: Bool
     let onActionCompleted: () -> Void
 
     var body: some View {
@@ -76,7 +78,9 @@ struct ClaudeRateLimitsView: View {
                             percentUsed: limit.percentUsed,
                             severity: limit.severity,
                             resetsAt: limit.resetsAt,
-                            isActive: limit.isActive
+                            isActive: limit.isActive,
+                            insight: insight(for: limit),
+                            insightsStorageAvailable: insightsStorageAvailable
                         )
                     }
                 }
@@ -98,6 +102,16 @@ struct ClaudeRateLimitsView: View {
             onActionCompleted()
         }
     }
+
+    private func insight(for limit: ClaudeRateLimit) -> QuotaInsightState? {
+        guard limit.scopeDisplayName == nil, let reset = limit.resetsAt,
+              let identity = try? QuotaWindowIdentity(
+                  product: .claudeCode,
+                  identifier: "\(limit.group.rawValue):\(limit.kind)",
+                  resetBoundary: reset
+              ) else { return nil }
+        return insights[identity]
+    }
 }
 
 #Preview {
@@ -106,6 +120,8 @@ struct ClaudeRateLimitsView: View {
             credentials: ClaudeCredentialBroker.shared,
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         ),
+        insights: [:],
+        insightsStorageAvailable: true,
         onActionCompleted: {}
     )
         .padding(20)

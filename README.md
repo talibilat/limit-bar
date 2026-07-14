@@ -21,6 +21,7 @@ Click it for two tabs:
 - **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
 - **Cost labels** distinguish provider-reported values from calculated estimates.
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
+- **Quota insights** retain privacy-safe measured Claude Code and Codex percentages locally and calculate qualified recent burn and exhaustion ranges without project, agent, model, or token attribution.
 - **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
@@ -53,7 +54,7 @@ To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar f
 LimitBar starts one local refresh immediately and schedules another using the cadence selected in Settings: every 5, 15, or 30 seconds.
 Five seconds is the default, and invalid saved values return to that default.
 Shorter intervals show local changes sooner and do more background file and database work, while longer intervals may use less power but delay updates.
-That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, and scans local Codex sessions.
+That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, scans local Codex sessions, and deduplicates supported measured Codex quota observations in local SQLite.
 Concurrent ticks are coalesced, and a failed local component keeps its last successful in-process component in the published refresh snapshot.
 
 The local refresh loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
@@ -67,12 +68,14 @@ History persistence is best effort and never changes the provider refresh result
 
 ## Diagnostic Export
 
-Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, and a coarse projection of provider refresh-history summaries.
+Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, a coarse projection of provider refresh-history summaries, and bounded quota finding categories.
 The preview displays the exact immutable JSON bytes before any file is written.
 Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomically writes those same bytes only to the selected destination.
 
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
+Schema v2 adds only coarse quota product and window categories, measured observation counts and span, finding status, and calculated burn or exhaustion-minute ranges.
+The decoder remains version-aware for schema v1 artifacts.
 Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
@@ -95,6 +98,23 @@ Lock-screen text contains only the coarse provider product, threshold, currency 
 It excludes exact spend, budget caps, account, organization, project, model, deployment, and source labels.
 Stale, unhealthy, unsupported, legacy, expired, malformed, and inferred observations do not alert.
 Cost measurements older than 24 hours are stale for alerting even when their exact budget window remains active.
+
+## Quota Insights
+
+LimitBar stores only percentage observations for Claude Code account-wide windows and Codex individual-plan windows that have a provider-reported exact reset boundary.
+Claude scoped model limits, Codex business credit pools, account labels, prompts, code, projects, agents, models, tokens, and raw provider or session payloads are not stored in quota history.
+
+Observations are keyed by the existing provider product, stable window identifier, and exact provider-reported reset boundary.
+Identical Codex reports encountered by repeated local scans are deduplicated rather than counted as new evidence.
+The dedicated `quota-observations.sqlite` database retains at most 30 days and 500 observations per exact quota window.
+Settings can delete this history explicitly without changing current rate limits, usage, alert rules, alert delivery state, settings, or credentials.
+Deletion does not alter current Claude provider reports or Codex session reports, so a report that remains available can be measured again on a later refresh.
+
+Calculated findings require at least four distinct measured observations spanning at least 15 minutes.
+The burn range uses the middle half of positive pairwise percentage slopes, and exhaustion is shown only when both bounds of that range project exhaustion before the reported reset.
+Counter decreases, expired windows, stale evidence, flat usage, short spans, and insufficient observations produce an explicit unavailable state instead of a forecast.
+The existing rate-limit rows label provider inputs as **Measured** and derived ranges as **Calculated**; there is no additional gauge or dashboard.
+These findings do not drive notifications, so ticket 12 alert qualification and measured-only behavior remain unchanged.
 
 ### Claude Authorization
 
@@ -152,6 +172,7 @@ The default local paths are:
 - `~/Library/Application Support/LimitBar/usage-events.jsonl` for normalized LimitBar usage events.
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
 - `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
+- `~/Library/Application Support/LimitBar/quota-observations.sqlite` for bounded measured quota observations.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.

@@ -4,16 +4,16 @@ import Testing
 
 @Suite("Diagnostic export")
 struct DiagnosticExportTests {
-    @Test("export has the complete deterministic v1 positive allow-list")
+    @Test("export has the complete deterministic v2 positive allow-list")
     func deterministicSchema() throws {
         let first = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
-        ], includesHistory: true))
+        ], includesHistory: true, includesQuotaFinding: true))
         let second = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
-        ], includesHistory: true))
+        ], includesHistory: true, includesQuotaFinding: true))
 
         #expect(first.bytes == second.bytes)
         let object = try JSONSerialization.jsonObject(with: first.bytes)
@@ -25,20 +25,26 @@ struct DiagnosticExportTests {
             "operatingSystem.version.patch", "providers", "providers[].provider", "providers[].state",
             "refreshHistory", "refreshHistory[].affectedWindowKinds", "refreshHistory[].duration",
             "refreshHistory[].outcome", "refreshHistory[].product", "refreshHistory[].role",
-            "refreshHistory[].startedAt", "resourceLimitReasons", "schemaVersion",
+            "refreshHistory[].startedAt", "quotaFindings", "quotaFindings[].calculatedBurnPercentPerHour",
+            "quotaFindings[].calculatedBurnPercentPerHour.lower", "quotaFindings[].calculatedBurnPercentPerHour.upper",
+            "quotaFindings[].calculatedExhaustionMinutes", "quotaFindings[].calculatedExhaustionMinutes.lower",
+            "quotaFindings[].calculatedExhaustionMinutes.upper", "quotaFindings[].measuredObservationCount",
+            "quotaFindings[].measuredSpanMinutes", "quotaFindings[].product", "quotaFindings[].status",
+            "quotaFindings[].windowKind", "resourceLimitReasons", "schemaVersion",
         ])
         let report = try DiagnosticExport.decode(first.bytes)
         #expect(report.schemaVersion == DiagnosticExport.currentSchemaVersion)
         #expect(report.providers.map(\.provider) == [.anthropic, .openAI])
         #expect(report.refreshHistory?.count == 1)
+        #expect(report.quotaFindings?.count == 1)
     }
 
     @Test("decode routes supported, unsupported, and malformed versions")
     func versionAwareDecode() throws {
         let artifact = try DiagnosticExport.make(from: input())
         #expect(try DiagnosticExport.decode(artifact.bytes).application.build == 42)
-        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(2)) {
-            try DiagnosticExport.decode(Data(#"{"schemaVersion":2,"privateFuturePayload":"SECRET"}"#.utf8))
+        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(3)) {
+            try DiagnosticExport.decode(Data(#"{"schemaVersion":3,"privateFuturePayload":"SECRET"}"#.utf8))
         }
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(Data(#"{"schemaVersion":1}"#.utf8))
@@ -101,6 +107,16 @@ struct DiagnosticExportTests {
         }
     }
 
+    @Test("v1 artifacts remain decodable without quota findings")
+    func legacyDecode() throws {
+        let v2 = try DiagnosticExport.make(from: input())
+        let legacyText = try v2.preview
+            .replacingOccurrences(of: #""schemaVersion" : 2"#, with: #""schemaVersion" : 1"#)
+        let legacy = try DiagnosticExport.decode(Data(legacyText.utf8))
+        #expect(legacy.schemaVersion == 1)
+        #expect(legacy.quotaFindings == nil)
+    }
+
     @Test("schema omits every prohibited content category")
     func prohibitedContentSentinels() throws {
         let artifact = try DiagnosticExport.make(from: input(includesHistory: true))
@@ -159,7 +175,8 @@ struct DiagnosticExportTests {
         providerStatuses: [DiagnosticProviderStatus] = [
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
         ],
-        includesHistory: Bool = false
+        includesHistory: Bool = false,
+        includesQuotaFinding: Bool = false
     ) throws -> DiagnosticExportInput {
         try DiagnosticExportInput(
             generatedAt: generatedAt,
@@ -170,7 +187,20 @@ struct DiagnosticExportTests {
             databaseState: .available,
             importCounts: DiagnosticImportCounts(accepted: 12, rejected: 2),
             resourceLimitReasons: [.rateLimited, .responseTooLarge],
-            refreshHistory: includesHistory ? [try historyRecord()] : nil
+            refreshHistory: includesHistory ? [try historyRecord()] : nil,
+            quotaFindings: includesQuotaFinding ? [try quotaFinding()] : nil
+        )
+    }
+
+    private func quotaFinding() throws -> DiagnosticQuotaFinding {
+        try DiagnosticQuotaFinding(
+            product: .codex,
+            windowKind: .session,
+            status: .qualified,
+            measuredObservationCount: 6,
+            measuredSpanMinutes: 45,
+            calculatedBurnPercentPerHour: DiagnosticNumberRange(lower: 4, upper: 7),
+            calculatedExhaustionMinutes: DiagnosticNumberRange(lower: 90, upper: 150)
         )
     }
 

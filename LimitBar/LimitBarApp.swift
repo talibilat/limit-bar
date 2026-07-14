@@ -51,8 +51,11 @@ final class LimitBarState {
     let claudeModel: ClaudeRateLimitsModel
     let alertSettingsStore: AlertSettingsStore
     let alertCoordinator: AlertCoordinator
+    private(set) var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:]
+    private(set) var quotaInsightsStorageAvailable: Bool
 
     private let coordinator: LocalRefreshCoordinator
+    private let quotaInsightsService: QuotaInsightsService?
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
@@ -70,6 +73,10 @@ final class LimitBarState {
             credentials: ClaudeCredentialBroker.shared,
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         )
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LimitBar", isDirectory: true)
+        quotaInsightsService = try? QuotaInsightsService.live(applicationSupportDirectory: applicationSupport)
+        quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = true
         let alertSettingsStore = AlertSettingsStore()
         self.alertSettingsStore = alertSettingsStore
@@ -79,11 +86,14 @@ final class LimitBarState {
     init(
         providerSettings: [ProviderSettings],
         claudeModel: ClaudeRateLimitsModel,
-        coordinator: LocalRefreshCoordinator
+        coordinator: LocalRefreshCoordinator,
+        quotaInsightsService: QuotaInsightsService? = nil
     ) {
         self.providerSettings = providerSettings
         self.claudeModel = claudeModel
         self.coordinator = coordinator
+        self.quotaInsightsService = quotaInsightsService
+        quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
         let alertSettingsStore = AlertSettingsStore()
         self.alertSettingsStore = alertSettingsStore
@@ -100,6 +110,7 @@ final class LimitBarState {
                 local.apply(snapshot)
                 latestUsageRefreshed = snapshot.usageRefreshed
                 latestCodexRefreshed = snapshot.codexRefreshed
+                await refreshQuotaInsights(for: snapshot)
                 await evaluateLocalAlerts()
             }
         }
@@ -125,7 +136,30 @@ final class LimitBarState {
         guard case let .loaded(snapshot, subscription) = claudeModel.state else { return }
         let now = Date()
         let observations = QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now)
-        Task { await alertCoordinator.evaluate(quota: observations, costs: [], now: now) }
+        Task {
+            await recordClaudeInsights(snapshot, now: now)
+            await alertCoordinator.evaluate(quota: observations, costs: [], now: now)
+        }
+    }
+
+    func deleteQuotaObservations() async -> Bool {
+        guard let quotaInsightsService else { return false }
+        do {
+            try await quotaInsightsService.deleteAll()
+            quotaInsights = [:]
+            quotaInsightsStorageAvailable = true
+            return true
+        } catch {
+            quotaInsightsStorageAvailable = false
+            return false
+        }
+    }
+
+    func refreshQuotaInsights(for snapshot: LocalRefreshSnapshot) async {
+        await reevaluateClaudeInsights(now: snapshot.refreshedAt)
+        if snapshot.codexRefreshed, let codex = snapshot.codex {
+            await recordCodexInsights(codex, now: snapshot.refreshedAt)
+        }
     }
 
     func alertSettingsChanged() {
@@ -157,6 +191,38 @@ final class LimitBarState {
             now: now
         )
         await alertCoordinator.evaluate(quota: quota, costs: costs, now: now)
+    }
+
+    private func recordClaudeInsights(_ snapshot: ClaudeRateLimitSnapshot, now: Date) async {
+        guard let quotaInsightsService else { return }
+        do {
+            quotaInsights.merge(try await quotaInsightsService.recordClaude(snapshot, now: now)) { _, new in new }
+            quotaInsightsStorageAvailable = true
+        } catch {
+            quotaInsightsStorageAvailable = false
+        }
+    }
+
+    private func reevaluateClaudeInsights(now: Date) async {
+        guard let quotaInsightsService else { return }
+        do {
+            let reevaluated = try await quotaInsightsService.reevaluateClaude(now: now)
+            quotaInsights = quotaInsights.filter { $0.key.product != .claudeCode }
+            quotaInsights.merge(reevaluated) { _, new in new }
+            quotaInsightsStorageAvailable = true
+        } catch {
+            quotaInsightsStorageAvailable = false
+        }
+    }
+
+    private func recordCodexInsights(_ snapshot: CodexRateLimitSnapshot, now: Date) async {
+        guard let quotaInsightsService else { return }
+        do {
+            quotaInsights.merge(try await quotaInsightsService.recordCodex(snapshot, now: now)) { _, new in new }
+            quotaInsightsStorageAvailable = true
+        } catch {
+            quotaInsightsStorageAvailable = false
+        }
     }
 
 }

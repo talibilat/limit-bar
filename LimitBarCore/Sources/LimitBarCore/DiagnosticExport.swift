@@ -129,6 +129,74 @@ public struct DiagnosticRefreshHistoryRecord: Codable, Equatable, Sendable {
     }
 }
 
+public enum DiagnosticQuotaProduct: String, Codable, CaseIterable, Equatable, Sendable {
+    case claudeCode = "claude_code"
+    case codex
+}
+
+public enum DiagnosticQuotaWindowKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case session
+    case weekly
+    case other
+}
+
+public enum DiagnosticQuotaFindingStatus: String, Codable, CaseIterable, Equatable, Sendable {
+    case qualified
+    case insufficientObservations = "insufficient_observations"
+    case insufficientSpan = "insufficient_span"
+    case staleEvidence = "stale_evidence"
+    case resetOrExpired = "reset_or_expired"
+    case counterDecreased = "counter_decreased"
+    case noPositiveBurn = "no_positive_burn"
+}
+
+public struct DiagnosticNumberRange: Codable, Equatable, Sendable {
+    public let lower: Double
+    public let upper: Double
+
+    public init(lower: Double, upper: Double) throws {
+        guard lower.isFinite, upper.isFinite, lower >= 0, upper >= lower, upper <= 10_000 else {
+            throw DiagnosticExportError.invalidQuotaFindings
+        }
+        self.lower = lower
+        self.upper = upper
+    }
+}
+
+public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
+    public let product: DiagnosticQuotaProduct
+    public let windowKind: DiagnosticQuotaWindowKind
+    public let status: DiagnosticQuotaFindingStatus
+    public let measuredObservationCount: Int
+    public let measuredSpanMinutes: Int
+    public let calculatedBurnPercentPerHour: DiagnosticNumberRange?
+    public let calculatedExhaustionMinutes: DiagnosticNumberRange?
+
+    public init(
+        product: DiagnosticQuotaProduct,
+        windowKind: DiagnosticQuotaWindowKind,
+        status: DiagnosticQuotaFindingStatus,
+        measuredObservationCount: Int,
+        measuredSpanMinutes: Int,
+        calculatedBurnPercentPerHour: DiagnosticNumberRange? = nil,
+        calculatedExhaustionMinutes: DiagnosticNumberRange? = nil
+    ) throws {
+        guard (0...SQLiteQuotaObservationStore.maximumObservationsPerWindow).contains(measuredObservationCount),
+              (0...43_200).contains(measuredSpanMinutes),
+              status == .qualified || (calculatedBurnPercentPerHour == nil && calculatedExhaustionMinutes == nil),
+              status != .qualified || calculatedBurnPercentPerHour != nil else {
+            throw DiagnosticExportError.invalidQuotaFindings
+        }
+        self.product = product
+        self.windowKind = windowKind
+        self.status = status
+        self.measuredObservationCount = measuredObservationCount
+        self.measuredSpanMinutes = measuredSpanMinutes
+        self.calculatedBurnPercentPerHour = calculatedBurnPercentPerHour
+        self.calculatedExhaustionMinutes = calculatedExhaustionMinutes
+    }
+}
+
 public struct DiagnosticExportInput: Equatable, Sendable {
     public let generatedAt: Date
     public let appVersion: DiagnosticVersion
@@ -139,6 +207,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
     public let importCounts: DiagnosticImportCounts
     public let resourceLimitReasons: Set<DiagnosticResourceLimitReason>
     public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
+    public let quotaFindings: [DiagnosticQuotaFinding]?
 
     public init(
         generatedAt: Date,
@@ -149,7 +218,8 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         databaseState: DiagnosticDatabaseState,
         importCounts: DiagnosticImportCounts,
         resourceLimitReasons: Set<DiagnosticResourceLimitReason>,
-        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil
+        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil,
+        quotaFindings: [DiagnosticQuotaFinding]? = nil
     ) throws {
         guard generatedAt.timeIntervalSince1970.isFinite else {
             throw DiagnosticExportError.invalidTimestamp
@@ -163,6 +233,9 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         guard refreshHistory.map({ $0.count <= DiagnosticExport.maximumRefreshHistoryRecords }) ?? true else {
             throw DiagnosticExportError.invalidRefreshHistory
         }
+        guard quotaFindings.map({ $0.count <= DiagnosticExport.maximumQuotaFindings }) ?? true else {
+            throw DiagnosticExportError.invalidQuotaFindings
+        }
 
         self.generatedAt = generatedAt
         self.appVersion = appVersion
@@ -173,6 +246,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         self.importCounts = importCounts
         self.resourceLimitReasons = resourceLimitReasons
         self.refreshHistory = refreshHistory
+        self.quotaFindings = quotaFindings
     }
 }
 
@@ -182,6 +256,7 @@ public enum DiagnosticExportError: Error, Equatable {
     case invalidTimestamp
     case duplicateProvider
     case invalidRefreshHistory
+    case invalidQuotaFindings
     case unsupportedSchemaVersion(Int)
     case malformedArtifact
     case previewEncodingFailed
@@ -206,7 +281,7 @@ public struct DiagnosticExportArtifact: Equatable, Sendable {
     }
 }
 
-public struct DiagnosticExportReportV1: Codable, Equatable, Sendable {
+public struct DiagnosticExportReport: Codable, Equatable, Sendable {
     public struct Application: Codable, Equatable, Sendable {
         public let version: DiagnosticVersion
         public let build: Int
@@ -229,14 +304,30 @@ public struct DiagnosticExportReportV1: Codable, Equatable, Sendable {
     public let imports: DiagnosticImportCounts
     public let resourceLimitReasons: [DiagnosticResourceLimitReason]
     public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
+    public let quotaFindings: [DiagnosticQuotaFinding]?
+}
+
+public typealias DiagnosticExportReportV1 = DiagnosticExportReport
+
+private struct LegacyDiagnosticExportReportV1: Codable {
+    let schemaVersion: Int
+    let generatedAt: Date
+    let application: DiagnosticExportReport.Application
+    let operatingSystem: DiagnosticExportReport.OperatingSystem
+    let providers: [DiagnosticProviderStatus]
+    let database: DiagnosticExportReport.Database
+    let imports: DiagnosticImportCounts
+    let resourceLimitReasons: [DiagnosticResourceLimitReason]
+    let refreshHistory: [DiagnosticRefreshHistoryRecord]?
 }
 
 public enum DiagnosticExport {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public static let maximumRefreshHistoryRecords = 20
+    public static let maximumQuotaFindings = 8
 
     public static func make(from input: DiagnosticExportInput) throws -> DiagnosticExportArtifact {
-        let report = DiagnosticExportReportV1(
+        let report = DiagnosticExportReport(
             schemaVersion: currentSchemaVersion,
             generatedAt: roundedDownToMinute(input.generatedAt),
             application: .init(version: input.appVersion, build: input.appBuild),
@@ -254,6 +345,9 @@ public enum DiagnosticExport {
                     duration: $0.duration,
                     affectedWindowKinds: $0.affectedWindowKinds
                 )
+            },
+            quotaFindings: input.quotaFindings?.sorted {
+                ($0.product.rawValue, $0.windowKind.rawValue) < ($1.product.rawValue, $1.windowKind.rawValue)
             }
         )
 
@@ -265,19 +359,36 @@ public enum DiagnosticExport {
         return DiagnosticExportArtifact(bytes: bytes)
     }
 
-    public static func decode(_ bytes: Data) throws -> DiagnosticExportReportV1 {
+    public static func decode(_ bytes: Data) throws -> DiagnosticExportReport {
         struct VersionEnvelope: Decodable { let schemaVersion: Int }
 
         let decoder = JSONDecoder()
         guard let envelope = try? decoder.decode(VersionEnvelope.self, from: bytes) else {
             throw DiagnosticExportError.malformedArtifact
         }
-        guard envelope.schemaVersion == currentSchemaVersion else {
+        guard (1...currentSchemaVersion).contains(envelope.schemaVersion) else {
             throw DiagnosticExportError.unsupportedSchemaVersion(envelope.schemaVersion)
         }
         decoder.dateDecodingStrategy = .iso8601
         do {
-            let report = try decoder.decode(DiagnosticExportReportV1.self, from: bytes)
+            let report: DiagnosticExportReport
+            if envelope.schemaVersion == 1 {
+                let legacy = try decoder.decode(LegacyDiagnosticExportReportV1.self, from: bytes)
+                report = DiagnosticExportReport(
+                    schemaVersion: legacy.schemaVersion,
+                    generatedAt: legacy.generatedAt,
+                    application: legacy.application,
+                    operatingSystem: legacy.operatingSystem,
+                    providers: legacy.providers,
+                    database: legacy.database,
+                    imports: legacy.imports,
+                    resourceLimitReasons: legacy.resourceLimitReasons,
+                    refreshHistory: legacy.refreshHistory,
+                    quotaFindings: nil
+                )
+            } else {
+                report = try decoder.decode(DiagnosticExportReport.self, from: bytes)
+            }
             let history = try report.refreshHistory?.map {
                 try DiagnosticRefreshHistoryRecord(
                     role: $0.role,
@@ -308,7 +419,22 @@ public enum DiagnosticExport {
                     rejected: report.imports.rejected
                 ),
                 resourceLimitReasons: Set(report.resourceLimitReasons),
-                refreshHistory: history
+                refreshHistory: history,
+                quotaFindings: try report.quotaFindings?.map {
+                    try DiagnosticQuotaFinding(
+                        product: $0.product,
+                        windowKind: $0.windowKind,
+                        status: $0.status,
+                        measuredObservationCount: $0.measuredObservationCount,
+                        measuredSpanMinutes: $0.measuredSpanMinutes,
+                        calculatedBurnPercentPerHour: $0.calculatedBurnPercentPerHour.map {
+                            try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
+                        },
+                        calculatedExhaustionMinutes: $0.calculatedExhaustionMinutes.map {
+                            try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
+                        }
+                    )
+                }
             )
             return report
         } catch {

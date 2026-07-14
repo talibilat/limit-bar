@@ -9,6 +9,8 @@ struct PercentRateLimitRowView: View {
     let severity: ClaudeRateLimitSeverity
     let resetsAt: Date?
     let isActive: Bool
+    let insight: QuotaInsightState?
+    let insightsStorageAvailable: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -42,9 +44,52 @@ struct PercentRateLimitRowView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            insightText
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
         .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var insightText: some View {
+        if !insightsStorageAvailable {
+            Text("Quota insights unavailable: local storage could not be opened.")
+                .foregroundStyle(.orange)
+        } else if resetsAt == nil {
+            Text("Quota insights unavailable: an exact reported reset is required.")
+        } else if let insight {
+            switch insight {
+            case let .unavailable(reason, count, span):
+                Text("Measured: \(count) observations over \(duration(span)). Calculated: \(reason.displayText.lowercased()).")
+            case let .qualified(finding):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Measured: \(finding.measuredObservationCount) observations over \(duration(finding.measuredSpan)).")
+                    Text(calculatedText(finding))
+                }
+            }
+        } else {
+            Text("Measured: collecting observations. Calculated findings unavailable.")
+        }
+    }
+
+    private func calculatedText(_ finding: QualifiedQuotaInsight) -> String {
+        let burn = finding.calculatedBurnPercentPerHour
+        let range = String(format: "%.1f-%.1f%% per hour", burn.lower, burn.upper)
+        guard let exhaustion = finding.calculatedExhaustionRange else {
+            return "Calculated: recent burn \(range); exhaustion not projected before reset."
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return "Calculated: recent burn \(range); exhaustion range \(formatter.string(from: exhaustion.lowerBound))-\(formatter.string(from: exhaustion.upperBound))."
+    }
+
+    private func duration(_ interval: TimeInterval) -> String {
+        let minutes = max(0, Int(interval / 60))
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }
 
     private var usageColor: Color {
