@@ -1,6 +1,6 @@
 import Foundation
 
-public struct DiagnosticVersion: Equatable, Sendable {
+public struct DiagnosticVersion: Codable, Equatable, Sendable {
     public let major: Int
     public let minor: Int
     public let patch: Int
@@ -15,15 +15,16 @@ public struct DiagnosticVersion: Equatable, Sendable {
     }
 }
 
-public enum DiagnosticProvider: String, CaseIterable, Equatable, Sendable {
+public enum DiagnosticProvider: String, Codable, CaseIterable, Equatable, Sendable {
     case anthropic
     case azureOpenAI
     case openAI
     case custom
 }
 
-public enum DiagnosticProviderState: String, CaseIterable, Equatable, Sendable {
+public enum DiagnosticProviderState: String, Codable, CaseIterable, Equatable, Sendable {
     case notConfigured
+    case configured
     case connected
     case authenticationRequired
     case networkUnavailable
@@ -31,7 +32,7 @@ public enum DiagnosticProviderState: String, CaseIterable, Equatable, Sendable {
     case cancelled
 }
 
-public struct DiagnosticProviderStatus: Equatable, Sendable {
+public struct DiagnosticProviderStatus: Codable, Equatable, Sendable {
     public let provider: DiagnosticProvider
     public let state: DiagnosticProviderState
 
@@ -41,12 +42,12 @@ public struct DiagnosticProviderStatus: Equatable, Sendable {
     }
 }
 
-public enum DiagnosticDatabaseState: String, CaseIterable, Equatable, Sendable {
+public enum DiagnosticDatabaseState: String, Codable, CaseIterable, Equatable, Sendable {
     case available
     case unavailable
 }
 
-public struct DiagnosticImportCounts: Equatable, Sendable {
+public struct DiagnosticImportCounts: Codable, Equatable, Sendable {
     public let accepted: Int
     public let rejected: Int
 
@@ -59,10 +60,73 @@ public struct DiagnosticImportCounts: Equatable, Sendable {
     }
 }
 
-public enum DiagnosticResourceLimitReason: String, CaseIterable, Equatable, Sendable {
+public enum DiagnosticResourceLimitReason: String, Codable, CaseIterable, Equatable, Sendable {
     case rateLimited
     case responseTooLarge
     case importLimitReached
+}
+
+public enum DiagnosticRefreshHistoryRole: String, Codable, CaseIterable, Equatable, Sendable {
+    case latest
+    case lastFullSuccess
+}
+
+public enum DiagnosticRefreshProduct: String, Codable, CaseIterable, Equatable, Sendable {
+    case anthropicAPI = "anthropic_api"
+    case openAIAPI = "openai_api"
+}
+
+public enum DiagnosticRefreshOutcome: String, Codable, CaseIterable, Equatable, Sendable {
+    case success
+    case partialFailure = "partial_failure"
+    case cancelled
+    case authenticationFailure = "authentication_failure"
+    case networkFailure = "network_failure"
+    case failed
+}
+
+public enum DiagnosticRefreshDuration: String, Codable, CaseIterable, Equatable, Sendable {
+    case underOneSecond = "under_1_second"
+    case oneToFiveSeconds = "1_to_5_seconds"
+    case fiveToThirtySeconds = "5_to_30_seconds"
+    case overThirtySeconds = "over_30_seconds"
+}
+
+public enum DiagnosticRefreshWindowKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case today
+    case currentWeek
+}
+
+public struct DiagnosticRefreshHistoryRecord: Codable, Equatable, Sendable {
+    public let role: DiagnosticRefreshHistoryRole
+    public let product: DiagnosticRefreshProduct
+    public let outcome: DiagnosticRefreshOutcome
+    public let startedAt: Date
+    public let duration: DiagnosticRefreshDuration
+    public let affectedWindowKinds: [DiagnosticRefreshWindowKind]
+
+    public init(
+        role: DiagnosticRefreshHistoryRole,
+        product: DiagnosticRefreshProduct,
+        outcome: DiagnosticRefreshOutcome,
+        startedAt: Date,
+        duration: DiagnosticRefreshDuration,
+        affectedWindowKinds: [DiagnosticRefreshWindowKind]
+    ) throws {
+        guard startedAt.timeIntervalSince1970.isFinite else {
+            throw DiagnosticExportError.invalidTimestamp
+        }
+        guard !affectedWindowKinds.isEmpty,
+              Set(affectedWindowKinds.map(\.rawValue)).count == affectedWindowKinds.count else {
+            throw DiagnosticExportError.invalidRefreshHistory
+        }
+        self.role = role
+        self.product = product
+        self.outcome = outcome
+        self.startedAt = startedAt
+        self.duration = duration
+        self.affectedWindowKinds = affectedWindowKinds.sorted { $0.rawValue < $1.rawValue }
+    }
 }
 
 public struct DiagnosticExportInput: Equatable, Sendable {
@@ -74,6 +138,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
     public let databaseState: DiagnosticDatabaseState
     public let importCounts: DiagnosticImportCounts
     public let resourceLimitReasons: Set<DiagnosticResourceLimitReason>
+    public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
 
     public init(
         generatedAt: Date,
@@ -83,7 +148,8 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         providerStatuses: [DiagnosticProviderStatus],
         databaseState: DiagnosticDatabaseState,
         importCounts: DiagnosticImportCounts,
-        resourceLimitReasons: Set<DiagnosticResourceLimitReason>
+        resourceLimitReasons: Set<DiagnosticResourceLimitReason>,
+        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil
     ) throws {
         guard generatedAt.timeIntervalSince1970.isFinite else {
             throw DiagnosticExportError.invalidTimestamp
@@ -94,6 +160,9 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         guard Set(providerStatuses.map(\.provider)).count == providerStatuses.count else {
             throw DiagnosticExportError.duplicateProvider
         }
+        guard refreshHistory.map({ $0.count <= DiagnosticExport.maximumRefreshHistoryRecords }) ?? true else {
+            throw DiagnosticExportError.invalidRefreshHistory
+        }
 
         self.generatedAt = generatedAt
         self.appVersion = appVersion
@@ -103,6 +172,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         self.databaseState = databaseState
         self.importCounts = importCounts
         self.resourceLimitReasons = resourceLimitReasons
+        self.refreshHistory = refreshHistory
     }
 }
 
@@ -111,6 +181,9 @@ public enum DiagnosticExportError: Error, Equatable {
     case invalidImportCount
     case invalidTimestamp
     case duplicateProvider
+    case invalidRefreshHistory
+    case unsupportedSchemaVersion(Int)
+    case malformedArtifact
     case previewEncodingFailed
 }
 
@@ -133,21 +206,55 @@ public struct DiagnosticExportArtifact: Equatable, Sendable {
     }
 }
 
+public struct DiagnosticExportReportV1: Codable, Equatable, Sendable {
+    public struct Application: Codable, Equatable, Sendable {
+        public let version: DiagnosticVersion
+        public let build: Int
+    }
+
+    public struct OperatingSystem: Codable, Equatable, Sendable {
+        public let version: DiagnosticVersion
+    }
+
+    public struct Database: Codable, Equatable, Sendable {
+        public let state: DiagnosticDatabaseState
+    }
+
+    public let schemaVersion: Int
+    public let generatedAt: Date
+    public let application: Application
+    public let operatingSystem: OperatingSystem
+    public let providers: [DiagnosticProviderStatus]
+    public let database: Database
+    public let imports: DiagnosticImportCounts
+    public let resourceLimitReasons: [DiagnosticResourceLimitReason]
+    public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
+}
+
 public enum DiagnosticExport {
     public static let currentSchemaVersion = 1
+    public static let maximumRefreshHistoryRecords = 20
 
     public static func make(from input: DiagnosticExportInput) throws -> DiagnosticExportArtifact {
-        let report = Report(
+        let report = DiagnosticExportReportV1(
             schemaVersion: currentSchemaVersion,
             generatedAt: roundedDownToMinute(input.generatedAt),
-            application: Application(version: Version(input.appVersion), build: input.appBuild),
-            operatingSystem: OperatingSystem(version: Version(input.operatingSystemVersion)),
-            providers: input.providerStatuses
-                .sorted { $0.provider.rawValue < $1.provider.rawValue }
-                .map { Provider(provider: $0.provider.rawValue, state: $0.state.rawValue) },
-            database: Database(state: input.databaseState.rawValue),
-            imports: Imports(accepted: input.importCounts.accepted, rejected: input.importCounts.rejected),
-            resourceLimitReasons: input.resourceLimitReasons.map(\.rawValue).sorted()
+            application: .init(version: input.appVersion, build: input.appBuild),
+            operatingSystem: .init(version: input.operatingSystemVersion),
+            providers: input.providerStatuses.sorted { $0.provider.rawValue < $1.provider.rawValue },
+            database: .init(state: input.databaseState),
+            imports: input.importCounts,
+            resourceLimitReasons: input.resourceLimitReasons.sorted { $0.rawValue < $1.rawValue },
+            refreshHistory: try input.refreshHistory?.map {
+                try DiagnosticRefreshHistoryRecord(
+                    role: $0.role,
+                    product: $0.product,
+                    outcome: $0.outcome,
+                    startedAt: roundedDownToMinute($0.startedAt),
+                    duration: $0.duration,
+                    affectedWindowKinds: $0.affectedWindowKinds
+                )
+            }
         )
 
         let encoder = JSONEncoder()
@@ -158,53 +265,58 @@ public enum DiagnosticExport {
         return DiagnosticExportArtifact(bytes: bytes)
     }
 
+    public static func decode(_ bytes: Data) throws -> DiagnosticExportReportV1 {
+        struct VersionEnvelope: Decodable { let schemaVersion: Int }
+
+        let decoder = JSONDecoder()
+        guard let envelope = try? decoder.decode(VersionEnvelope.self, from: bytes) else {
+            throw DiagnosticExportError.malformedArtifact
+        }
+        guard envelope.schemaVersion == currentSchemaVersion else {
+            throw DiagnosticExportError.unsupportedSchemaVersion(envelope.schemaVersion)
+        }
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            let report = try decoder.decode(DiagnosticExportReportV1.self, from: bytes)
+            let history = try report.refreshHistory?.map {
+                try DiagnosticRefreshHistoryRecord(
+                    role: $0.role,
+                    product: $0.product,
+                    outcome: $0.outcome,
+                    startedAt: $0.startedAt,
+                    duration: $0.duration,
+                    affectedWindowKinds: $0.affectedWindowKinds
+                )
+            }
+            _ = try DiagnosticExportInput(
+                generatedAt: report.generatedAt,
+                appVersion: DiagnosticVersion(
+                    major: report.application.version.major,
+                    minor: report.application.version.minor,
+                    patch: report.application.version.patch
+                ),
+                appBuild: report.application.build,
+                operatingSystemVersion: DiagnosticVersion(
+                    major: report.operatingSystem.version.major,
+                    minor: report.operatingSystem.version.minor,
+                    patch: report.operatingSystem.version.patch
+                ),
+                providerStatuses: report.providers,
+                databaseState: report.database.state,
+                importCounts: DiagnosticImportCounts(
+                    accepted: report.imports.accepted,
+                    rejected: report.imports.rejected
+                ),
+                resourceLimitReasons: Set(report.resourceLimitReasons),
+                refreshHistory: history
+            )
+            return report
+        } catch {
+            throw DiagnosticExportError.malformedArtifact
+        }
+    }
+
     private static func roundedDownToMinute(_ date: Date) -> Date {
         Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / 60) * 60)
     }
-}
-
-private struct Report: Encodable {
-    let schemaVersion: Int
-    let generatedAt: Date
-    let application: Application
-    let operatingSystem: OperatingSystem
-    let providers: [Provider]
-    let database: Database
-    let imports: Imports
-    let resourceLimitReasons: [String]
-}
-
-private struct Application: Encodable {
-    let version: Version
-    let build: Int
-}
-
-private struct OperatingSystem: Encodable {
-    let version: Version
-}
-
-private struct Version: Encodable {
-    let major: Int
-    let minor: Int
-    let patch: Int
-
-    init(_ version: DiagnosticVersion) {
-        major = version.major
-        minor = version.minor
-        patch = version.patch
-    }
-}
-
-private struct Provider: Encodable {
-    let provider: String
-    let state: String
-}
-
-private struct Database: Encodable {
-    let state: String
-}
-
-private struct Imports: Encodable {
-    let accepted: Int
-    let rejected: Int
 }

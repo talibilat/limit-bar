@@ -90,6 +90,20 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Fixture Tool"].exists)
     }
 
+    func testDiagnosticExportRequiresReviewBeforeSave() {
+        launch(screen: "diagnostic-export")
+
+        let previewButton = app.buttons["diagnostic-export-preview"]
+        XCTAssertTrue(previewButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
+        previewButton.click()
+
+        XCTAssertTrue(app.staticTexts["Review Diagnostic Export"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].exists)
+        XCTAssertTrue(app.buttons["diagnostic-export-save"].exists)
+        XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].label.contains("schemaVersion"))
+    }
+
     private func launch(screen: String) {
         app.launchEnvironment["LIMITBAR_UI_TEST_SCREEN"] = screen
         app.launch()

@@ -2,7 +2,7 @@
 
 Date: 2026-07-13.
 Target: macOS 14 or newer.
-Scope: reliability, security, privacy, exact usage windows, local refresh behavior, local alerts, custom-source resource limits, and migration acceptance evidence.
+Scope: reliability, security, privacy, exact usage windows, local refresh behavior, local alerts, diagnostic export, custom-source resource limits, and migration acceptance evidence.
 
 ## Verification Commands
 
@@ -72,6 +72,9 @@ Verification on 2026-07-13 completed with 268 tests in 22 suites passing, the na
 Ticket 12 verification on 2026-07-14 completed with 288 tests in 24 suites passing, direct typechecking of every app Swift source passing, the Xcode project file validating, and `git diff --check` reporting no errors.
 The native `xcodebuild` command was attempted with isolated Derived Data but could not reach build planning because this machine reported `DARWIN_USER_CACHE_DIR` I/O and FSEvents startup failures.
 
+Ticket 11 verification on 2026-07-14 completed with 367 tests in 32 suites passing, the diagnostic export focused suite passing, Debug build-for-testing succeeding, and the unsigned Release build succeeding.
+Focused native app and UI tests compiled, but this Xcode installation asserted `childPID > 0` in `IDELaunchServicesLauncher` before XCTest started; the commands were terminated after their timeouts.
+
 Inspect the app target's sandbox configuration and default paths:
 
 ```sh
@@ -106,6 +109,7 @@ This check is not evidence of filesystem isolation.
 | Process-only secret use | `CredentialStoreTests` and `ProviderAuthenticationTests` verify dedicated Keychain storage, exact byte handling, and secret-free settings and diagnostics, while provider refresh services pass credentials directly to request clients and persist only normalized results and safe diagnostics. |
 | HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
 | Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
+| Privacy-safe diagnostic export | `DiagnosticExportTests` snapshots every recursively encoded v1 key, verifies version-aware decoding, rejects unsupported versions, bounds optional refresh history, checks prohibited key and content sentinels, and proves preview bytes equal atomically saved bytes. `DiagnosticExportPresentationTests` verifies the app-owned live-state projection drops private settings and exact refresh-window fields, saves without regeneration, and exposes only fixed generic failures. UI automation verifies Save is unavailable until the exact JSON preview is shown. |
 | Provider persistence safety | Anthropic and OpenAI provider tests verify cancellation preservation, scoped replacement, stale retained values after failure, exact local and UTC windows, and safe typed failure reasons. |
 | Native app automation | The Xcode build compiles the app, History chart, and production integrations. `LimitBarTests` covers app-owned persistence, while `LimitBarUITests` launches the app against production popover and Custom Usage Source views. Debug-only composition injects synthetic state without reading production SQLite, provider settings, Keychain, Codex sessions, or network resources; historical chart inspection remains manual. |
 | Alert qualification | `AlertCoreTests` verifies configurable thresholds, provider-product separation, Claude and Codex reset-boundary adapters, stale and malformed suppression, source and currency separation, API-over-local precedence, checked monetary aggregation, and privacy-safe copy. |
@@ -137,6 +141,9 @@ These checks require a local signed app and should not be inferred from fixture 
 18. Clear notification history, accept the warning, and confirm an active threshold can notify again.
 19. Deny notification permission and confirm Settings reports the denial without consuming delivery state or repeatedly prompting.
 20. Configure provider-reported and calculated budgets in the same currency and confirm their notifications remain separately labeled.
+21. In Settings, press **Preview Diagnostic Export** and inspect the complete JSON before saving.
+22. Confirm **Save As...** presents a macOS destination panel, cancel leaves no file, and choosing a destination writes the exact previewed bytes.
+23. Induce a preparation or destination-write failure and confirm the UI shows only the fixed generic message without a path or underlying error.
 
 ## Repository-Only Boundary
 
