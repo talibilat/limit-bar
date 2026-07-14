@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 public typealias CustomUsageLoader = @Sendable (URL, CustomUsageSource, Date, Calendar) async throws -> CustomUsageLoadResult
 
@@ -56,6 +57,22 @@ public actor UsageDatabase {
             pathFactory: { try applicationSupportDatabasePath(fileManager: fileManager.value) },
             localEventsURLFactory: { try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager.value) }
         )
+    }
+
+    public func databaseDirectoryURL() throws -> URL {
+        URL(fileURLWithPath: try pathFactory()).deletingLastPathComponent()
+    }
+
+    public func createCleanDatabaseRecovery(at date: Date = Date()) throws -> URL {
+        let databaseURL = URL(fileURLWithPath: try pathFactory())
+        store = nil
+
+        let archive = try archiveDatabaseFiles(at: databaseURL, date: date)
+        lastValidSnapshot = nil
+        localImportCache = nil
+        customSourceCache = [:]
+        _ = try openStore()
+        return archive
     }
 
     public func snapshot(now: Date = Date(), calendar: Calendar = .current) -> StoredUsageMetricsSnapshot {
@@ -279,6 +296,81 @@ public actor UsageDatabase {
     private func cancellationSnapshot() -> StoredUsageMetricsSnapshot {
         lastValidSnapshot ?? fallbackSnapshot()
     }
+
+    private func archiveDatabaseFiles(at databaseURL: URL, date: Date) throws -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: databaseURL.path) else {
+            throw UsageDatabaseRecoveryError.databaseMissing
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withYear, .withMonth, .withDay, .withTime, .withDashSeparatorInDate]
+        let archiveURL = databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("Recovery", isDirectory: true)
+            .appendingPathComponent(
+                "usage-metrics-\(formatter.string(from: date).replacingOccurrences(of: ":", with: "-"))-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
+
+        var lockDatabase: OpaquePointer?
+        let openResult = sqlite3_open_v2(
+            databaseURL.path,
+            &lockDatabase,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        var holdsExclusiveLock = false
+        if openResult == SQLITE_OK {
+            sqlite3_busy_timeout(lockDatabase, 1_000)
+            let lockResult = sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil)
+            if lockResult == SQLITE_OK {
+                holdsExclusiveLock = true
+            } else if lockResult == SQLITE_BUSY || lockResult == SQLITE_LOCKED {
+                sqlite3_close(lockDatabase)
+                try? fileManager.removeItem(at: archiveURL)
+                throw UsageDatabaseRecoveryError.databaseBusy
+            } else if fileManager.isWritableFile(atPath: databaseURL.path),
+                      ![SQLITE_NOTADB, SQLITE_CORRUPT].contains(sqlite3_extended_errcode(lockDatabase)) {
+                sqlite3_close(lockDatabase)
+                try? fileManager.removeItem(at: archiveURL)
+                throw UsageDatabaseRecoveryError.databaseBusy
+            }
+        } else if fileManager.isWritableFile(atPath: databaseURL.path) {
+            sqlite3_close(lockDatabase)
+            try? fileManager.removeItem(at: archiveURL)
+            throw UsageDatabaseRecoveryError.databaseBusy
+        }
+        defer {
+            if holdsExclusiveLock {
+                sqlite3_exec(lockDatabase, "ROLLBACK;", nil, nil, nil)
+            }
+            sqlite3_close(lockDatabase)
+        }
+
+        // Inventory sidecars only after excluding writers so a newly committed WAL cannot be omitted.
+        let sourceURLs = [
+            databaseURL,
+            URL(fileURLWithPath: databaseURL.path + "-wal"),
+            URL(fileURLWithPath: databaseURL.path + "-shm")
+        ].filter { fileManager.fileExists(atPath: $0.path) }
+        do {
+            for source in sourceURLs {
+                let destination = archiveURL.appendingPathComponent(source.lastPathComponent)
+                try fileManager.copyItem(at: source, to: destination)
+            }
+            for source in sourceURLs {
+                try fileManager.removeItem(at: source)
+            }
+        } catch {
+            throw error
+        }
+        return archiveURL
+    }
+}
+
+public enum UsageDatabaseRecoveryError: Error, Equatable {
+    case databaseMissing
+    case databaseBusy
 }
 
 private struct LocalEventsFingerprint: Equatable {

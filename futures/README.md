@@ -10,7 +10,7 @@ They preserve concrete next questions while keeping current behavior honest.
 3. Profile five-second local refresh I/O, CPU, and power before making cadence configurable.
 4. Add CI for core tests, native builds, whitespace checks, and migration fixtures.
 5. Decide the long-term App Sandbox and file-access model before public distribution.
-6. Run release-level migration QA against copied databases from every shipped schema.
+6. Maintain the implemented [`release migration QA`](07-release-migration-qa.md) matrix and run binary-to-binary acceptance after the first public release exists.
 
 The consolidated operational list is in [`next-steps.md`](next-steps.md).
 

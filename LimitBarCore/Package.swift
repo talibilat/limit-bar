@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "LimitBarCore",
             targets: ["LimitBarCore"]
+        ),
+        .executable(
+            name: "limitbar-migration-validator",
+            targets: ["LimitBarMigrationValidator"]
         )
     ],
     targets: [
@@ -20,9 +24,19 @@ let package = Package(
                 .linkedFramework("Security")
             ]
         ),
+        .target(
+            name: "LimitBarMigrationValidation",
+            dependencies: ["LimitBarCore"],
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
+        .executableTarget(
+            name: "LimitBarMigrationValidator",
+            dependencies: ["LimitBarMigrationValidation"]
+        ),
         .testTarget(
             name: "LimitBarCoreTests",
-            dependencies: ["LimitBarCore"]
+            dependencies: ["LimitBarCore", "LimitBarMigrationValidation"],
+            exclude: ["Fixtures"]
         )
     ]
 )
