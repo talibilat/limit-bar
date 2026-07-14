@@ -128,7 +128,7 @@ These checks require a local signed app and should not be inferred from fixture 
 9. Press **Check Again** and confirm it remains a passive no-UI action.
 10. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
 11. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
-12. Select each Local Refresh cadence, disconnect the network, and confirm local JSONL, custom, SQLite, and Codex refresh continues without provider polling or Keychain prompts.
+12. Select each Local Refresh cadence, disconnect the network, and confirm Local Usage Events, Custom Usage Sources, SQLite, and Codex refresh continues without provider polling or Keychain prompts.
 13. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
 14. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
 15. Open Alerts settings and confirm no notification permission prompt appears before pressing **Enable Notifications**.

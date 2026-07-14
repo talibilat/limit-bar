@@ -4,7 +4,7 @@ extension Notification.Name {
     static let localRefreshSettingsDidChange = Notification.Name("LimitBar.localRefreshSettingsDidChange")
 }
 
-enum LocalRefreshCadence: Int, CaseIterable, Codable {
+enum LocalRefreshCadence: Int, CaseIterable {
     case fiveSeconds = 5
     case fifteenSeconds = 15
     case thirtySeconds = 30

@@ -51,6 +51,7 @@ To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar f
 
 LimitBar starts one local refresh immediately and schedules another using the cadence selected in Settings: every 5, 15, or 30 seconds.
 Five seconds is the default, and invalid saved values return to that default.
+Shorter intervals show local changes sooner and do more background file and database work, while longer intervals may use less power but delay updates.
 That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, and scans local Codex sessions.
 Concurrent ticks are coalesced, and a failed local component keeps its last successful in-process component in the published refresh snapshot.
 

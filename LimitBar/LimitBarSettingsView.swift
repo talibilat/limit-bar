@@ -130,7 +130,7 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Local Refresh") {
-                Text("Choose how often LimitBar imports local JSONL and custom files, reads its SQLite snapshot, and scans local Codex sessions.")
+                Text("Choose how often LimitBar imports Local Usage Events and Custom Usage Sources, reads its SQLite snapshot, and scans local Codex sessions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("Cadence", selection: $localRefreshCadence) {
@@ -141,6 +141,9 @@ struct LimitBarSettingsView: View {
                 .onChange(of: localRefreshCadence) { _, cadence in
                     localRefreshSettingsStore.cadence = cadence
                 }
+                Text("Shorter intervals show local changes sooner and do more background file and database work. Longer intervals may use less power but delay updates.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("This setting never schedules provider API requests or macOS Keychain checks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

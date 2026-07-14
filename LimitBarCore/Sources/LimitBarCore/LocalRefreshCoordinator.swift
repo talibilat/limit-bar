@@ -202,7 +202,7 @@ public actor LocalRefreshCoordinator {
 
     public func start() {
         guard periodicTask == nil else { return }
-        startPeriodicTask(refreshImmediately: true)
+        startPeriodicTask()
     }
 
     public func setRefreshInterval(_ refreshInterval: TimeInterval) {
@@ -212,17 +212,15 @@ public actor LocalRefreshCoordinator {
         guard periodicTask != nil else { return }
         periodicTask?.cancel()
         periodicTask = nil
-        startPeriodicTask(refreshImmediately: true)
+        startPeriodicTask()
     }
 
-    private func startPeriodicTask(refreshImmediately: Bool) {
+    private func startPeriodicTask() {
         let startGeneration = generation
         let clock = clock
         let refreshInterval = refreshInterval
-        periodicTask = Task { [weak self, startGeneration, clock, refreshInterval, refreshImmediately] in
-            if refreshImmediately {
-                await self?.scheduleRefresh(for: startGeneration)
-            }
+        periodicTask = Task { [weak self, startGeneration, clock, refreshInterval] in
+            await self?.scheduleRefresh(for: startGeneration)
             while !Task.isCancelled {
                 do {
                     try await clock.sleep(for: refreshInterval)
