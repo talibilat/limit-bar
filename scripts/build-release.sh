@@ -14,6 +14,7 @@ archive="$RUNNER_TEMP/LimitBar.xcarchive"
 export_path="$RUNNER_TEMP/LimitBar-export"
 submission_zip="$RUNNER_TEMP/LimitBar-notarization.zip"
 artifact="dist/LimitBar-$version.zip"
+expected_bundle_identifier="com.talibilat.LimitBar"
 rm -rf "$archive" "$export_path" dist
 mkdir -p "$export_path" dist
 
@@ -31,6 +32,11 @@ xcodebuild archive \
 
 app="$archive/Products/Applications/LimitBar.app"
 codesign --verify --deep --strict --verbose=2 "$app"
+bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
+if [[ "$bundle_identifier" != "$expected_bundle_identifier" ]]; then
+  printf 'error: archived app has unexpected bundle identifier %s\n' "$bundle_identifier" >&2
+  exit 1
+fi
 identity="$(codesign -dv --verbose=4 "$app" 2>&1 | awk -F= '/^Authority=Developer ID Application:/ { print $2; exit }')"
 if [[ "$identity" != "$DEVELOPER_ID_APPLICATION" ]]; then
   printf 'error: archived app does not have the expected stable signing identity\n' >&2
@@ -55,4 +61,11 @@ mkdir -p "$unpacked"
 ditto -x -k "$artifact" "$unpacked"
 codesign --verify --deep --strict --verbose=2 "$unpacked/LimitBar.app"
 xcrun stapler validate "$unpacked/LimitBar.app"
+unpacked_bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$unpacked/LimitBar.app/Contents/Info.plist")"
+if [[ "$unpacked_bundle_identifier" != "$expected_bundle_identifier" ]]; then
+  printf 'error: packaged app has unexpected bundle identifier %s\n' "$unpacked_bundle_identifier" >&2
+  exit 1
+fi
+checksum_output="$(shasum -a 256 "$artifact")"
+printf '%s  %s\n' "${checksum_output%% *}" "$(basename "$artifact")" > "$artifact.sha256"
 printf 'verified signed and notarized release artifact %s\n' "$(basename "$artifact")"

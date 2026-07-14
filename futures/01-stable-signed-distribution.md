@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed and prioritized.
+Implementation ready; external release acceptance pending.
 
 ## Problem
 
@@ -31,10 +31,11 @@ No credentials, Keychain exports, private paths, or provider responses may be co
 
 No product data-model change is required.
 
-## Open Questions
+## Resolved Questions
 
-- Which signing identity and release channel will remain stable across updates?
-- Where will release credentials be stored and rotated?
+- Public artifacts use the stable `com.talibilat.LimitBar` bundle identifier, Developer ID Application signing, hardened runtime, Apple notarization, and direct GitHub Releases distribution.
+- Signing and notarization credentials live in the protected GitHub `release` environment and are imported only into an ephemeral CI keychain.
+- The workflow creates a draft release with a SHA-256 checksum; a human promotes it only after clean-machine acceptance.
 
 ## Exit Criteria
 

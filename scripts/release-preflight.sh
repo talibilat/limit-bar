@@ -25,6 +25,14 @@ if [[ -z "$(git tag --points-at HEAD --list "$RELEASE_TAG")" ]]; then
   printf 'error: checked-out commit is not tagged %s\n' "$RELEASE_TAG" >&2
   exit 1
 fi
+if [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" != "tag" ]]; then
+  printf 'error: RELEASE_TAG must be an annotated tag\n' >&2
+  exit 1
+fi
+if ! git merge-base --is-ancestor HEAD origin/main; then
+  printf 'error: tagged release commit must be reachable from origin/main\n' >&2
+  exit 1
+fi
 if [[ "$DEVELOPER_ID_APPLICATION" != Developer\ ID\ Application:*"($APPLE_TEAM_ID)" ]]; then
   printf 'error: signing identity must be a Developer ID Application identity for APPLE_TEAM_ID\n' >&2
   exit 1

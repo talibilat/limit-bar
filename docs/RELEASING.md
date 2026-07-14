@@ -37,7 +37,7 @@ Replace the P12 secret before certificate expiration without changing the Apple 
 
 1. Confirm CI passes on macOS 14 with Xcode 16.
 2. Confirm `docs/MIGRATIONS_AND_RECOVERY.md` covers every schema distributed so far.
-3. Create an annotated `vMAJOR.MINOR.PATCH` tag on the reviewed commit and push the tag.
+3. Create an annotated `vMAJOR.MINOR.PATCH` tag on a reviewed commit reachable from `origin/main`, then push the tag.
 4. Run the `Release` workflow manually and provide that existing tag.
 5. Approve the protected `release` environment after checking the tag and commit.
 6. Download the ZIP from the resulting draft GitHub Release onto clean systems running the oldest and newest supported macOS releases.
@@ -47,7 +47,8 @@ The workflow fails before certificate import when any protected value is absent,
 It never falls back to ad hoc signing or an unsigned artifact.
 
 The workflow archives the release with manual Developer ID signing, checks the exact signing authority, submits a ZIP to Apple, staples the app, rebuilds the final ZIP, extracts it, and revalidates the signature and stapled ticket.
-Only that final ZIP may be promoted as the public release artifact.
+Only that final ZIP and its SHA-256 checksum may be promoted as public release artifacts.
+The workflow creates a draft release; promote it manually only after external acceptance passes.
 
 ## Migration Gate
 
@@ -77,10 +78,13 @@ The publishing workflow is the canonical signing environment.
 
 Run acceptance on the oldest and newest supported macOS releases.
 
-1. Verify the expected Developer ID identity and bundle identifier with `codesign`.
-2. Verify the signature, stapled ticket, and Gatekeeper assessment.
-3. Launch the quarantined download through Finder.
-4. Confirm clean installation creates the canonical schema.
-5. Upgrade each prior public release and confirm settings, metrics, custom sources, and expected Keychain authorization behavior remain intact.
-6. Complete the release migration and recovery matrix.
-7. Promote the draft release only after every blocking check passes.
+1. Download the ZIP and checksum into one directory and verify them with `shasum -a 256 -c LimitBar-<version>.zip.sha256`.
+2. Verify the expected Developer ID identity and bundle identifier with `codesign`.
+3. Verify the signature, stapled ticket, and Gatekeeper assessment.
+4. Launch the quarantined download through Finder.
+5. Confirm clean installation creates the canonical schema.
+6. Upgrade each prior public release and confirm settings, metrics, custom sources, and expected Keychain authorization behavior remain intact.
+7. Complete the release migration and recovery matrix.
+8. Promote the draft release only after every blocking check passes.
+
+Promote the accepted draft with `gh release edit <tag> --draft=false` or through the GitHub Releases interface.
