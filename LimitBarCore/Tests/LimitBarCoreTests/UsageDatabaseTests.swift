@@ -359,6 +359,28 @@ struct UsageDatabaseTests {
         #expect(customMetrics.allSatisfy { $0.modelLabel == "renamed" && $0.accountLabel == "Renamed Tool" })
     }
 
+    @Test("wholly invalid custom content preserves the prior source snapshot and safe diagnostics")
+    func invalidCustomContentPreservesPriorSnapshot() async throws {
+        let path = temporaryDatabasePath()
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try #"{"timestamp":"2026-07-10T10:00:00Z","model":"retained","inputTokens":3,"outputTokens":1}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(name: "Tool", filePath: fileURL.path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        _ = await database.refreshCustomSources([source], now: now, calendar: calendar)
+        try "private-invalid-content".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let diagnostics = await database.refreshCustomSources([source], now: now, calendar: calendar)
+        let snapshot = await database.snapshot(now: now, calendar: calendar)
+
+        #expect(diagnostics.first?.failureMessage == "Custom usage import failed")
+        #expect(diagnostics.first?.rejectedLineCount == 1)
+        #expect(String(describing: diagnostics).contains("private-invalid-content") == false)
+        #expect(snapshot.metrics.contains { $0.modelLabel == "retained" && $0.provenance.source == .custom(source.id) })
+    }
+
     @Test("custom refresh removes sources that are no longer configured")
     func customRefreshRemovesUnconfiguredSources() async throws {
         let path = temporaryDatabasePath()
@@ -373,6 +395,90 @@ struct UsageDatabaseTests {
         let snapshot = await database.snapshot(now: now, calendar: utcCalendar())
 
         #expect(snapshot.metrics.allSatisfy { $0.provenance.source != .custom(source.id) })
+    }
+
+    @Test("custom source removal deletes current and historical aggregates")
+    func customRefreshRemovesHistoricalSource() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let source = CustomUsageSource(name: "Removed", filePath: "/not-read")
+        let custom = customMetric(source: source, window: windows.today, refreshedAt: now)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath },
+            customUsageLoader: { _, _, _, _ in
+                CustomUsageLoadResult(metrics: [custom], diagnostics: [], rejectedLineCount: 0)
+            }
+        )
+        _ = await database.refreshCustomSources([source], now: now, calendar: calendar)
+        _ = await database.historicalUsage(metrics: [custom], now: now, calendar: calendar)
+
+        _ = await database.refreshCustomSources([], now: now, calendar: calendar)
+        let current = await database.snapshot(now: now, calendar: calendar)
+        let history = await database.historicalUsage(metrics: [], now: now, calendar: calendar)
+
+        #expect(current.metrics.allSatisfy { $0.provenance.source != .custom(source.id) })
+        #expect(history.dailyBuckets.allSatisfy { bucket in
+            guard case let .observed(observations) = bucket.value else { return true }
+            return observations.allSatisfy { $0.sample.source != .custom(source.id) }
+        })
+
+    }
+
+    @Test("custom source removal stays revoked when current database cleanup is blocked")
+    func customRemovalFiltersFallbackDuringCleanupFailure() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let source = CustomUsageSource(name: "Removed", filePath: "/not-read")
+        let custom = customMetric(source: source, window: windows.today, refreshedAt: now)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath },
+            busyTimeoutMilliseconds: 1,
+            customUsageLoader: { _, _, _, _ in
+                CustomUsageLoadResult(metrics: [custom], diagnostics: [], rejectedLineCount: 0)
+            }
+        )
+        _ = await database.refreshCustomSources([source], now: now, calendar: calendar)
+        let populated = await database.snapshot(now: now, calendar: calendar)
+        _ = await database.historicalUsage(metrics: [custom], now: now, calendar: calendar)
+        #expect(populated.metrics.contains { $0.provenance.source == .custom(source.id) })
+
+        var lockDatabase: OpaquePointer?
+        #expect(sqlite3_open(currentPath, &lockDatabase) == SQLITE_OK)
+        defer { sqlite3_close(lockDatabase) }
+        #expect(sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+
+        _ = await database.refreshCustomSources([], now: now, calendar: calendar)
+        let current = await database.snapshot(now: now, calendar: calendar)
+        let history = await database.historicalUsage(metrics: [], now: now, calendar: calendar)
+
+        #expect(current.metrics.allSatisfy { $0.provenance.source != .custom(source.id) })
+        #expect(history.dailyBuckets.allSatisfy { bucket in
+            guard case let .observed(observations) = bucket.value else { return true }
+            return observations.allSatisfy { $0.sample.source != .custom(source.id) }
+        })
+
+        #expect(sqlite3_exec(lockDatabase, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+        _ = await database.refreshCustomSources([], now: now, calendar: calendar)
+        let reopenedStore = try SQLiteUsageMetricStore(path: currentPath)
+        #expect(try reopenedStore.allMetrics().allSatisfy { $0.provenance.source != .custom(source.id) })
     }
 
     @Test("unchanged custom source reuses its persisted result without reading the file again")

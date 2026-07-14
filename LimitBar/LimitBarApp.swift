@@ -59,7 +59,9 @@ final class LimitBarState {
     private var latestCodexRefreshed = false
 
     private init() {
-        let sessionsDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let sessionsDirectory = LimitBarFileLocations.codexSessionsDirectory(
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+        )
         let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
         coordinator = LocalRefreshCoordinator(dependencies: .live(

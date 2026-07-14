@@ -15,15 +15,20 @@ The product therefore needs a narrower application policy even though macOS does
 ## Decision
 
 LimitBar remains unsandboxed for direct distribution.
-The application may access only these built-in paths:
+The application may access only these built-in logical resources:
 
 - `~/.codex/sessions`
 - `~/Library/Application Support/LimitBar/usage-events.jsonl`
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite`
+- `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite`
+
+SQLite may create adjacent `-wal` and `-shm` files for either database.
+Explicit database recovery may create app-owned archives under `~/Library/Application Support/LimitBar/Recovery`.
 
 The application may also access a custom JSONL regular file only after the user explicitly selects or enters that file as a custom source.
 It must not discover custom sources by scanning unrelated directories.
-Removing a custom source revokes the application's configured intent to read it and removes its persisted aggregate metrics.
+Removing a custom source revokes the application's configured intent to read it immediately and removes its current and historical Usage Aggregates during that Local Refresh Cycle.
+If a database is temporarily unavailable, removed aggregates remain hidden and physical deletion is retried by the next Local Refresh Cycle.
 
 Custom source configuration stores the source UUID, display name, and path.
 It does not store file contents or a security-scoped bookmark.
@@ -40,6 +45,8 @@ Every release must instead use the stable Developer ID Application identity, har
 - The app does not claim filesystem isolation from other files available to the logged-in user.
 - Any new built-in path requires a new or superseding ADR and privacy review.
 - Any broad directory scan, automatic custom-file discovery, or security-scoped bookmark schema requires separate design and migration review.
+- Codex session traversal rejects a redirected sessions root and confines canonical candidates to that root.
+- Custom configuration stores a canonical target path, and both readers open each canonical path component without following later symbolic-link substitutions.
 
 ## Revocation And Recovery
 
@@ -55,5 +62,6 @@ Mac App Store distribution is not compatible with this decision without revisiti
 
 ## Verification
 
-The app target must have no App Sandbox entitlement or entitlements file.
-Release QA verifies the three built-in paths and one explicitly configured custom regular file while confirming that diagnostics do not reveal paths or contents.
+The app target explicitly disables App Sandbox and has no entitlements file.
+CI verifies the effective Debug and Release build settings, and release packaging rejects a signed artifact that contains the App Sandbox entitlement or lacks hardened runtime.
+Release QA verifies the four built-in logical resources and one explicitly configured custom regular file while confirming that product diagnostics do not reveal paths or contents.

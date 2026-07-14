@@ -15,6 +15,26 @@ export_path="$RUNNER_TEMP/LimitBar-export"
 submission_zip="$RUNNER_TEMP/LimitBar-notarization.zip"
 artifact="dist/LimitBar-$version.zip"
 expected_bundle_identifier="com.talibilat.LimitBar"
+
+verify_security_boundary() {
+  local candidate="$1"
+  local signature
+  local entitlements
+  signature="$(codesign -dv --verbose=4 "$candidate" 2>&1)"
+  if [[ "$signature" != *"runtime"* ]]; then
+    printf 'error: signed app does not enable hardened runtime\n' >&2
+    exit 1
+  fi
+  if ! entitlements="$(codesign -d --entitlements :- "$candidate" 2>/dev/null)"; then
+    printf 'error: could not inspect signed app entitlements\n' >&2
+    exit 1
+  fi
+  if [[ "$entitlements" == *"com.apple.security.app-sandbox"* ]]; then
+    printf 'error: signed app unexpectedly enables App Sandbox\n' >&2
+    exit 1
+  fi
+}
+
 rm -rf "$archive" "$export_path" dist
 mkdir -p "$export_path" dist
 
@@ -32,6 +52,7 @@ xcodebuild archive \
 
 app="$archive/Products/Applications/LimitBar.app"
 codesign --verify --deep --strict --verbose=2 "$app"
+verify_security_boundary "$app"
 bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
 if [[ "$bundle_identifier" != "$expected_bundle_identifier" ]]; then
   printf 'error: archived app has unexpected bundle identifier %s\n' "$bundle_identifier" >&2
@@ -60,6 +81,7 @@ rm -rf "$unpacked"
 mkdir -p "$unpacked"
 ditto -x -k "$artifact" "$unpacked"
 codesign --verify --deep --strict --verbose=2 "$unpacked/LimitBar.app"
+verify_security_boundary "$unpacked/LimitBar.app"
 xcrun stapler validate "$unpacked/LimitBar.app"
 unpacked_bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$unpacked/LimitBar.app/Contents/Info.plist")"
 if [[ "$unpacked_bundle_identifier" != "$expected_bundle_identifier" ]]; then
