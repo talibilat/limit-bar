@@ -49,11 +49,12 @@ To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar f
 
 ## Refresh Behavior
 
-LimitBar starts one local refresh immediately and schedules another every five seconds.
+LimitBar starts one local refresh immediately and schedules another using the cadence selected in Settings: every 5, 15, or 30 seconds.
+Five seconds is the default, and invalid saved values return to that default.
 That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, and scans local Codex sessions.
 Concurrent ticks are coalesced, and a failed local component keeps its last successful in-process component in the published refresh snapshot.
 
-The five-second loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
+The local refresh loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
 It also does not poll macOS Keychain.
 Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
 
