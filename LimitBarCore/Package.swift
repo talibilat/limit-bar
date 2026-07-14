@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "LimitBarCore",
             targets: ["LimitBarCore"]
+        ),
+        .executable(
+            name: "LimitBarRefreshProfiler",
+            targets: ["LimitBarRefreshProfiler"]
         )
     ],
     targets: [
@@ -19,6 +23,10 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Security")
             ]
+        ),
+        .executableTarget(
+            name: "LimitBarRefreshProfiler",
+            dependencies: ["LimitBarCore"]
         ),
         .testTarget(
             name: "LimitBarCoreTests",

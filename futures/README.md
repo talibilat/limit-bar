@@ -7,7 +7,7 @@ They preserve concrete next questions while keeping current behavior honest.
 
 1. Establish a stable signed distribution path and complete real-account Keychain authorization QA.
 2. Add a native app test target and UI automation if the repository still lacks one.
-3. Profile five-second local refresh I/O, CPU, and power before making cadence configurable.
+3. Complete representative measurements for [`04-refresh-performance-profiling.md`](04-refresh-performance-profiling.md) before making cadence configurable.
 4. Add CI for core tests, native builds, whitespace checks, and migration fixtures.
 5. Decide the long-term App Sandbox and file-access model before public distribution.
 6. Run release-level migration QA against copied databases from every shipped schema.
