@@ -210,6 +210,40 @@ struct CodexRateLimitsTests {
         }
     }
 
+    @Test("reader does not follow a session symlink outside the configured directory")
+    func readerRejectsSymlinkEscape() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let outside = fileManager.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: root)
+            try? fileManager.removeItem(at: outside)
+        }
+        try codexLine(timestamp: Date()).write(to: outside)
+        try fileManager.createSymbolicLink(at: root.appendingPathComponent("linked.jsonl"), withDestinationURL: outside)
+
+        #expect(throws: CodexRateLimitFailure.notFound) {
+            try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: root, now: Date(), fileManager: fileManager)
+        }
+    }
+
+    @Test("reader rejects a configured sessions directory that is a symbolic link")
+    func readerRejectsSymlinkedRoot() throws {
+        let fileManager = FileManager.default
+        let parent = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let target = parent.appendingPathComponent("target", isDirectory: true)
+        let linkedRoot = parent.appendingPathComponent("sessions", isDirectory: true)
+        try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: parent) }
+        try codexLine(timestamp: Date()).write(to: target.appendingPathComponent("session.jsonl"))
+        try fileManager.createSymbolicLink(at: linkedRoot, withDestinationURL: target)
+
+        #expect(throws: CodexRateLimitFailure.notFound) {
+            try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: linkedRoot, now: Date(), fileManager: fileManager)
+        }
+    }
+
     @Test("reader rejects a file that grows beyond metadata using a maximum plus one byte read")
     func readerRejectsGrowthDuringRead() throws {
         let fileManager = FileManager.default

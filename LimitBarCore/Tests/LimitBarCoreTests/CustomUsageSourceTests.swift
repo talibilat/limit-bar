@@ -4,6 +4,58 @@ import Testing
 
 @Suite("Custom usage source")
 struct CustomUsageSourceTests {
+    @Test("a nonempty source with no valid events fails instead of replacing last-good usage")
+    func whollyInvalidSourceFails() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("invalid.jsonl")
+        try "not-json\n{".write(to: file, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(name: "Invalid", filePath: file.path)
+
+        await #expect(throws: CustomUsageLoadError.self) {
+            try await CustomUsageAggregator.loadMetrics(from: file, source: source, now: Date(), calendar: .current)
+        }
+    }
+
+    @Test("a symbolic-link custom file is rejected")
+    func symbolicLinkSourceFails() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("target.jsonl")
+        let link = root.appendingPathComponent("linked.jsonl")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let source = CustomUsageSource(name: "Linked", filePath: link.path)
+
+        await #expect(throws: CustomUsageLoadError.notRegularFile) {
+            try await CustomUsageAggregator.loadMetrics(from: link, source: source, now: Date(), calendar: .current)
+        }
+    }
+
+    @Test("decoding preserves the originally authorized canonical path")
+    func decodingDoesNotReauthorizeRedirectedParent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let authorized = root.appendingPathComponent("authorized", isDirectory: true)
+        let moved = root.appendingPathComponent("moved", isDirectory: true)
+        let replacement = root.appendingPathComponent("replacement", isDirectory: true)
+        try FileManager.default.createDirectory(at: authorized, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = authorized.appendingPathComponent("usage.jsonl")
+        try Data().write(to: file)
+        let source = CustomUsageSource(name: "Canonical", filePath: file.path)
+        let encoded = try JSONEncoder().encode(source)
+        try FileManager.default.moveItem(at: authorized, to: moved)
+        try FileManager.default.createSymbolicLink(at: authorized, withDestinationURL: replacement)
+
+        let decoded = try JSONDecoder().decode(CustomUsageSource.self, from: encoded)
+
+        #expect(decoded.filePath == source.filePath)
+        #expect(decoded.filePath != replacement.appendingPathComponent("usage.jsonl").path)
+    }
+
     @Test("parses a minimal event with only timestamp, model, and tokens")
     func parsesMinimalEvent() throws {
         let line = #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#

@@ -8,7 +8,26 @@ public struct CustomUsageSource: Codable, Equatable, Identifiable, Sendable {
     public init(id: UUID = UUID(), name: String, filePath: String) {
         self.id = id
         self.name = name
-        self.filePath = filePath
+        let fileURL = URL(fileURLWithPath: filePath)
+        self.filePath = SecureRegularFile.canonicalURL(fileURL)?.path ?? fileURL.standardizedFileURL.path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, filePath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        filePath = SecureRegularFile.stableStoredPath(try container.decode(String.self, forKey: .filePath))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(filePath, forKey: .filePath)
     }
 }
 
@@ -32,6 +51,7 @@ public enum CustomUsageLoadError: Error, Equatable, Sendable {
     case unresolvedWindows
     case tokenOverflow
     case tooManyAggregates
+    case noValidEvents(diagnostics: [CustomUsageLoadDiagnostic], rejectedLineCount: Int)
     case cancelled
 }
 
@@ -153,21 +173,28 @@ public enum CustomUsageAggregator {
         guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else {
             throw CustomUsageLoadError.unresolvedWindows
         }
+        guard !SecureRegularFile.isSymbolicLink(fileURL) else {
+            throw CustomUsageLoadError.notRegularFile
+        }
 
         let values: URLResourceValues
         do {
-            values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         } catch {
             throw CustomUsageLoadError.unreadableFile
         }
-        guard values.isRegularFile == true else { throw CustomUsageLoadError.notRegularFile }
+        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CustomUsageLoadError.notRegularFile }
         guard let fileSize = values.fileSize, fileSize <= maximumFileBytes else {
             throw CustomUsageLoadError.fileTooLarge
+        }
+        let authorizedFileURL = URL(fileURLWithPath: source.filePath)
+        guard SecureRegularFile.canonicalURL(fileURL)?.path == authorizedFileURL.path else {
+            throw CustomUsageLoadError.unreadableFile
         }
 
         let handle: FileHandle
         do {
-            handle = try FileHandle(forReadingFrom: fileURL)
+            handle = try SecureRegularFile.open(authorizedFileURL)
         } catch {
             throw CustomUsageLoadError.unreadableFile
         }
@@ -177,6 +204,7 @@ public enum CustomUsageAggregator {
         var diagnostics: [CustomUsageLoadDiagnostic] = []
         var rejectedLineCount = 0
         var hasFutureTimestampRejection = false
+        var validEventCount = 0
         var lineNumber = 1
         var line = Data()
         var discardingOverlongLine = false
@@ -216,6 +244,7 @@ public enum CustomUsageAggregator {
                 reject(.futureTimestamp)
                 return
             }
+            validEventCount += 1
             for window in [windows.today, windows.currentWeek] where event.timestamp >= window.start && event.timestamp < window.end {
                 let key = AggregateKey(timeWindow: window.timeWindow, model: event.model)
                 if aggregates[key] == nil, aggregates.count >= maximumAggregateKeys {
@@ -266,6 +295,13 @@ public enum CustomUsageAggregator {
             throw error
         } catch {
             throw CustomUsageLoadError.unreadableFile
+        }
+
+        if bytesRead > 0, validEventCount == 0, rejectedLineCount > 0 {
+            throw CustomUsageLoadError.noValidEvents(
+                diagnostics: diagnostics,
+                rejectedLineCount: rejectedLineCount
+            )
         }
 
         let metrics = aggregates.map { key, value in

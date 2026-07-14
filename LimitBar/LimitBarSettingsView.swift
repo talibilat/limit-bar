@@ -344,6 +344,7 @@ struct CustomUsageSourcesSection: View {
     @State private var sources: [CustomUsageSource]
     @State private var name = ""
     @State private var filePath = ""
+    @State private var validationMessage: String?
 
     init(
         store: CustomUsageSourceStore = CustomUsageSourceStore(),
@@ -372,6 +373,7 @@ struct CustomUsageSourcesSection: View {
                 Button("Choose File...") {
                     if let selectedPath = chooseFile() {
                         filePath = selectedPath
+                        validationMessage = nil
                     }
                 }
                 .accessibilityIdentifier("custom-source-choose-file")
@@ -381,11 +383,21 @@ struct CustomUsageSourcesSection: View {
                     sources = store.sources
                     name = ""
                     filePath = ""
+                    validationMessage = nil
+                } else {
+                    validationMessage = "Choose a readable regular JSONL file. Symbolic links are not accepted."
                 }
             }
             .accessibilityIdentifier("custom-source-add")
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("custom-source-validation")
+            }
 
             if sources.isEmpty {
                 Text("No custom sources configured.")

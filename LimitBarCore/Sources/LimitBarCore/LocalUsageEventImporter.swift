@@ -163,21 +163,14 @@ public enum LocalUsageEventImporter {
     private static let futureTolerance: TimeInterval = 5 * 60
 
     public static func usageEventsURL(applicationSupportDirectory: URL) -> URL {
-        applicationSupportDirectory
-            .appendingPathComponent("LimitBar", isDirectory: true)
-            .appendingPathComponent("usage-events.jsonl")
+        LimitBarFileLocations(
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            applicationSupportDirectory: applicationSupportDirectory
+        ).usageEventsFile
     }
 
     public static func usageEventsURL(fileManager: FileManager = .default) throws -> URL {
-        let applicationSupport = try fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return usageEventsURL(applicationSupportDirectory: applicationSupport)
+        try LimitBarFileLocations.production(fileManager: fileManager).usageEventsFile
     }
 
     @discardableResult
