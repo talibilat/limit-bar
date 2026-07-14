@@ -18,6 +18,7 @@ public actor UsageDatabase {
     private var localImportCache: LocalImportCacheEntry?
     private var customRefreshGeneration = UUID()
     private var customSourceCache: [UUID: CustomSourceCacheEntry] = [:]
+    private var configuredCustomSourceIDs: Set<UUID>?
     private var providerConfigurationGenerations: [ProviderKind: UInt64] = [:]
     private var observedProviderWindows: [ProviderKind: Set<ExactUsageWindow>] = [:]
 
@@ -123,11 +124,11 @@ public actor UsageDatabase {
                 importResult = .failed(fileURL: eventsURL, message: "Local usage import failed")
             }
 
-            let snapshot = StoredUsageMetricsSnapshot(
+            let snapshot = filterConfiguredCustomSources(StoredUsageMetricsSnapshot(
                 metrics: try store.currentMetrics(at: now, calendar: calendar),
                 health: store.health(),
                 localImport: importResult
-            )
+            ))
             lastValidSnapshot = snapshot
             return snapshot
         } catch is CancellationError {
@@ -183,7 +184,7 @@ public actor UsageDatabase {
                 calendar: calendar
             )
             try store.record(samples, observedScopes: observedScopes, now: now)
-            let snapshot = try loadHistory(from: store, now: now, calendar: calendar)
+            let snapshot = filterConfiguredCustomSources(try loadHistory(from: store, now: now, calendar: calendar))
             lastValidHistory = snapshot
             return snapshot
         } catch {
@@ -308,11 +309,14 @@ public actor UsageDatabase {
         }
         let generation = UUID()
         customRefreshGeneration = generation
+        let sourceIDs = Set(sources.map(\.id))
+        configuredCustomSourceIDs = sourceIDs
         do {
             let store = try openStore()
             let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
-            let sourceIDs = Set(sources.map(\.id))
+            try openHistoricalStore().deleteCustomSources(excluding: sourceIDs)
             try store.deleteCustomMetrics(excluding: sourceIDs)
+            lastValidHistory = nil
             customSourceCache = customSourceCache.filter { sourceIDs.contains($0.key) }
             var diagnostics: [CustomUsageRefreshDiagnostic] = []
             for source in sources {
@@ -342,6 +346,13 @@ public actor UsageDatabase {
                     }
                 } catch CustomUsageLoadError.cancelled {
                     return diagnostics
+                } catch let CustomUsageLoadError.noValidEvents(loadDiagnostics, rejectedLineCount) {
+                    diagnostics.append(CustomUsageRefreshDiagnostic(
+                        sourceID: source.id,
+                        failureMessage: "Custom usage import failed",
+                        rejectedLineCount: rejectedLineCount,
+                        diagnostics: loadDiagnostics
+                    ))
                 } catch {
                     diagnostics.append(CustomUsageRefreshDiagnostic(sourceID: source.id, failureMessage: "Custom usage import failed"))
                 }
@@ -350,6 +361,41 @@ public actor UsageDatabase {
         } catch {
             return sources.map { CustomUsageRefreshDiagnostic(sourceID: $0.id, failureMessage: "Custom usage import failed") }
         }
+    }
+
+    private func filterConfiguredCustomSources(_ snapshot: StoredUsageMetricsSnapshot) -> StoredUsageMetricsSnapshot {
+        guard let configuredCustomSourceIDs else { return snapshot }
+        return StoredUsageMetricsSnapshot(
+            metrics: snapshot.metrics.filter { metric in
+                guard case let .custom(id) = metric.provenance.source else { return true }
+                return configuredCustomSourceIDs.contains(id)
+            },
+            health: snapshot.health,
+            localImport: snapshot.localImport
+        )
+    }
+
+    private func filterConfiguredCustomSources(_ snapshot: HistoricalUsageSnapshot) -> HistoricalUsageSnapshot {
+        guard let configuredCustomSourceIDs else { return snapshot }
+        func filter(_ buckets: [HistoricalUsageTrendBucket]) -> [HistoricalUsageTrendBucket] {
+            buckets.map { bucket in
+                guard case let .observed(observations) = bucket.value else { return bucket }
+                let retained = observations.filter { observation in
+                    guard case let .custom(id) = observation.sample.source else { return true }
+                    return configuredCustomSourceIDs.contains(id)
+                }
+                return HistoricalUsageTrendBucket(
+                    period: bucket.period,
+                    value: retained.isEmpty ? .gap : .observed(retained)
+                )
+            }
+        }
+        return HistoricalUsageSnapshot(
+            dailyBuckets: filter(snapshot.dailyBuckets),
+            weeklyBuckets: filter(snapshot.weeklyBuckets),
+            health: snapshot.health,
+            retention: snapshot.retention
+        )
     }
 
     private func apply(
@@ -523,21 +569,21 @@ public actor UsageDatabase {
     }
 
     private func historicalFallback() -> HistoricalUsageSnapshot {
-        HistoricalUsageSnapshot(
+        filterConfiguredCustomSources(HistoricalUsageSnapshot(
             dailyBuckets: lastValidHistory?.dailyBuckets ?? [],
             weeklyBuckets: lastValidHistory?.weeklyBuckets ?? [],
             health: UsageStoreHealth(isOpen: false, message: "Historical usage unavailable"),
             retention: lastValidHistory?.retention ?? .default
-        )
+        ))
     }
 
     private func fallbackSnapshot() -> StoredUsageMetricsSnapshot {
         if let lastValidSnapshot {
-            return StoredUsageMetricsSnapshot(
+            return filterConfiguredCustomSources(StoredUsageMetricsSnapshot(
                 metrics: lastValidSnapshot.metrics,
                 health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable"),
                 localImport: lastValidSnapshot.localImport
-            )
+            ))
         }
         return StoredUsageMetricsSnapshot(
             metrics: [],
@@ -547,7 +593,7 @@ public actor UsageDatabase {
     }
 
     private func cancellationSnapshot() -> StoredUsageMetricsSnapshot {
-        lastValidSnapshot ?? fallbackSnapshot()
+        lastValidSnapshot.map(filterConfiguredCustomSources) ?? fallbackSnapshot()
     }
 
     private func archiveDatabaseFiles(at databaseURL: URL, date: Date) throws -> URL {
@@ -707,27 +753,11 @@ public struct CustomUsageRefreshDiagnostic: Equatable, Sendable {
 }
 
 private func applicationSupportDatabasePath(fileManager: FileManager) throws -> String {
-    let applicationSupport = try fileManager.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    )
-    let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    return directory.appendingPathComponent("usage-metrics.sqlite").path
+    try LimitBarFileLocations.production(fileManager: fileManager).usageMetricsDatabase.path
 }
 
 private func applicationSupportHistoricalDatabasePath(fileManager: FileManager) throws -> String {
-    let applicationSupport = try fileManager.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    )
-    let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    return directory.appendingPathComponent("historical-usage-trends.sqlite").path
+    try LimitBarFileLocations.production(fileManager: fileManager).historicalUsageDatabase.path
 }
 
 private func historicalDatabasePath(from currentPath: String) throws -> String {
