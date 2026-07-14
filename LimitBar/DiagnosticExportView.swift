@@ -227,6 +227,7 @@ enum DiagnosticExportInputBuilder {
         case .resetOrExpired: .resetOrExpired
         case .counterDecreased: .counterDecreased
         case .noPositiveBurn: .noPositiveBurn
+        case .conflictingObservations: .conflictingObservations
         }
     }
 }

@@ -116,8 +116,7 @@ public struct DiagnosticRefreshHistoryRecord: Codable, Equatable, Sendable {
         guard startedAt.timeIntervalSince1970.isFinite else {
             throw DiagnosticExportError.invalidTimestamp
         }
-        guard !affectedWindowKinds.isEmpty,
-              Set(affectedWindowKinds.map(\.rawValue)).count == affectedWindowKinds.count else {
+        guard Set(affectedWindowKinds.map(\.rawValue)).count == affectedWindowKinds.count else {
             throw DiagnosticExportError.invalidRefreshHistory
         }
         self.role = role
@@ -148,6 +147,7 @@ public enum DiagnosticQuotaFindingStatus: String, Codable, CaseIterable, Equatab
     case resetOrExpired = "reset_or_expired"
     case counterDecreased = "counter_decreased"
     case noPositiveBurn = "no_positive_burn"
+    case conflictingObservations = "conflicting_observations"
 }
 
 public struct DiagnosticNumberRange: Codable, Equatable, Sendable {

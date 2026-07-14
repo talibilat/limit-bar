@@ -36,16 +36,30 @@ public struct MeasuredQuotaObservation: Equatable, Sendable {
     }
 }
 
+public enum QuotaInsightIdentity {
+    public static func claude(_ limit: ClaudeRateLimit) -> QuotaWindowIdentity? {
+        guard limit.scopeDisplayName == nil, let reset = limit.resetsAt else { return nil }
+        return try? QuotaWindowIdentity(
+            product: .claudeCode,
+            identifier: "\(limit.group.rawValue):\(limit.kind)",
+            resetBoundary: reset
+        )
+    }
+
+    public static func codex(slot: String, window: CodexRateLimitWindow) -> QuotaWindowIdentity? {
+        guard slot == "primary" || slot == "secondary", let reset = window.resetsAt else { return nil }
+        return try? QuotaWindowIdentity(
+            product: .codex,
+            identifier: "\(slot):\(window.windowMinutes)",
+            resetBoundary: reset
+        )
+    }
+}
+
 public enum MeasuredQuotaObservationAdapter {
     public static func claude(_ snapshot: ClaudeRateLimitSnapshot) -> [MeasuredQuotaObservation] {
         snapshot.limits.compactMap { limit in
-            guard limit.scopeDisplayName == nil,
-                  let reset = limit.resetsAt,
-                  let identity = try? QuotaWindowIdentity(
-                      product: .claudeCode,
-                      identifier: "\(limit.group.rawValue):\(limit.kind)",
-                      resetBoundary: reset
-                  ) else { return nil }
+            guard let identity = QuotaInsightIdentity.claude(limit) else { return nil }
             return try? MeasuredQuotaObservation(
                 identity: identity,
                 percentageUsed: limit.percentUsed,
@@ -58,12 +72,7 @@ public enum MeasuredQuotaObservationAdapter {
     public static func codex(_ snapshot: CodexRateLimitSnapshot) -> [MeasuredQuotaObservation] {
         guard !snapshot.isBusinessPlan else { return [] }
         return [("primary", snapshot.primary), ("secondary", snapshot.secondary)].compactMap { slot, window in
-            guard let window, let reset = window.resetsAt,
-                  let identity = try? QuotaWindowIdentity(
-                      product: .codex,
-                      identifier: "\(slot):\(window.windowMinutes)",
-                      resetBoundary: reset
-                  ) else { return nil }
+            guard let window, let identity = QuotaInsightIdentity.codex(slot: slot, window: window) else { return nil }
             return try? MeasuredQuotaObservation(
                 identity: identity,
                 percentageUsed: window.percentUsed,
@@ -81,6 +90,7 @@ public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Sendable 
     case resetOrExpired = "reset_or_expired"
     case counterDecreased = "counter_decreased"
     case noPositiveBurn = "no_positive_burn"
+    case conflictingObservations = "conflicting_observations"
 
     public var displayText: String {
         switch self {
@@ -90,6 +100,7 @@ public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Sendable 
         case .resetOrExpired: "Quota window reset or expired"
         case .counterDecreased: "Usage decreased; waiting for a stable window"
         case .noPositiveBurn: "No positive burn measured"
+        case .conflictingObservations: "Conflicting measured observations at the same time"
         }
     }
 }
@@ -180,10 +191,16 @@ public enum QuotaInsightAnalytics {
             return .unavailable(.insufficientObservations, measuredObservationCount: 0, measuredSpan: 0)
         }
         let sameWindow = ordered.filter { $0.identity == identity }
-        let distinct = Dictionary(grouping: sameWindow, by: \.observedAt)
-            .compactMap { $0.value.last }
+        let grouped = Dictionary(grouping: sameWindow, by: \.observedAt)
+        let hasConflict = grouped.values.contains { Set($0.map(\.percentageUsed)).count > 1 }
+        let distinct = grouped
+            .compactMap { $0.value.first }
             .sorted { $0.observedAt < $1.observedAt }
         let span = max(0, (distinct.last?.observedAt ?? now).timeIntervalSince(distinct.first?.observedAt ?? now))
+
+        guard !hasConflict else {
+            return .unavailable(.conflictingObservations, measuredObservationCount: sameWindow.count, measuredSpan: span)
+        }
 
         guard identity.resetBoundary > now else {
             return .unavailable(.resetOrExpired, measuredObservationCount: distinct.count, measuredSpan: span)
@@ -275,7 +292,7 @@ public final class SQLiteQuotaObservationStore {
         observed_at REAL NOT NULL,
         percentage_used REAL NOT NULL CHECK (percentage_used BETWEEN 0 AND 100),
         observation_source TEXT NOT NULL CHECK (observation_source IN ('claude_provider_report', 'codex_local_report')),
-        PRIMARY KEY (product, window_identifier, reset_boundary, observed_at)
+        PRIMARY KEY (product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source)
     )
     """
     private static let createRetentionIndexSQL = "CREATE INDEX quota_observations_retention ON quota_observations(observed_at)"
@@ -284,8 +301,8 @@ public final class SQLiteQuotaObservationStore {
         SchemaColumn(position: 1, name: "window_identifier", type: "TEXT", isNotNull: true, primaryKeyPosition: 2),
         SchemaColumn(position: 2, name: "reset_boundary", type: "REAL", isNotNull: true, primaryKeyPosition: 3),
         SchemaColumn(position: 3, name: "observed_at", type: "REAL", isNotNull: true, primaryKeyPosition: 4),
-        SchemaColumn(position: 4, name: "percentage_used", type: "REAL", isNotNull: true, primaryKeyPosition: 0),
-        SchemaColumn(position: 5, name: "observation_source", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 4, name: "percentage_used", type: "REAL", isNotNull: true, primaryKeyPosition: 5),
+        SchemaColumn(position: 5, name: "observation_source", type: "TEXT", isNotNull: true, primaryKeyPosition: 6),
     ]
 
     public init(path: String, busyTimeoutMilliseconds: Int32 = 5_000) throws {
@@ -346,7 +363,7 @@ public final class SQLiteQuotaObservationStore {
         SELECT percentage_used, observed_at, observation_source
         FROM quota_observations
         WHERE product = ? AND window_identifier = ? AND reset_boundary = ?
-        ORDER BY observed_at ASC;
+        ORDER BY observed_at ASC, percentage_used ASC, observation_source ASC;
         """)
         defer { sqlite3_finalize(statement) }
         bind(identity.product.rawValue, at: 1, in: statement)
@@ -444,7 +461,7 @@ public final class SQLiteQuotaObservationStore {
             SELECT rowid FROM (
                 SELECT rowid, ROW_NUMBER() OVER (
                     PARTITION BY product, window_identifier, reset_boundary
-                    ORDER BY observed_at DESC
+                    ORDER BY observed_at DESC, percentage_used DESC, observation_source DESC
                 ) AS position
                 FROM quota_observations
             ) WHERE position > ?

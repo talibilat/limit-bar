@@ -126,7 +126,7 @@ public struct ProviderRefreshHistoryEntry: Equatable, Sendable {
         affectedWindows: [ExactUsageWindow]
     ) throws {
         guard startedAt.timeIntervalSince1970.isFinite else { throw ProviderRefreshHistoryError.invalidStartTime }
-        guard !affectedWindows.isEmpty, Set(affectedWindows).count == affectedWindows.count else {
+        guard affectedWindows.count <= 3, Set(affectedWindows).count == affectedWindows.count else {
             throw ProviderRefreshHistoryError.invalidWindows
         }
         self.product = product
@@ -170,6 +170,57 @@ public final class SQLiteProviderRefreshHistoryStore {
     public static let maximumEntriesPerProduct = 200
 
     private var database: OpaquePointer?
+
+    private struct SchemaColumn: Equatable {
+        let position: Int
+        let name: String
+        let type: String
+        let isNotNull: Bool
+        let primaryKeyPosition: Int
+    }
+
+    private static let createHistoryTableSQL = """
+    CREATE TABLE provider_refresh_history (
+        id INTEGER PRIMARY KEY,
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        product TEXT NOT NULL CHECK (product IN ('anthropic_api', 'openai_api')),
+        operation TEXT NOT NULL CHECK (operation = 'usage_and_cost'),
+        outcome TEXT NOT NULL CHECK (outcome IN ('success', 'partial_failure', 'cancelled', 'authentication_failure', 'network_failure', 'failed')),
+        started_at REAL NOT NULL,
+        duration_bucket TEXT NOT NULL CHECK (duration_bucket IN ('under_1_second', '1_to_5_seconds', '5_to_30_seconds', 'over_30_seconds'))
+    )
+    """
+    private static let createWindowsTableSQL = """
+    CREATE TABLE provider_refresh_windows (
+        entry_id INTEGER NOT NULL REFERENCES provider_refresh_history(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 3),
+        window_kind TEXT NOT NULL CHECK (window_kind IN ('today', 'currentWeek')),
+        window_start REAL NOT NULL,
+        window_end REAL NOT NULL CHECK (window_end > window_start),
+        calendar_basis TEXT NOT NULL CHECK (calendar_basis IN ('localCalendar', 'utcBilling')),
+        aggregation_version INTEGER NOT NULL CHECK (aggregation_version > 0),
+        PRIMARY KEY (entry_id, ordinal)
+    )
+    """
+    private static let createHistoryIndexSQL = "CREATE INDEX provider_refresh_history_product_started ON provider_refresh_history(product, started_at DESC)"
+    private static let expectedHistoryColumns = [
+        SchemaColumn(position: 0, name: "id", type: "INTEGER", isNotNull: false, primaryKeyPosition: 1),
+        SchemaColumn(position: 1, name: "schema_version", type: "INTEGER", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 2, name: "product", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 3, name: "operation", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 4, name: "outcome", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 5, name: "started_at", type: "REAL", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 6, name: "duration_bucket", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+    ]
+    private static let expectedWindowColumns = [
+        SchemaColumn(position: 0, name: "entry_id", type: "INTEGER", isNotNull: true, primaryKeyPosition: 1),
+        SchemaColumn(position: 1, name: "ordinal", type: "INTEGER", isNotNull: true, primaryKeyPosition: 2),
+        SchemaColumn(position: 2, name: "window_kind", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 3, name: "window_start", type: "REAL", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 4, name: "window_end", type: "REAL", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 5, name: "calendar_basis", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 6, name: "aggregation_version", type: "INTEGER", isNotNull: true, primaryKeyPosition: 0),
+    ]
 
     public init(path: String, busyTimeoutMilliseconds: Int32 = 5_000) throws {
         guard sqlite3_open(path, &database) == SQLITE_OK else {
@@ -288,38 +339,112 @@ public final class SQLiteProviderRefreshHistoryStore {
 
     private func createSchema() throws {
         try execute("PRAGMA foreign_keys = ON;")
-        try execute("""
-        CREATE TABLE IF NOT EXISTS provider_refresh_history (
-            id INTEGER PRIMARY KEY,
-            schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-            product TEXT NOT NULL CHECK (product IN ('anthropic_api', 'openai_api')),
-            operation TEXT NOT NULL CHECK (operation = 'usage_and_cost'),
-            outcome TEXT NOT NULL CHECK (outcome IN ('success', 'partial_failure', 'cancelled', 'authentication_failure', 'network_failure', 'failed')),
-            started_at REAL NOT NULL,
-            duration_bucket TEXT NOT NULL CHECK (duration_bucket IN ('under_1_second', '1_to_5_seconds', '5_to_30_seconds', 'over_30_seconds'))
-        );
-        """)
-        try execute("""
-        CREATE TABLE IF NOT EXISTS provider_refresh_windows (
-            entry_id INTEGER NOT NULL REFERENCES provider_refresh_history(id) ON DELETE CASCADE,
-            ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 3),
-            window_kind TEXT NOT NULL CHECK (window_kind IN ('today', 'currentWeek')),
-            window_start REAL NOT NULL,
-            window_end REAL NOT NULL CHECK (window_end > window_start),
-            calendar_basis TEXT NOT NULL CHECK (calendar_basis IN ('localCalendar', 'utcBilling')),
-            aggregation_version INTEGER NOT NULL CHECK (aggregation_version > 0),
-            PRIMARY KEY (entry_id, ordinal)
-        );
-        """)
-        try execute("CREATE INDEX IF NOT EXISTS provider_refresh_history_product_started ON provider_refresh_history(product, started_at DESC);")
+        guard try foreignKeysEnabled() else { throw ProviderRefreshHistoryError.schemaFailed }
+        let version = try schemaVersion()
+        guard version <= ProviderRefreshHistoryEntry.schemaVersion else { throw ProviderRefreshHistoryError.schemaFailed }
+        let objects = try schemaObjects()
+        if !objects.isEmpty || version != 0 {
+            guard version == ProviderRefreshHistoryEntry.schemaVersion else { throw ProviderRefreshHistoryError.schemaFailed }
+            try validateCanonicalSchema()
+            return
+        }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try execute(Self.createHistoryTableSQL)
+            try execute(Self.createWindowsTableSQL)
+            try execute(Self.createHistoryIndexSQL)
+            try validateCanonicalSchema()
+            try execute("PRAGMA user_version = \(ProviderRefreshHistoryEntry.schemaVersion);")
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    private func validateCanonicalSchema() throws {
         guard try schemaObjects() == [
             "table:provider_refresh_history", "table:provider_refresh_windows",
-            "index:provider_refresh_history_product_started"
-        ], try columnNames(table: "provider_refresh_history") == [
-            "id", "schema_version", "product", "operation", "outcome", "started_at", "duration_bucket"
-        ], try columnNames(table: "provider_refresh_windows") == [
-            "entry_id", "ordinal", "window_kind", "window_start", "window_end", "calendar_basis", "aggregation_version"
-        ] else { throw ProviderRefreshHistoryError.schemaFailed }
+            "index:provider_refresh_history_product_started",
+        ], try schemaSQL(type: "table", name: "provider_refresh_history") == normalizedSQL(Self.createHistoryTableSQL),
+           try schemaSQL(type: "table", name: "provider_refresh_windows") == normalizedSQL(Self.createWindowsTableSQL),
+           try schemaSQL(type: "index", name: "provider_refresh_history_product_started") == normalizedSQL(Self.createHistoryIndexSQL),
+           try columns(table: "provider_refresh_history") == Self.expectedHistoryColumns,
+           try columns(table: "provider_refresh_windows") == Self.expectedWindowColumns,
+           try indexColumns() == ["product", "started_at"],
+           try windowForeignKey() == ("provider_refresh_history", "entry_id", "id", "CASCADE") else {
+            throw ProviderRefreshHistoryError.schemaFailed
+        }
+    }
+
+    private func schemaVersion() throws -> Int {
+        let statement = try prepare("PRAGMA user_version;")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw ProviderRefreshHistoryError.schemaFailed }
+        return Int(sqlite3_column_int(statement, 0))
+    }
+
+    private func foreignKeysEnabled() throws -> Bool {
+        let statement = try prepare("PRAGMA foreign_keys;")
+        defer { sqlite3_finalize(statement) }
+        return sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement, 0) == 1
+    }
+
+    private func schemaSQL(type: String, name: String) throws -> String {
+        let statement = try prepare("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?;")
+        defer { sqlite3_finalize(statement) }
+        bind(type, at: 1, in: statement)
+        bind(name, at: 2, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW, let sql = stringColumn(statement, index: 0),
+              sqlite3_step(statement) == SQLITE_DONE else { throw ProviderRefreshHistoryError.schemaFailed }
+        return normalizedSQL(sql)
+    }
+
+    private func columns(table: String) throws -> [SchemaColumn] {
+        guard ["provider_refresh_history", "provider_refresh_windows"].contains(table) else { throw ProviderRefreshHistoryError.schemaFailed }
+        let statement = try prepare("PRAGMA table_info(\(table));")
+        defer { sqlite3_finalize(statement) }
+        var result: [SchemaColumn] = []
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            guard let name = stringColumn(statement, index: 1), let type = stringColumn(statement, index: 2),
+                  sqlite3_column_type(statement, 4) == SQLITE_NULL else { throw ProviderRefreshHistoryError.schemaFailed }
+            result.append(SchemaColumn(position: Int(sqlite3_column_int(statement, 0)), name: name, type: type,
+                                       isNotNull: sqlite3_column_int(statement, 3) == 1,
+                                       primaryKeyPosition: Int(sqlite3_column_int(statement, 5))))
+            step = sqlite3_step(statement)
+        }
+        guard step == SQLITE_DONE else { throw ProviderRefreshHistoryError.schemaFailed }
+        return result
+    }
+
+    private func indexColumns() throws -> [String] {
+        let statement = try prepare("PRAGMA index_info(provider_refresh_history_product_started);")
+        defer { sqlite3_finalize(statement) }
+        var result: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let name = stringColumn(statement, index: 2) else { throw ProviderRefreshHistoryError.schemaFailed }
+            result.append(name)
+        }
+        return result
+    }
+
+    private func windowForeignKey() throws -> (String, String, String, String) {
+        let statement = try prepare("PRAGMA foreign_key_list(provider_refresh_windows);")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let table = stringColumn(statement, index: 2), let from = stringColumn(statement, index: 3),
+              let to = stringColumn(statement, index: 4), let onDelete = stringColumn(statement, index: 6),
+              sqlite3_step(statement) == SQLITE_DONE else { throw ProviderRefreshHistoryError.schemaFailed }
+        return (table, from, to, onDelete)
+    }
+
+    private func normalizedSQL(_ sql: String) -> String {
+        sql.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .replacingOccurrences(of: " ;", with: ";")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ";"))
+            .lowercased()
     }
 
     private func pruneInTransaction(now: Date) throws {
@@ -414,7 +539,7 @@ public final class SQLiteProviderRefreshHistoryStore {
             ))
             result = sqlite3_step(statement)
         }
-        guard result == SQLITE_DONE, !windows.isEmpty else { throw ProviderRefreshHistoryError.readFailed }
+        guard result == SQLITE_DONE else { throw ProviderRefreshHistoryError.readFailed }
         return windows
     }
 

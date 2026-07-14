@@ -104,12 +104,7 @@ struct ClaudeRateLimitsView: View {
     }
 
     private func insight(for limit: ClaudeRateLimit) -> QuotaInsightState? {
-        guard limit.scopeDisplayName == nil, let reset = limit.resetsAt,
-              let identity = try? QuotaWindowIdentity(
-                  product: .claudeCode,
-                  identifier: "\(limit.group.rawValue):\(limit.kind)",
-                  resetBoundary: reset
-              ) else { return nil }
+        guard let identity = QuotaInsightIdentity.claude(limit) else { return nil }
         return insights[identity]
     }
 }

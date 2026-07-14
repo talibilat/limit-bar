@@ -36,7 +36,7 @@ struct PercentRateLimitRowView: View {
                 .tint(usageColor)
 
             HStack {
-                Text("\(Int(percentUsed.rounded()))% used")
+                Text(PercentRateLimitPresentation.percentageUsed(percentUsed))
                 Spacer()
                 if let resetsAt {
                     Text("Resets \(RateLimitTimeFormatting.remainingText(now: Date(), resetsAt: resetsAt))")
@@ -100,5 +100,11 @@ struct PercentRateLimitRowView: View {
             return .yellow
         }
         return .green
+    }
+}
+
+enum PercentRateLimitPresentation {
+    static func percentageUsed(_ percentage: Double) -> String {
+        "Measured: \(Int(percentage.rounded()))% used"
     }
 }

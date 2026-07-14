@@ -112,6 +112,20 @@ struct QuotaInsightsTests {
             .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 1_800))
     }
 
+    @Test("same-time conflicting evidence is retained and unavailable")
+    func conflictingEvidence() throws {
+        let store = try SQLiteQuotaObservationStore.inMemory()
+        let identity = try window(reset: base.addingTimeInterval(3_600))
+        let original = try observation(identity, minutes: 0, percent: 10)
+        let changedPercentage = try observation(identity, minutes: 0, percent: 11)
+
+        #expect(try store.record([original, original, changedPercentage], now: base) == 2)
+        let retained = try store.observations(for: identity, now: base)
+        #expect(retained.count == 2)
+        #expect(QuotaInsightAnalytics.analyze(retained, now: base, maximumAge: 600) ==
+            .unavailable(.conflictingObservations, measuredObservationCount: 2, measuredSpan: 0))
+    }
+
     @Test("SQLite deduplicates scans, bounds age and count, and deletes explicitly")
     func persistence() throws {
         let store = try SQLiteQuotaObservationStore.inMemory()
@@ -141,15 +155,19 @@ struct QuotaInsightsTests {
 
         let futurePath = directory.appendingPathComponent("future.sqlite").path
         try makeDatabase(path: futurePath, sql: "PRAGMA user_version = 2;")
+        let futureBytes = try Data(contentsOf: URL(fileURLWithPath: futurePath))
         #expect(throws: QuotaObservationStoreError.schemaFailed) {
             try SQLiteQuotaObservationStore(path: futurePath)
         }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: futurePath)) == futureBytes)
 
         let malformedPath = directory.appendingPathComponent("malformed.sqlite").path
         try makeDatabase(path: malformedPath, sql: "CREATE TABLE quota_observations (private_payload TEXT); PRAGMA user_version = 1;")
+        let malformedBytes = try Data(contentsOf: URL(fileURLWithPath: malformedPath))
         #expect(throws: QuotaObservationStoreError.schemaFailed) {
             try SQLiteQuotaObservationStore(path: malformedPath)
         }
+        #expect(try Data(contentsOf: URL(fileURLWithPath: malformedPath)) == malformedBytes)
 
         let weakPath = directory.appendingPathComponent("weak.sqlite").path
         try makeDatabase(path: weakPath, sql: """
@@ -160,7 +178,7 @@ struct QuotaInsightsTests {
             observed_at REAL NOT NULL,
             percentage_used REAL NOT NULL,
             observation_source TEXT NOT NULL,
-            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at)
+            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source)
         );
         CREATE INDEX quota_observations_retention ON quota_observations(observed_at);
         PRAGMA user_version = 1;
@@ -180,7 +198,7 @@ struct QuotaInsightsTests {
             observed_at REAL NOT NULL,
             percentage_used REAL NOT NULL CHECK (percentage_used BETWEEN 0 AND 100),
             observation_source TEXT NOT NULL CHECK (observation_source IN ('claude_provider_report', 'codex_local_report')),
-            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at)
+            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source)
         );
         CREATE INDEX quota_observations_retention ON quota_observations(reset_boundary);
         PRAGMA user_version = 1;
@@ -198,7 +216,7 @@ struct QuotaInsightsTests {
             observed_at REAL NOT NULL,
             percentage_used REAL NOT NULL CHECK (percentage_used BETWEEN 0 AND 100),
             observation_source TEXT NOT NULL CHECK (observation_source IN ('claude_provider_report', 'codex_local_report')),
-            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at)
+            PRIMARY KEY (product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source)
         );
         CREATE INDEX IF NOT EXISTS quota_observations_retention ON quota_observations(observed_at);
         PRAGMA user_version = 1;

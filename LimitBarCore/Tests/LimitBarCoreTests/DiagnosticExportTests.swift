@@ -107,6 +107,23 @@ struct DiagnosticExportTests {
         }
     }
 
+    @Test("pre-fetch refresh failures can report no affected windows")
+    func prefetchFailureHistory() throws {
+        let record = try DiagnosticRefreshHistoryRecord(
+            role: .latest,
+            product: .anthropicAPI,
+            outcome: .failed,
+            startedAt: Date(timeIntervalSince1970: 1_720_000_000),
+            duration: .underOneSecond,
+            affectedWindowKinds: []
+        )
+
+        let artifact = try DiagnosticExport.make(from: input(refreshHistory: [record]))
+        let report = try DiagnosticExport.decode(artifact.bytes)
+
+        #expect(report.refreshHistory?.first?.affectedWindowKinds == [])
+    }
+
     @Test("v1 artifacts remain decodable without quota findings")
     func legacyDecode() throws {
         let v2 = try DiagnosticExport.make(from: input())
@@ -176,7 +193,8 @@ struct DiagnosticExportTests {
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
         ],
         includesHistory: Bool = false,
-        includesQuotaFinding: Bool = false
+        includesQuotaFinding: Bool = false,
+        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil
     ) throws -> DiagnosticExportInput {
         try DiagnosticExportInput(
             generatedAt: generatedAt,
@@ -187,7 +205,7 @@ struct DiagnosticExportTests {
             databaseState: .available,
             importCounts: DiagnosticImportCounts(accepted: 12, rejected: 2),
             resourceLimitReasons: [.rateLimited, .responseTooLarge],
-            refreshHistory: includesHistory ? [try historyRecord()] : nil,
+            refreshHistory: refreshHistory ?? (includesHistory ? [try historyRecord()] : nil),
             quotaFindings: includesQuotaFinding ? [try quotaFinding()] : nil
         )
     }

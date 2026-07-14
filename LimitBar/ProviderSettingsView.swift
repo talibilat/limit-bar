@@ -2,6 +2,21 @@ import SwiftUI
 import LimitBarCore
 import CryptoKit
 
+struct ProviderRefreshExecution: Equatable {
+    let outcome: ProviderRefreshOutcome
+    let affectedWindows: [ExactUsageWindow]
+
+    init(outcome: ProviderRefreshOutcome, windows: CurrentUsageWindows? = nil) {
+        self.outcome = outcome
+        self.affectedWindows = windows.map { [$0.today, $0.currentWeek, $0.utcBillingWeek] } ?? []
+    }
+
+    init(outcome: ProviderRefreshOutcome, affectedWindows: [ExactUsageWindow]) {
+        self.outcome = outcome
+        self.affectedWindows = affectedWindows
+    }
+}
+
 extension Notification.Name {
     static let providerRefreshHistoryDidChange = Notification.Name("limitbar.providerRefreshHistoryDidChange")
 }
@@ -267,56 +282,58 @@ struct ProviderSettingsView: View {
         let startedAt = Date()
         let clock = ContinuousClock()
         let startedInstant = clock.now
-        let windows = try? CurrentUsageWindows.resolve(at: startedAt, calendar: .current)
-        let outcome = await performAnthropicRefresh(index: index)
+        let execution = await performAnthropicRefresh(index: index)
         await recordRefresh(
             product: .anthropicAPI,
-            outcome: outcome,
+            outcome: execution.outcome,
             startedAt: startedAt,
             duration: startedInstant.duration(to: clock.now),
-            windows: windows
+            affectedWindows: execution.affectedWindows
         )
     }
 
-    private func performAnthropicRefresh(index: Int) async -> ProviderRefreshOutcome {
+    private func performAnthropicRefresh(index: Int) async -> ProviderRefreshExecution {
         let key = CredentialKey(provider: .anthropic, kind: .apiKey)
+        var affectedWindows: [ExactUsageWindow] = []
         do {
             guard var credentialData = try credentialService.credential(for: key),
                   let apiKey = String(data: credentialData, encoding: .utf8) else {
                 settings[index].state = .missing
                 settings[index].failureReason = nil
                 persist(index: index)
-                return .failed
+                return ProviderRefreshExecution(outcome: .failed)
             }
             defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
             let startedMethod = settings[index].authMethod
             let startedFingerprint = Data(SHA256.hash(data: credentialData))
             guard let result = await anthropicRefreshService.fetch(apiKey: apiKey) else {
-                guard !Task.isCancelled else { return .cancelled }
+                guard !Task.isCancelled else { return ProviderRefreshExecution(outcome: .cancelled) }
                 settings[index].state = .failed
                 settings[index].failureReason = .refreshFailed
                 persist(index: index)
-                return .failed
+                return ProviderRefreshExecution(outcome: .failed)
             }
-            guard var currentCredential = try credentialService.credential(for: key) else { return .cancelled }
+            let execution = { ProviderRefreshExecution(outcome: $0, windows: result.windows) }
+            affectedWindows = execution(.success).affectedWindows
+            guard var currentCredential = try credentialService.credential(for: key) else { return execution(.cancelled) }
             defer { currentCredential.resetBytes(in: currentCredential.startIndex..<currentCredential.endIndex) }
             guard settings[index].authMethod == startedMethod,
                   Data(SHA256.hash(data: currentCredential)) == startedFingerprint else {
-                return .cancelled
+                return execution(.cancelled)
             }
             let diagnostic = await anthropicRefreshService.apply(result)
-            guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
-            guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(result.generation, for: .anthropic) else { return .cancelled }
+            guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
+            guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(result.generation, for: .anthropic) else { return execution(.cancelled) }
             settings[index].state = diagnostic.state
             settings[index].failureReason = diagnostic.failureReason
             settings[index].updatedAt = diagnostic.updatedAt
             settingsStore.update(settings[index])
             keychainMessage = nil
             let fetchedOutcome = ProviderRefreshOutcome(usage: result.result.usage, cost: result.result.cost)
-            return diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed
+            return execution(diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed)
         } catch {
             keychainMessage = "Could not update Keychain."
-            return .failed
+            return ProviderRefreshExecution(outcome: .failed, affectedWindows: affectedWindows)
         }
     }
 
@@ -326,50 +343,52 @@ struct ProviderSettingsView: View {
         let startedAt = Date()
         let clock = ContinuousClock()
         let startedInstant = clock.now
-        let windows = try? CurrentUsageWindows.resolve(at: startedAt, calendar: .current)
-        let outcome = await performOpenAIRefresh(index: index)
+        let execution = await performOpenAIRefresh(index: index)
         await recordRefresh(
             product: .openAIAPI,
-            outcome: outcome,
+            outcome: execution.outcome,
             startedAt: startedAt,
             duration: startedInstant.duration(to: clock.now),
-            windows: windows
+            affectedWindows: execution.affectedWindows
         )
     }
 
-    private func performOpenAIRefresh(index: Int) async -> ProviderRefreshOutcome {
+    private func performOpenAIRefresh(index: Int) async -> ProviderRefreshExecution {
         let method = settings[index].authMethod
         let kind = method.credentialKind
         let key = CredentialKey(provider: .openAI, kind: kind)
         let organization = settings[index].openAIOrganizationID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var affectedWindows: [ExactUsageWindow] = []
         do {
             guard !organization.isEmpty,
                   var credentialData = try credentialService.credential(for: key),
                   let credential = String(data: credentialData, encoding: .utf8) else {
                 settings[index].state = .missing
                 persist(index: index)
-                return .failed
+                return ProviderRefreshExecution(outcome: .failed)
             }
             defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
             let fingerprint = Data(SHA256.hash(data: credentialData))
             guard let batch = await openAIRefreshService.fetch(credential: credential, organization: organization, method: method) else {
-                guard !Task.isCancelled else { return .cancelled }
+                guard !Task.isCancelled else { return ProviderRefreshExecution(outcome: .cancelled) }
                 settings[index].state = .failed
                 settings[index].failureReason = .refreshFailed
                 persist(index: index)
-                return .failed
+                return ProviderRefreshExecution(outcome: .failed)
             }
-            guard var current = try credentialService.credential(for: key) else { return .cancelled }
+            let execution = { ProviderRefreshExecution(outcome: $0, windows: batch.windows) }
+            affectedWindows = execution(.success).affectedWindows
+            guard var current = try credentialService.credential(for: key) else { return execution(.cancelled) }
             defer { current.resetBytes(in: current.startIndex..<current.endIndex) }
             guard settings[index].authMethod == method,
                   settings[index].openAIOrganizationID?.trimmingCharacters(in: .whitespacesAndNewlines) == organization,
-                  Data(SHA256.hash(data: current)) == fingerprint else { return .cancelled }
+                  Data(SHA256.hash(data: current)) == fingerprint else { return execution(.cancelled) }
 
             let outcome: ProviderRefreshOutcome
             switch batch.result {
             case let .supported(refreshResult):
                 let diagnostic = await openAIRefreshService.apply(refreshResult, windows: batch.windows, generation: batch.generation)
-                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
+                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 if method == .openAIOAuth {
                     settings[index].openAIOAuthFeasibility = .supported
                 }
@@ -379,37 +398,37 @@ struct ProviderSettingsView: View {
                 outcome = diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed
             case .unsupported:
                 let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
-                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
+                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .unsupported
                 settings[index].state = .unsupported
                 settings[index].failureReason = nil
                 outcome = .authenticationFailure
             case .adminRequired:
                 let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
-                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
+                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .adminCredentialRequired
                 settings[index].state = .adminRequired
                 settings[index].failureReason = .insufficientPermissions
                 outcome = .authenticationFailure
             case .expired:
                 let diagnostic = await openAIRefreshService.apply(.failure(.expiredCredential), windows: batch.windows, generation: batch.generation)
-                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
+                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = .expired
                 settings[index].failureReason = .expiredCredential
                 outcome = .authenticationFailure
             case let .failure(reason):
                 let diagnostic = await openAIRefreshService.apply(.failure(reason), windows: batch.windows, generation: batch.generation)
-                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return .cancelled }
+                guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = diagnostic.state
                 settings[index].failureReason = diagnostic.failureReason
                 outcome = ProviderRefreshOutcome(failureReason: reason)
             }
-            guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(batch.generation, for: .openAI) else { return .cancelled }
+            guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(batch.generation, for: .openAI) else { return execution(.cancelled) }
             persist(index: index)
-            return outcome
+            return execution(outcome)
         } catch {
             keychainMessage = "Could not update Keychain."
-            return .failed
+            return ProviderRefreshExecution(outcome: .failed, affectedWindows: affectedWindows)
         }
     }
 
@@ -418,9 +437,8 @@ struct ProviderSettingsView: View {
         outcome: ProviderRefreshOutcome,
         startedAt: Date,
         duration: Duration,
-        windows: CurrentUsageWindows?
+        affectedWindows: [ExactUsageWindow]
     ) async {
-        guard let windows else { return }
         let components = duration.components
         let seconds = Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
         guard let entry = try? ProviderRefreshHistoryEntry(
@@ -428,7 +446,7 @@ struct ProviderSettingsView: View {
             outcome: outcome,
             startedAt: startedAt,
             duration: seconds,
-            affectedWindows: [windows.today, windows.currentWeek, windows.utcBillingWeek]
+            affectedWindows: affectedWindows
         ) else { return }
         if await ProviderRefreshHistoryRepository.shared.record(entry) {
             NotificationCenter.default.post(name: .providerRefreshHistoryDidChange, object: nil)
