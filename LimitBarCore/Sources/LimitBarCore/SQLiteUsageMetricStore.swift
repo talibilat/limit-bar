@@ -1004,14 +1004,12 @@ public final class SQLiteUsageMetricStore {
 
         if case .bounded = metric.provenance {
             let provenance = encode(metric.provenance)
-            components += [
-                provenance.sourceKind,
-                provenance.sourceIdentifier ?? "",
-                provenance.windowStart.map(String.init) ?? "",
-                provenance.windowEnd.map(String.init) ?? "",
-                provenance.windowBasis ?? "",
-                provenance.aggregationVersion.map(String.init) ?? ""
-            ]
+            components.append(provenance.sourceKind)
+            components.append(provenance.sourceIdentifier ?? "")
+            components.append(provenance.windowStart.map { String($0) } ?? "")
+            components.append(provenance.windowEnd.map { String($0) } ?? "")
+            components.append(provenance.windowBasis ?? "")
+            components.append(provenance.aggregationVersion.map { String($0) } ?? "")
             if let cost = metric.cost {
                 components += [cost.currencyCode, cost.source.rawValue]
             }
