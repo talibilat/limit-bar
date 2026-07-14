@@ -157,6 +157,7 @@ final class LimitBarState {
 
     func refreshQuotaInsights(for snapshot: LocalRefreshSnapshot) async {
         await reevaluateClaudeInsights(now: snapshot.refreshedAt)
+        await reevaluateCodexInsights(now: snapshot.refreshedAt)
         if snapshot.codexRefreshed, let codex = snapshot.codex {
             await recordCodexInsights(codex, now: snapshot.refreshedAt)
         }
@@ -219,6 +220,18 @@ final class LimitBarState {
         guard let quotaInsightsService else { return }
         do {
             quotaInsights.merge(try await quotaInsightsService.recordCodex(snapshot, now: now)) { _, new in new }
+            quotaInsightsStorageAvailable = true
+        } catch {
+            quotaInsightsStorageAvailable = false
+        }
+    }
+
+    private func reevaluateCodexInsights(now: Date) async {
+        guard let quotaInsightsService else { return }
+        do {
+            let reevaluated = try await quotaInsightsService.reevaluateCodex(now: now)
+            quotaInsights = quotaInsights.filter { $0.key.product != .codex }
+            quotaInsights.merge(reevaluated) { _, new in new }
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false

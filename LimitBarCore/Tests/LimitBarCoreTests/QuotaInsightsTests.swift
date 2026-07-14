@@ -22,6 +22,28 @@ struct QuotaInsightsTests {
         #expect(MeasuredQuotaObservationAdapter.codex(business).isEmpty)
     }
 
+    @Test("alert and insight adapters share canonical quota window identities")
+    func canonicalAdapterIdentities() throws {
+        let reset = base.addingTimeInterval(7_200)
+        let claudeLimit = ClaudeRateLimit(kind: "session", group: .weekly, percentUsed: 20, severity: .normal, resetsAt: reset, scopeDisplayName: nil, isActive: true)
+        let claudeSnapshot = ClaudeRateLimitSnapshot(limits: [claudeLimit], fetchedAt: base)
+        let codexWindow = CodexRateLimitWindow(percentUsed: 10, windowMinutes: 300, resetsAt: reset)
+        let codexSnapshot = CodexRateLimitSnapshot(planType: "plus", primary: codexWindow, secondary: nil, credits: nil, reportedAt: base)
+
+        let canonicalClaude = try #require(QuotaWindowIdentity.claudeCode(claudeLimit))
+        #expect(canonicalClaude.product == .claudeCode)
+        #expect(canonicalClaude.identifier == "weekly:session")
+        #expect(MeasuredQuotaObservationAdapter.claude(claudeSnapshot).map(\.identity) == [canonicalClaude])
+        #expect(QuotaObservationAdapter.claude(claudeSnapshot, subscriptionType: nil, now: base).map(\.identity) == [canonicalClaude])
+
+        let canonicalCodex = try #require(QuotaWindowIdentity.codex(slot: "primary", window: codexWindow))
+        #expect(canonicalCodex.product == .codex)
+        #expect(canonicalCodex.identifier == "primary:300")
+        #expect(MeasuredQuotaObservationAdapter.codex(codexSnapshot).map(\.identity) == [canonicalCodex])
+        #expect(QuotaObservationAdapter.codex(codexSnapshot, now: base).map(\.identity) == [canonicalCodex])
+        #expect(QuotaWindowIdentity.codex(slot: "unsupported", window: codexWindow) == nil)
+    }
+
     @Test("qualified analytics uses robust measured burn and bounded exhaustion ranges")
     func qualifiedAnalytics() throws {
         let identity = try window(reset: base.addingTimeInterval(4 * 3_600))
@@ -47,6 +69,7 @@ struct QuotaInsightsTests {
         #expect(finding.calculatedBurnPercentPerHour.lower == 12)
         #expect(finding.calculatedBurnPercentPerHour.upper == 12)
         #expect(finding.calculatedExhaustionRange != nil)
+        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV1)
 
         let straddlingIdentity = try window(reset: base.addingTimeInterval(100 * 60))
         let straddling = try zip([0.0, 10, 20, 30], [70.0, 72, 75, 79]).map {
@@ -94,6 +117,34 @@ struct QuotaInsightsTests {
 
         let reevaluated = try await service.reevaluateClaude(now: base.addingTimeInterval(30 * 60 + 1))
         #expect(reevaluated[identity] == .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900))
+    }
+
+    @Test("service reevaluates retained Codex evidence as stale and expired")
+    func codexReevaluation() async throws {
+        let service = QuotaInsightsService(store: try SQLiteQuotaObservationStore.inMemory())
+        let reset = base.addingTimeInterval(10 * 3_600)
+        var latest: [QuotaWindowIdentity: QuotaInsightState] = [:]
+        for (minute, percent) in zip([0.0, 5, 10, 15], [70.0, 72, 74, 76]) {
+            let observedAt = base.addingTimeInterval(minute * 60)
+            latest = try await service.recordCodex(
+                CodexRateLimitSnapshot(
+                    planType: "plus",
+                    primary: CodexRateLimitWindow(percentUsed: percent, windowMinutes: 300, resetsAt: reset),
+                    secondary: nil,
+                    credits: nil,
+                    reportedAt: observedAt
+                ),
+                now: observedAt
+            )
+        }
+        let identity = try #require(latest.keys.first)
+        #expect(latest[identity]?.isQualified == true)
+
+        let stale = try await service.reevaluateCodex(now: base.addingTimeInterval(6 * 3_600 + 15 * 60 + 1))
+        #expect(stale[identity] == .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900))
+
+        let expired = try await service.reevaluateCodex(now: reset)
+        #expect(expired[identity] == .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 900))
     }
 
     @Test("analytics reports insufficient, stale, reset, and flat evidence explicitly")

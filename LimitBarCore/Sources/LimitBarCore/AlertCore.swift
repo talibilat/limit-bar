@@ -191,6 +191,24 @@ public struct QuotaWindowIdentity: Codable, Equatable, Hashable, Sendable {
             resetBoundary: container.decode(Date.self, forKey: .resetBoundary)
         )
     }
+
+    public static func claudeCode(_ limit: ClaudeRateLimit) -> QuotaWindowIdentity? {
+        guard let reset = limit.resetsAt else { return nil }
+        return try? QuotaWindowIdentity(
+            product: .claudeCode,
+            identifier: "\(limit.group.rawValue):\(limit.kind)",
+            resetBoundary: reset
+        )
+    }
+
+    public static func codex(slot: String, window: CodexRateLimitWindow) -> QuotaWindowIdentity? {
+        guard slot == "primary" || slot == "secondary", let reset = window.resetsAt else { return nil }
+        return try? QuotaWindowIdentity(
+            product: .codex,
+            identifier: "\(slot):\(window.windowMinutes)",
+            resetBoundary: reset
+        )
+    }
 }
 
 public enum AlertObservationHealth: String, Codable, Equatable, Sendable {
@@ -240,11 +258,7 @@ public enum QuotaObservationAdapter {
                   (0...100).contains(limit.percentUsed),
                   let reset = limit.resetsAt,
                   isFutureFinite(reset, now: now) else { return nil }
-            guard let identity = try? QuotaWindowIdentity(
-                product: .claudeCode,
-                identifier: "\(limit.group.rawValue):\(limit.kind)",
-                resetBoundary: reset
-            ) else { return nil }
+            guard let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
             return QuotaObservation(
                 identity: identity,
                 percentageUsed: limit.percentUsed,
@@ -267,11 +281,7 @@ public enum QuotaObservationAdapter {
                   (0...100).contains(window.percentUsed),
                   let reset = window.resetsAt,
                   isFutureFinite(reset, now: now),
-                  let identity = try? QuotaWindowIdentity(
-                    product: .codex,
-                    identifier: "\(slot):\(window.windowMinutes)",
-                    resetBoundary: reset
-                  ) else { return nil }
+                  let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
             return QuotaObservation(
                 identity: identity,
                 percentageUsed: window.percentUsed,

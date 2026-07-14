@@ -36,30 +36,11 @@ public struct MeasuredQuotaObservation: Equatable, Sendable {
     }
 }
 
-public enum QuotaInsightIdentity {
-    public static func claude(_ limit: ClaudeRateLimit) -> QuotaWindowIdentity? {
-        guard limit.scopeDisplayName == nil, let reset = limit.resetsAt else { return nil }
-        return try? QuotaWindowIdentity(
-            product: .claudeCode,
-            identifier: "\(limit.group.rawValue):\(limit.kind)",
-            resetBoundary: reset
-        )
-    }
-
-    public static func codex(slot: String, window: CodexRateLimitWindow) -> QuotaWindowIdentity? {
-        guard slot == "primary" || slot == "secondary", let reset = window.resetsAt else { return nil }
-        return try? QuotaWindowIdentity(
-            product: .codex,
-            identifier: "\(slot):\(window.windowMinutes)",
-            resetBoundary: reset
-        )
-    }
-}
-
 public enum MeasuredQuotaObservationAdapter {
     public static func claude(_ snapshot: ClaudeRateLimitSnapshot) -> [MeasuredQuotaObservation] {
         snapshot.limits.compactMap { limit in
-            guard let identity = QuotaInsightIdentity.claude(limit) else { return nil }
+            guard limit.scopeDisplayName == nil,
+                  let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
             return try? MeasuredQuotaObservation(
                 identity: identity,
                 percentageUsed: limit.percentUsed,
@@ -72,7 +53,7 @@ public enum MeasuredQuotaObservationAdapter {
     public static func codex(_ snapshot: CodexRateLimitSnapshot) -> [MeasuredQuotaObservation] {
         guard !snapshot.isBusinessPlan else { return [] }
         return [("primary", snapshot.primary), ("secondary", snapshot.secondary)].compactMap { slot, window in
-            guard let window, let identity = QuotaInsightIdentity.codex(slot: slot, window: window) else { return nil }
+            guard let window, let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
             return try? MeasuredQuotaObservation(
                 identity: identity,
                 percentageUsed: window.percentUsed,
@@ -150,10 +131,15 @@ public struct QuotaInsightRange: Equatable, Sendable {
     }
 }
 
+public enum QuotaForecastMethod: String, Codable, CaseIterable, Equatable, Sendable {
+    case pairwisePositiveSlopeInterquartileV1 = "pairwise_positive_slope_interquartile_v1"
+}
+
 public struct QualifiedQuotaInsight: Equatable, Sendable {
     public let identity: QuotaWindowIdentity
     public let measuredObservationCount: Int
     public let measuredSpan: TimeInterval
+    public let forecastMethod: QuotaForecastMethod
     public let calculatedBurnPercentPerHour: QuotaInsightRange
     public let calculatedExhaustionRange: ClosedRange<Date>?
 
@@ -161,12 +147,14 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
         identity: QuotaWindowIdentity,
         measuredObservationCount: Int,
         measuredSpan: TimeInterval,
+        forecastMethod: QuotaForecastMethod,
         calculatedBurnPercentPerHour: QuotaInsightRange,
         calculatedExhaustionRange: ClosedRange<Date>?
     ) {
         self.identity = identity
         self.measuredObservationCount = measuredObservationCount
         self.measuredSpan = measuredSpan
+        self.forecastMethod = forecastMethod
         self.calculatedBurnPercentPerHour = calculatedBurnPercentPerHour
         self.calculatedExhaustionRange = calculatedExhaustionRange
     }
@@ -247,6 +235,7 @@ public enum QuotaInsightAnalytics {
             identity: identity,
             measuredObservationCount: distinct.count,
             measuredSpan: span,
+            forecastMethod: .pairwisePositiveSlopeInterquartileV1,
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: lowerBurn, upper: upperBurn),
             calculatedExhaustionRange: exhaustion
         ))
@@ -613,6 +602,10 @@ public actor QuotaInsightsService {
 
     public func reevaluateClaude(now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
         try reevaluate(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
+    }
+
+    public func reevaluateCodex(now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
+        try reevaluate(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
     }
 
     public func deleteAll() throws {

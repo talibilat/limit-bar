@@ -202,12 +202,16 @@ enum DiagnosticExportInputBuilder {
                         upper: min(10_000, max(0, $0.upperBound.timeIntervalSince(generatedAt) / 60))
                     )
                 }
+                let forecastMethod: DiagnosticQuotaForecastMethod = switch finding.forecastMethod {
+                case .pairwisePositiveSlopeInterquartileV1: .pairwisePositiveSlopeInterquartileV1
+                }
                 findings.append(try DiagnosticQuotaFinding(
                     product: product,
                     windowKind: kind,
                     status: .qualified,
                     measuredObservationCount: finding.measuredObservationCount,
                     measuredSpanMinutes: min(43_200, max(0, Int(finding.measuredSpan / 60))),
+                    forecastMethod: forecastMethod,
                     calculatedBurnPercentPerHour: try DiagnosticNumberRange(
                         lower: burnLower,
                         upper: burnUpper

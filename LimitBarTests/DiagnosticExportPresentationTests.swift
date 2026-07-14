@@ -70,6 +70,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertTrue(preview.contains(#""affectedWindowKinds""#))
         XCTAssertTrue(preview.contains(#""measuredObservationCount" : 3"#))
         XCTAssertTrue(preview.contains(#""status" : "insufficient_observations""#))
+        XCTAssertFalse(preview.contains("forecastMethod"))
         XCTAssertFalse(preview.contains(privateQuotaIdentifier))
         XCTAssertFalse(preview.contains("resetBoundary"))
     }
@@ -184,6 +185,74 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertEqual(
             state.quotaInsights[try XCTUnwrap(identity)],
             .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900)
+        )
+    }
+
+    func testFailedCodexScanReplacesQualifiedRetainedInsightWithStaleFinding() async throws {
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let reset = base.addingTimeInterval(10 * 3_600)
+        let service = QuotaInsightsService(store: try SQLiteQuotaObservationStore.inMemory())
+        let state = LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in throw CancellationError() }
+            )),
+            quotaInsightsService: service
+        )
+
+        var latestSnapshot: CodexRateLimitSnapshot?
+        for (index, minute) in [0.0, 5, 10, 15].enumerated() {
+            let observedAt = base.addingTimeInterval(minute * 60)
+            let snapshot = CodexRateLimitSnapshot(
+                planType: "plus",
+                primary: CodexRateLimitWindow(percentUsed: 70 + Double(index) * 2, windowMinutes: 300, resetsAt: reset),
+                secondary: nil,
+                credits: nil,
+                reportedAt: observedAt
+            )
+            latestSnapshot = snapshot
+            await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
+                sequence: UInt64(index + 1),
+                usage: nil,
+                codex: snapshot,
+                refreshedAt: observedAt,
+                codexRefreshed: true
+            ))
+        }
+        let identity = try XCTUnwrap(QuotaWindowIdentity.codex(slot: "primary", window: try XCTUnwrap(latestSnapshot?.primary)))
+        guard case .qualified = state.quotaInsights[identity] else {
+            return XCTFail("Expected a qualified Codex finding before the scan failure")
+        }
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
+            sequence: 5,
+            usage: nil,
+            codex: latestSnapshot,
+            refreshedAt: base.addingTimeInterval(6 * 3_600 + 15 * 60 + 1),
+            codexRefreshed: false
+        ))
+
+        XCTAssertEqual(
+            state.quotaInsights[identity],
+            .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900)
+        )
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
+            sequence: 6,
+            usage: nil,
+            codex: latestSnapshot,
+            refreshedAt: reset,
+            codexRefreshed: false
+        ))
+
+        XCTAssertEqual(
+            state.quotaInsights[identity],
+            .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 900)
         )
     }
 

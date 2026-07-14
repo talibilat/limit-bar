@@ -150,6 +150,10 @@ public enum DiagnosticQuotaFindingStatus: String, Codable, CaseIterable, Equatab
     case conflictingObservations = "conflicting_observations"
 }
 
+public enum DiagnosticQuotaForecastMethod: String, Codable, CaseIterable, Equatable, Sendable {
+    case pairwisePositiveSlopeInterquartileV1 = "pairwise_positive_slope_interquartile_v1"
+}
+
 public struct DiagnosticNumberRange: Codable, Equatable, Sendable {
     public let lower: Double
     public let upper: Double
@@ -169,6 +173,7 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
     public let status: DiagnosticQuotaFindingStatus
     public let measuredObservationCount: Int
     public let measuredSpanMinutes: Int
+    public let forecastMethod: DiagnosticQuotaForecastMethod?
     public let calculatedBurnPercentPerHour: DiagnosticNumberRange?
     public let calculatedExhaustionMinutes: DiagnosticNumberRange?
 
@@ -178,13 +183,14 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
         status: DiagnosticQuotaFindingStatus,
         measuredObservationCount: Int,
         measuredSpanMinutes: Int,
+        forecastMethod: DiagnosticQuotaForecastMethod? = nil,
         calculatedBurnPercentPerHour: DiagnosticNumberRange? = nil,
         calculatedExhaustionMinutes: DiagnosticNumberRange? = nil
     ) throws {
         guard (0...SQLiteQuotaObservationStore.maximumObservationsPerWindow).contains(measuredObservationCount),
               (0...43_200).contains(measuredSpanMinutes),
-              status == .qualified || (calculatedBurnPercentPerHour == nil && calculatedExhaustionMinutes == nil),
-              status != .qualified || calculatedBurnPercentPerHour != nil else {
+              status == .qualified || (forecastMethod == nil && calculatedBurnPercentPerHour == nil && calculatedExhaustionMinutes == nil),
+              status != .qualified || (forecastMethod != nil && calculatedBurnPercentPerHour != nil) else {
             throw DiagnosticExportError.invalidQuotaFindings
         }
         self.product = product
@@ -192,6 +198,7 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
         self.status = status
         self.measuredObservationCount = measuredObservationCount
         self.measuredSpanMinutes = measuredSpanMinutes
+        self.forecastMethod = forecastMethod
         self.calculatedBurnPercentPerHour = calculatedBurnPercentPerHour
         self.calculatedExhaustionMinutes = calculatedExhaustionMinutes
     }
@@ -322,7 +329,7 @@ private struct LegacyDiagnosticExportReportV1: Codable {
 }
 
 public enum DiagnosticExport {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     public static let maximumRefreshHistoryRecords = 20
     public static let maximumQuotaFindings = 8
 
@@ -386,6 +393,36 @@ public enum DiagnosticExport {
                     refreshHistory: legacy.refreshHistory,
                     quotaFindings: nil
                 )
+            } else if envelope.schemaVersion == 2 {
+                let legacy = try decoder.decode(DiagnosticExportReport.self, from: bytes)
+                let quotaFindings = try legacy.quotaFindings?.map {
+                    try DiagnosticQuotaFinding(
+                        product: $0.product,
+                        windowKind: $0.windowKind,
+                        status: $0.status,
+                        measuredObservationCount: $0.measuredObservationCount,
+                        measuredSpanMinutes: $0.measuredSpanMinutes,
+                        forecastMethod: $0.status == .qualified ? .pairwisePositiveSlopeInterquartileV1 : nil,
+                        calculatedBurnPercentPerHour: $0.calculatedBurnPercentPerHour.map {
+                            try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
+                        },
+                        calculatedExhaustionMinutes: $0.calculatedExhaustionMinutes.map {
+                            try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
+                        }
+                    )
+                }
+                report = DiagnosticExportReport(
+                    schemaVersion: legacy.schemaVersion,
+                    generatedAt: legacy.generatedAt,
+                    application: legacy.application,
+                    operatingSystem: legacy.operatingSystem,
+                    providers: legacy.providers,
+                    database: legacy.database,
+                    imports: legacy.imports,
+                    resourceLimitReasons: legacy.resourceLimitReasons,
+                    refreshHistory: legacy.refreshHistory,
+                    quotaFindings: quotaFindings
+                )
             } else {
                 report = try decoder.decode(DiagnosticExportReport.self, from: bytes)
             }
@@ -427,6 +464,7 @@ public enum DiagnosticExport {
                         status: $0.status,
                         measuredObservationCount: $0.measuredObservationCount,
                         measuredSpanMinutes: $0.measuredSpanMinutes,
+                        forecastMethod: $0.forecastMethod,
                         calculatedBurnPercentPerHour: $0.calculatedBurnPercentPerHour.map {
                             try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
                         },

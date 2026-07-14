@@ -54,7 +54,7 @@ struct CodexRateLimitsView: View {
     }
 
     private func insight(slot: String, window: CodexRateLimitWindow) -> QuotaInsightState? {
-        guard let identity = QuotaInsightIdentity.codex(slot: slot, window: window) else { return nil }
+        guard let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
         return insights[identity]
     }
 
