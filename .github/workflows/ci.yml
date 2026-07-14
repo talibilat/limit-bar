@@ -40,6 +40,18 @@ jobs:
       - name: Validate migrations with release tooling
         run: scripts/validate-migrations.sh
 
+      - name: Verify file-access policy
+        run: scripts/validate-file-access-policy.sh
+
+      - name: Test app-owned persistence
+        run: >-
+          xcodebuild test
+          -project LimitBar.xcodeproj
+          -scheme LimitBar
+          -destination 'platform=macOS'
+          -only-testing:LimitBarTests
+          CODE_SIGN_IDENTITY=-
+
       - name: Build unsigned app
         run: >-
           xcodebuild

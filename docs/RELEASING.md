@@ -80,11 +80,12 @@ Run acceptance on the oldest and newest supported macOS releases.
 
 1. Download the ZIP and checksum into one directory and verify them with `shasum -a 256 -c LimitBar-<version>.zip.sha256`.
 2. Verify the expected Developer ID identity and bundle identifier with `codesign`.
-3. Verify the signature, stapled ticket, and Gatekeeper assessment.
-4. Launch the quarantined download through Finder.
-5. Confirm clean installation creates the canonical schema.
-6. Upgrade each prior public release and confirm settings, metrics, custom sources, and expected Keychain authorization behavior remain intact.
-7. Complete the release migration and recovery matrix.
-8. Promote the draft release only after every blocking check passes.
+3. Verify hardened runtime is enabled and the effective entitlements do not contain `com.apple.security.app-sandbox`.
+4. Verify the signature, stapled ticket, and Gatekeeper assessment.
+5. Launch the quarantined download through Finder.
+6. Confirm clean installation creates the canonical schema.
+7. Upgrade each prior public release and confirm settings, metrics, custom sources, and expected Keychain authorization behavior remain intact.
+8. Complete the release migration and recovery matrix.
+9. Promote the draft release only after every blocking check passes.
 
 Promote the accepted draft with `gh release edit <tag> --draft=false` or through the GitHub Releases interface.
