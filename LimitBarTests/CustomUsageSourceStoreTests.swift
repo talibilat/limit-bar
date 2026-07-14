@@ -1,4 +1,5 @@
 import Foundation
+import LimitBarCore
 import XCTest
 @testable import LimitBar
 
