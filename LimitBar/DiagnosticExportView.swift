@@ -244,9 +244,14 @@ final class DiagnosticExportModel {
     private let makeArtifact: @MainActor () async throws -> DiagnosticExportArtifact
     private let chooseDestination: @MainActor () -> URL?
 
+    init(makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact) {
+        self.makeArtifact = makeArtifact
+        chooseDestination = Self.chooseDestinationWithSavePanel
+    }
+
     init(
         makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact,
-        chooseDestination: @escaping @MainActor () -> URL? = DiagnosticExportModel.chooseDestinationWithSavePanel
+        chooseDestination: @escaping @MainActor () -> URL?
     ) {
         self.makeArtifact = makeArtifact
         self.chooseDestination = chooseDestination
