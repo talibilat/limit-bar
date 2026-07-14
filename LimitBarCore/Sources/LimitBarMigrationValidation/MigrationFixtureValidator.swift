@@ -38,7 +38,8 @@ public enum MigrationFixtureValidator {
     }
 
     private static func validate(_ fixture: Fixture, in directory: URL) throws {
-        guard fixture.store == "usage-metrics", fixture.origin == "synthetic" else {
+        guard ["usage-metrics", "quota-observations", "provider-refresh-history"].contains(fixture.store),
+              fixture.origin == "synthetic" else {
             throw ValidationError.invalidManifest
         }
         let sqlData = try Data(contentsOf: directory.appendingPathComponent(fixture.file))
@@ -61,14 +62,15 @@ public enum MigrationFixtureValidator {
         }
 
         do {
-            let store = try SQLiteUsageMetricStore(path: databasePath)
-            guard try store.allMetrics().count == fixture.expected.rowCount else {
+            let store = try openProductionStore(fixture.store, at: databasePath)
+            _ = store
+            guard try recordCount(for: fixture.store, at: databasePath) == fixture.expected.rowCount else {
                 throw ValidationError.recordCountMismatch(fixture.id)
             }
         }
 
         let canonicalPath = temporaryDirectory.appendingPathComponent("canonical.sqlite").path
-        _ = try SQLiteUsageMetricStore(path: canonicalPath)
+        _ = try openProductionStore(fixture.store, at: canonicalPath)
 
         try withDatabase(at: databasePath) { database in
             guard try userVersion(in: database) == fixture.expected.resultUserVersion else {
@@ -78,24 +80,68 @@ public enum MigrationFixtureValidator {
                 throw ValidationError.integrityCheckFailed(fixture.id)
             }
             try withDatabase(at: canonicalPath) { canonicalDatabase in
-                try validateSchema(in: database, canonicalDatabase: canonicalDatabase, fixtureID: fixture.id)
+                try validateSchema(
+                    for: fixture.store,
+                    in: database,
+                    canonicalDatabase: canonicalDatabase,
+                    fixtureID: fixture.id
+                )
             }
-            let digest = try recordDigest(in: database)
+            let digest = try recordDigest(for: fixture.store, in: database)
             guard digest == fixture.expected.recordSHA256 else {
                 throw ValidationError.recordDigestMismatch(fixture.id, actual: digest)
             }
         }
     }
 
+    private static func openProductionStore(_ store: String, at path: String) throws -> Any {
+        switch store {
+        case "usage-metrics": try SQLiteUsageMetricStore(path: path)
+        case "quota-observations": try SQLiteQuotaObservationStore(path: path)
+        case "provider-refresh-history": try SQLiteProviderRefreshHistoryStore(path: path)
+        default: throw ValidationError.invalidManifest
+        }
+    }
+
+    private static func recordCount(for store: String, at path: String) throws -> Int {
+        let table = switch store {
+        case "usage-metrics": "usage_metrics"
+        case "quota-observations": "quota_observations"
+        case "provider-refresh-history": "provider_refresh_history"
+        default: throw ValidationError.invalidManifest
+        }
+        return try withDatabase(at: path) { database in
+            let statement = try prepare("SELECT COUNT(*) FROM \(table);", in: database)
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else { throw ValidationError.sqlite }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+    }
+
     private static func validateSchema(
+        for store: String,
         in database: OpaquePointer?,
         canonicalDatabase: OpaquePointer?,
         fixtureID: String
     ) throws {
-        let expectedIndexes: [String: [String]] = [
-            "usage_metrics_current_windows": ["time_window", "window_start", "window_end", "window_basis"],
-            "usage_metrics_replacement_scope": ["provider", "time_window", "source_kind", "source_identifier"]
-        ]
+        let expectedTables: [String]
+        let expectedIndexes: [String: [String]]
+        switch store {
+        case "usage-metrics":
+            expectedTables = ["usage_metrics", "app_metadata"]
+            expectedIndexes = [
+                "usage_metrics_current_windows": ["time_window", "window_start", "window_end", "window_basis"],
+                "usage_metrics_replacement_scope": ["provider", "time_window", "source_kind", "source_identifier"]
+            ]
+        case "quota-observations":
+            expectedTables = ["quota_observations"]
+            expectedIndexes = ["quota_observations_retention": ["observed_at"]]
+        case "provider-refresh-history":
+            expectedTables = ["provider_refresh_history", "provider_refresh_windows"]
+            expectedIndexes = ["provider_refresh_history_product_started": ["product", "started_at"]]
+        default:
+            throw ValidationError.invalidManifest
+        }
         for (name, expectedColumns) in expectedIndexes {
             guard try indexColumns(name, in: database) == expectedColumns,
                   try normalizedSchemaObjectSQL(type: "index", name: name, in: database)
@@ -115,16 +161,13 @@ public enum MigrationFixtureValidator {
             objects.insert("\(string(statement, 0)):\(string(statement, 1))")
             result = sqlite3_step(statement)
         }
-        let expectedObjects: Set<String> = [
-            "index:usage_metrics_current_windows",
-            "index:usage_metrics_replacement_scope",
-            "table:app_metadata",
-            "table:usage_metrics"
-        ]
+        let expectedObjects = Set(
+            expectedTables.map { "table:\($0)" } + expectedIndexes.keys.map { "index:\($0)" }
+        )
         guard result == SQLITE_DONE, objects == expectedObjects else {
             throw ValidationError.schemaFingerprintMismatch(fixtureID)
         }
-        for table in ["usage_metrics", "app_metadata"] {
+        for table in expectedTables {
             guard try normalizedSchemaObjectSQL(type: "table", name: table, in: database)
                     == normalizedSchemaObjectSQL(type: "table", name: table, in: canonicalDatabase) else {
                 throw ValidationError.schemaFingerprintMismatch(fixtureID)
@@ -132,7 +175,16 @@ public enum MigrationFixtureValidator {
         }
     }
 
-    private static func recordDigest(in database: OpaquePointer?) throws -> String {
+    private static func recordDigest(for store: String, in database: OpaquePointer?) throws -> String {
+        switch store {
+        case "usage-metrics": try usageRecordDigest(in: database)
+        case "quota-observations": try quotaObservationRecordDigest(in: database)
+        case "provider-refresh-history": try providerRefreshHistoryRecordDigest(in: database)
+        default: throw ValidationError.invalidManifest
+        }
+    }
+
+    private static func usageRecordDigest(in database: OpaquePointer?) throws -> String {
         let columns = """
         id, provider, account_label, project_label, model_label, deployment_label, time_window,
         source_kind, source_identifier, window_start, window_end, window_basis, aggregation_version,
@@ -161,6 +213,59 @@ public enum MigrationFixtureValidator {
         }
         guard result == SQLITE_DONE else { throw ValidationError.sqlite }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func quotaObservationRecordDigest(in database: OpaquePointer?) throws -> String {
+        var data = Data("quota_observations".utf8)
+        try appendRows(
+            """
+            SELECT product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source
+            FROM quota_observations
+            ORDER BY product, window_identifier, reset_boundary, observed_at, percentage_used, observation_source;
+            """,
+            in: database,
+            to: &data
+        )
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func providerRefreshHistoryRecordDigest(in database: OpaquePointer?) throws -> String {
+        var data = Data("provider_refresh_history".utf8)
+        try appendRows(
+            """
+            SELECT id, schema_version, product, operation, outcome, started_at, duration_bucket
+            FROM provider_refresh_history ORDER BY id;
+            """,
+            in: database,
+            to: &data
+        )
+        data.append(contentsOf: "provider_refresh_windows".utf8)
+        try appendRows(
+            """
+            SELECT entry_id, ordinal, window_kind, window_start, window_end, calendar_basis, aggregation_version
+            FROM provider_refresh_windows ORDER BY entry_id, ordinal;
+            """,
+            in: database,
+            to: &data
+        )
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func appendRows(
+        _ sql: String,
+        in database: OpaquePointer?,
+        to data: inout Data
+    ) throws {
+        let statement = try prepare(sql, in: database)
+        defer { sqlite3_finalize(statement) }
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            for index in 0..<sqlite3_column_count(statement) {
+                appendColumn(statement, index: index, to: &data)
+            }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw ValidationError.sqlite }
     }
 
     private static func normalizedSchemaObjectSQL(

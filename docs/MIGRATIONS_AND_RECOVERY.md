@@ -1,17 +1,34 @@
 # Database Migrations And Recovery
 
-LimitBar opens `usage-metrics.sqlite` and `historical-usage-trends.sqlite` transactionally before reading Usage Aggregates.
+LimitBar uses four SQLite databases: `usage-metrics.sqlite`, `historical-usage-trends.sqlite`, `quota-observations.sqlite`, and `provider-refresh-history.sqlite`.
+Each production store validates its schema before reading stored state, and schema-changing migrations are transactional.
 It never treats an unknown table shape as a known historical schema.
 
 ## Release Matrix
 
 No tagged, downloadable LimitBar release exists yet.
-Schema 2 is the planned first public baseline, so a public binary-to-binary update cannot yet be tested.
+The current canonical schemas are planned first public baselines, so a public binary-to-binary update cannot yet be tested.
 
 | Fixture | Classification | SQLite version | Expected result |
 | --- | --- | --- | --- |
 | `usage-pre-release-v0.sql` | Known pre-release, pre-provenance schema | 0 | Rebuild as canonical schema 2, preserve every raw field, and mark rows as legacy without inventing boundaries. |
 | `usage-first-release-v2.sql` | Planned first public baseline | 2 | Validate the schema fingerprint and preserve exact-window records unchanged. |
+| `quota-observations-pre-release-v1.sql` | Canonical pre-release quota observation schema | 1 | Open through `SQLiteQuotaObservationStore`, validate the canonical fingerprint, and preserve measured observations and provenance unchanged. |
+| `quota-observations-first-release-v1.sql` | Planned first public quota observation baseline | 1 | Validate the canonical fingerprint and preserve measured observations and provenance unchanged. |
+| `provider-refresh-history-pre-release-v1.sql` | Canonical pre-release provider refresh schema | 1 | Open through `SQLiteProviderRefreshHistoryStore`, validate the canonical fingerprint, and preserve refresh outcomes and affected windows unchanged. |
+| `provider-refresh-history-first-release-v1.sql` | Planned first public provider refresh baseline | 1 | Validate the canonical fingerprint and preserve refresh outcomes and affected windows unchanged. |
+
+`historical-usage-trends.sqlite` currently opens only its canonical pre-release schema and has no older migration fixture.
+Its exact canonical fingerprint, opening behavior, retention, and recovery behavior are covered by `HistoricalUsageTrendStoreTests`; the first public release procedure below freezes its first release-owned fixture alongside the other three databases.
+
+## Opening, Storage, And Recovery Inventory
+
+| Database | Production opener | Stored state | Recovery inventory |
+| --- | --- | --- | --- |
+| `usage-metrics.sqlite` | `SQLiteUsageMetricStore` | Current Usage Aggregates, import metadata, and the alert delivery ledger | Retry opening or use **Create Clean Database** to archive the complete database set before replacement; retained normalized sources can then be reimported. |
+| `historical-usage-trends.sqlite` | `HistoricalUsageTrendStore` | Revisioned historical Usage Aggregates, gaps, observed zeros, and frozen calculated costs | Retry opening with the same or a newer release; explicit history deletion is independent from current usage, and backup restoration must retain the complete database set. |
+| `quota-observations.sqlite` | `SQLiteQuotaObservationStore` | Bounded measured quota observations with exact reset identity and observation provenance | Retry opening with the same or a newer release, restore the complete database set, or explicitly clear quota history in Settings. |
+| `provider-refresh-history.sqlite` | `SQLiteProviderRefreshHistoryStore` | Bounded provider refresh outcomes and affected Exact Usage Windows | Retry opening with the same or a newer release, restore the complete database set, or explicitly clear provider refresh history in Settings. |
 
 The manifest at `LimitBarCore/Tests/LimitBarCoreTests/Fixtures/Migrations/manifest.json` is the authoritative inventory.
 Every public release must retain its fixture and release artifact permanently.
@@ -32,7 +49,8 @@ scripts/validate-migrations.sh
 ```
 
 The validator discovers every SQL fixture through the manifest and fails when the directory and manifest differ.
-It checks the initial and resulting schema versions, exact record count, a SHA-256 digest covering every raw record field, supporting index columns, the allowed schema objects, and `PRAGMA integrity_check`.
+For `usage-metrics.sqlite`, `quota-observations.sqlite`, and `provider-refresh-history.sqlite`, it opens each fixture through the matching production store and compares it with a database created by that store.
+It checks the initial and resulting schema versions, exact primary-record count, a SHA-256 digest covering every stored field including refresh-window rows, supporting index columns, the exact allowed schema objects and SQL, and `PRAGMA integrity_check`.
 It also rejects fixture or manifest content containing common credential and private-path markers.
 
 Fixture validation proves the current migration core against synthetic databases.
@@ -44,9 +62,10 @@ For the first public release:
 
 1. Build the final signed, notarized, and stapled ZIP as a draft release.
 2. Verify a clean install on the oldest and newest supported macOS versions.
-3. Exercise the version-0 pre-release fixture and the current schema fixture through the candidate app.
-4. Freeze a synthetic database generated by the exact candidate app as the permanent first-release fixture.
-5. Promote the draft only after the migration and recovery checks pass.
+3. Exercise the pre-release and current fixtures for `usage-metrics.sqlite`, `quota-observations.sqlite`, and `provider-refresh-history.sqlite` through the candidate app.
+4. Exercise production opening, storage, deletion, and recovery for `historical-usage-trends.sqlite` through the candidate app.
+5. Freeze synthetic copies of all four databases generated by the exact candidate app as the permanent first-release fixtures.
+6. Promote the draft only after the migration and recovery checks pass.
 
 For every later release:
 
@@ -83,10 +102,10 @@ After a newer LimitBar version successfully opens a database, do not open it wit
 If LimitBar cannot open the database:
 
 1. Quit LimitBar before making a manual copy.
-2. Back up `usage-metrics.sqlite`, `historical-usage-trends.sqlite`, and their adjacent `-wal` and `-shm` files as complete sets.
+2. Back up `usage-metrics.sqlite`, `historical-usage-trends.sqlite`, `quota-observations.sqlite`, `provider-refresh-history.sqlite`, and their adjacent `-wal` and `-shm` files as complete sets.
 3. Keep the backup local because labels and usage aggregates can be private.
 4. Retry with the same or a newer LimitBar release.
-5. In Settings, use **Reveal Database Folder** to inspect the location or **Create Clean Database** to archive and replace `usage-metrics.sqlite`; this action does not replace the historical database.
+5. In Settings, use **Reveal Database Folder** to inspect all four database locations or **Create Clean Database** to archive and replace `usage-metrics.sqlite`; this action does not replace the historical, quota-observation, or provider-refresh-history databases.
 6. Reimport retained normalized local and custom JSONL sources and explicitly refresh configured providers.
 
 Copying only the main SQLite file is not a reliable backup when sidecars exist.

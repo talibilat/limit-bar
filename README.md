@@ -74,8 +74,8 @@ Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomical
 
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
-Schema v2 adds only coarse quota product and window categories, measured observation counts and span, finding status, and calculated burn or exhaustion-minute ranges.
-The decoder remains version-aware for schema v1 artifacts.
+Schema v3 includes coarse quota product and window categories, measured observation counts and span, finding status, calculated burn or exhaustion-minute ranges, and typed forecast-method metadata for qualified findings.
+The decoder remains compatible with schema v1 artifacts without quota findings and schema v2 findings whose qualified forecast method is the legacy pairwise-slope method.
 Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
@@ -173,6 +173,7 @@ The default local paths are:
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
 - `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
 - `~/Library/Application Support/LimitBar/quota-observations.sqlite` for bounded measured quota observations.
+- `~/Library/Application Support/LimitBar/provider-refresh-history.sqlite` for bounded privacy-safe provider refresh outcomes and affected windows.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.

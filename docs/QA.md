@@ -82,7 +82,7 @@ Inspect the app target's sandbox configuration and default paths:
 
 ```sh
 scripts/validate-file-access-policy.sh
-grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite\|historical-usage-trends.sqlite" LimitBar LimitBarCore/Sources
+grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite\|historical-usage-trends.sqlite\|quota-observations.sqlite\|provider-refresh-history.sqlite" LimitBar LimitBarCore/Sources
 ```
 
 The validation script confirms that both app configurations explicitly set `ENABLE_APP_SANDBOX = NO` and configure no entitlements file.
@@ -124,7 +124,7 @@ This check is not evidence of filesystem isolation.
 | Quota persistence | `QuotaInsightsTests` verifies immutable insert behavior, exact repeat-scan deduplication, 30-day and 500-observation-per-window retention, explicit deletion, and canonical SQL type, nullability, check, primary-key, and index fingerprint validation without mutating unknown schemas. Production storage is isolated in `quota-observations.sqlite`. |
 | Qualified quota analytics | `QuotaInsightsTests` verifies four-distinct-observation and 15-minute minimums, robust pairwise-slope burn ranges, exhaustion only when both projected bounds precede reset, and explicit unavailable states for counter decreases, resets, staleness, flat usage, and insufficient evidence. |
 | Quota presentation and alerts | Existing Claude and Codex rate-limit rows show concise **Measured** and **Calculated** labels without another gauge or dashboard. Every existing local refresh publication reevaluates retained Claude evidence against the current time without recording another Claude observation. `LimitBarState` records insights separately from `AlertCoordinator`; ticket 12 alert adapters, qualification, notification copy, and delivery ledger are unchanged. |
-| Quota diagnostic export | `DiagnosticExportTests` snapshots the v2 allow-list, validates bounded quota findings, and verifies v1 decoding. `DiagnosticExportPresentationTests` verifies exact quota identities and reset boundaries are not projected into the preview. |
+| Quota diagnostic export | `DiagnosticExportTests` snapshots the v3 allow-list with typed forecast-method metadata, validates bounded quota findings, and verifies v1 and v2 decode compatibility. `DiagnosticExportPresentationTests` verifies exact quota identities and reset boundaries are not projected into the preview. |
 
 ## Manual Acceptance
 
