@@ -49,10 +49,14 @@ final class LimitBarState {
     let local = LimitBarLocalStateProjection()
     private(set) var providerSettings: [ProviderSettings]
     let claudeModel: ClaudeRateLimitsModel
+    let alertSettingsStore: AlertSettingsStore
+    let alertCoordinator: AlertCoordinator
 
     private let coordinator: LocalRefreshCoordinator
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
+    private var latestUsageRefreshed = false
+    private var latestCodexRefreshed = false
 
     private init() {
         let sessionsDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
@@ -66,6 +70,9 @@ final class LimitBarState {
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         )
         usesLiveRefresh = true
+        let alertSettingsStore = AlertSettingsStore()
+        self.alertSettingsStore = alertSettingsStore
+        alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
     }
 
     init(
@@ -77,6 +84,9 @@ final class LimitBarState {
         self.claudeModel = claudeModel
         self.coordinator = coordinator
         usesLiveRefresh = false
+        let alertSettingsStore = AlertSettingsStore()
+        self.alertSettingsStore = alertSettingsStore
+        alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
     }
 
     func start() {
@@ -87,6 +97,9 @@ final class LimitBarState {
             for await snapshot in coordinator.snapshots {
                 guard let self else { return }
                 local.apply(snapshot)
+                latestUsageRefreshed = snapshot.usageRefreshed
+                latestCodexRefreshed = snapshot.codexRefreshed
+                await evaluateLocalAlerts()
             }
         }
     }
@@ -99,6 +112,44 @@ final class LimitBarState {
 
     func clearHistoricalUsage() {
         local.clearHistory()
+    }
+
+    func claudeActionCompleted() {
+        guard case let .loaded(snapshot, subscription) = claudeModel.state else { return }
+        let now = Date()
+        let observations = QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now)
+        Task { await alertCoordinator.evaluate(quota: observations, costs: [], now: now) }
+    }
+
+    func alertSettingsChanged() {
+        Task {
+            await evaluateLocalAlerts()
+            guard case let .loaded(snapshot, subscription) = claudeModel.state else { return }
+            let now = Date()
+            await alertCoordinator.evaluate(
+                quota: QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now),
+                costs: [],
+                now: now
+            )
+        }
+    }
+
+    private func evaluateLocalAlerts() async {
+        let now = Date()
+        let quota = latestCodexRefreshed
+            ? local.codexSnapshot.map { QuotaObservationAdapter.codex($0, now: now) } ?? []
+            : []
+        let health: AlertObservationHealth = latestUsageRefreshed && local.storeHealth.isOpen ? .healthy : .unhealthy
+        let metrics = local.localImport.failureMessage == nil
+            ? local.metrics
+            : local.metrics.filter { $0.provenance.source != .builtInLocalLog }
+        let costs = CostBudgetObservationBuilder.observations(
+            metrics: metrics,
+            pricing: PricingSettingsStore().pricingTable,
+            health: health,
+            now: now
+        )
+        await alertCoordinator.evaluate(quota: quota, costs: costs, now: now)
     }
 
 }
@@ -144,6 +195,9 @@ private struct MenuBarStatusLabel: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .historicalUsageDidChange)) { _ in
                 state.requestLocalRefresh()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .alertSettingsDidChange)) { _ in
+                state.alertSettingsChanged()
             }
     }
 

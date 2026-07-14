@@ -375,7 +375,9 @@ public final class SQLiteUsageMetricStore {
         } else {
             let allowedObjects: Set<String> = [
                 "table:usage_metrics", "table:app_metadata",
-                "index:usage_metrics_current_windows", "index:usage_metrics_replacement_scope"
+                "index:usage_metrics_current_windows", "index:usage_metrics_replacement_scope",
+                "table:alert_store_metadata", "table:alert_deliveries",
+                "index:alert_deliveries_boundary", "index:alert_deliveries_lease"
             ]
             let fingerprint = try tableFingerprint("usage_metrics")
             let normalizedSQL = try normalizedTableSQL("usage_metrics")

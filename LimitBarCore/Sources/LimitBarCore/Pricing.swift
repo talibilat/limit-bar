@@ -59,6 +59,17 @@ public enum CostCalculator {
         if let cost = metric.cost, cost.source == .providerReported {
             return cost
         }
+        return estimatedCost(for: metric, pricing: pricing, usageDate: usageDate)
+    }
+
+    public static func estimatedCost(for metric: UsageMetric, pricing: PricingTable) -> Cost? {
+        guard let usageDate = metric.refreshedAt else {
+            return nil
+        }
+        return estimatedCost(for: metric, pricing: pricing, usageDate: usageDate)
+    }
+
+    public static func estimatedCost(for metric: UsageMetric, pricing: PricingTable, usageDate: Date) -> Cost? {
         guard let price = pricing.price(for: metric, usageDate: usageDate) else {
             return nil
         }

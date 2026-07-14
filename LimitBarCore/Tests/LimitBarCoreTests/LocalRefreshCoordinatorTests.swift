@@ -154,6 +154,27 @@ struct LocalRefreshCoordinatorTests {
         #expect(second?.sequence == 2)
         #expect(second?.usage == first?.usage)
         #expect(second?.codex?.reportedAt == Date(timeIntervalSince1970: 2))
+        #expect(first?.usageRefreshed == true)
+        #expect(first?.codexRefreshed == true)
+        #expect(second?.usageRefreshed == false)
+        #expect(second?.codexRefreshed == true)
+    }
+
+    @Test("a failed Codex scan preserves display data but marks it ineligible for alerts")
+    func marksPreservedCodexAsNotRefreshed() async {
+        let calls = CodexFailureRecorder()
+        let coordinator = LocalRefreshCoordinator(dependencies: await calls.dependencies)
+        var iterator = coordinator.snapshots.makeAsyncIterator()
+
+        await coordinator.requestRefresh()
+        let first = await iterator.next()
+        await coordinator.requestRefresh()
+        let second = await iterator.next()
+
+        #expect(first?.codexRefreshed == true)
+        #expect(second?.codex == first?.codex)
+        #expect(second?.codexRefreshed == false)
+        #expect(second?.usageRefreshed == true)
     }
 }
 
@@ -242,6 +263,29 @@ private actor ThrowingSourceRecorder {
     private func scanCodex() -> CodexRateLimitSnapshot {
         codexPass += 1
         return CodexRateLimitSnapshot(planType: nil, primary: nil, secondary: nil, credits: CodexCredits(hasCredits: true, unlimited: false, balance: 1), reportedAt: Date(timeIntervalSince1970: TimeInterval(codexPass)))
+    }
+}
+
+private actor CodexFailureRecorder {
+    private var codexPass = 0
+
+    var dependencies: LocalRefreshDependencies {
+        LocalRefreshDependencies(
+            refreshUsage: { _, _ in emptyUsageRefresh() },
+            scanCodex: { [self] _ in try await scanCodex() }
+        )
+    }
+
+    private func scanCodex() throws -> CodexRateLimitSnapshot {
+        codexPass += 1
+        if codexPass == 2 { throw TestFailure() }
+        return CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: CodexRateLimitWindow(percentUsed: 80, windowMinutes: 300, resetsAt: Date(timeIntervalSince1970: 600)),
+            secondary: nil,
+            credits: nil,
+            reportedAt: Date(timeIntervalSince1970: 1)
+        )
     }
 }
 

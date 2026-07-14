@@ -89,19 +89,25 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
     public let codex: CodexRateLimitSnapshot?
     public let refreshedAt: Date
     public let triggeredAt: ContinuousClock.Instant
+    public let usageRefreshed: Bool
+    public let codexRefreshed: Bool
 
     public init(
         sequence: UInt64,
         usage: LocalUsageRefresh?,
         codex: CodexRateLimitSnapshot?,
         refreshedAt: Date,
-        triggeredAt: ContinuousClock.Instant
+        triggeredAt: ContinuousClock.Instant = .now,
+        usageRefreshed: Bool = true,
+        codexRefreshed: Bool = true
     ) {
         self.sequence = sequence
         self.usage = usage
         self.codex = codex
         self.refreshedAt = refreshedAt
         self.triggeredAt = triggeredAt
+        self.usageRefreshed = usageRefreshed
+        self.codexRefreshed = codexRefreshed
     }
 }
 
@@ -281,11 +287,13 @@ public actor LocalRefreshCoordinator {
         async let usageResult = asyncResult { try await dependencies.refreshUsage(refreshDate, calendar) }
         async let codexResult = asyncResult { try await dependencies.scanCodex(refreshDate) }
 
-        if case let .success(usage) = await usageResult {
+        let resolvedUsage = await usageResult
+        let resolvedCodex = await codexResult
+        if case let .success(usage) = resolvedUsage {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastUsage = usage
         }
-        if case let .success(codex) = await codexResult {
+        if case let .success(codex) = resolvedCodex {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastCodex = codex
         }
@@ -298,8 +306,17 @@ public actor LocalRefreshCoordinator {
             usage: lastUsage,
             codex: lastCodex,
             refreshedAt: refreshDate,
-            triggeredAt: triggeredAt
+            triggeredAt: triggeredAt,
+            usageRefreshed: resolvedUsage.isSuccess,
+            codexRefreshed: resolvedCodex.isSuccess
         ))
+    }
+}
+
+private extension Result {
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
     }
 }
 

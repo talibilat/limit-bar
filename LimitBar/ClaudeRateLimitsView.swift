@@ -3,6 +3,7 @@ import LimitBarCore
 
 struct ClaudeRateLimitsView: View {
     @Bindable var model: ClaudeRateLimitsModel
+    let onActionCompleted: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -12,7 +13,10 @@ struct ClaudeRateLimitsView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button(model.isRefreshing ? "Refreshing..." : "Refresh") {
-                    Task { await model.refresh() }
+                    Task {
+                        await model.refresh()
+                        onActionCompleted()
+                    }
                 }
                 .disabled(model.isRefreshing)
             }
@@ -28,8 +32,18 @@ struct ClaudeRateLimitsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Check Again") { Task { await model.refresh() } }
-                    Button("Connect") { Task { await model.connect() } }
+                    Button("Check Again") {
+                        Task {
+                            await model.refresh()
+                            onActionCompleted()
+                        }
+                    }
+                    Button("Connect") {
+                        Task {
+                            await model.connect()
+                            onActionCompleted()
+                        }
+                    }
                 }
             case let .failed(message):
                 Text(message)
@@ -45,7 +59,10 @@ struct ClaudeRateLimitsView: View {
                         .accessibilityIdentifier("claude-authorization-required")
                     Spacer()
                     Button(model.isRefreshing ? "Connecting..." : "Connect") {
-                        Task { await model.connect() }
+                        Task {
+                            await model.connect()
+                            onActionCompleted()
+                        }
                     }
                     .disabled(model.isRefreshing)
                     .accessibilityIdentifier("claude-connect")
@@ -78,15 +95,19 @@ struct ClaudeRateLimitsView: View {
         }
         .task {
             await model.appeared()
+            onActionCompleted()
         }
     }
 }
 
 #Preview {
-    ClaudeRateLimitsView(model: ClaudeRateLimitsModel(
-        credentials: ClaudeCredentialBroker.shared,
-        client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
-    ))
+    ClaudeRateLimitsView(
+        model: ClaudeRateLimitsModel(
+            credentials: ClaudeCredentialBroker.shared,
+            client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+        ),
+        onActionCompleted: {}
+    )
         .padding(20)
         .frame(width: 440, height: 400)
 }
