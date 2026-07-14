@@ -42,11 +42,13 @@ struct ClaudeRateLimitsView: View {
                     Text("Authorize LimitBar to read your Claude Code login.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("claude-authorization-required")
                     Spacer()
                     Button(model.isRefreshing ? "Connecting..." : "Connect") {
                         Task { await model.connect() }
                     }
                     .disabled(model.isRefreshing)
+                    .accessibilityIdentifier("claude-connect")
                 }
             case let .loaded(snapshot, subscription):
                 let displayed = snapshot.displayLimits(forSubscriptionType: subscription)
@@ -61,6 +63,7 @@ struct ClaudeRateLimitsView: View {
                         )
                     }
                 }
+                .accessibilityIdentifier("claude-loaded-state")
 
                 HStack {
                     if let subscription {

@@ -17,11 +17,6 @@ struct LimitBarSettingsView: View {
     @State private var pricingEntries = PricingSettingsStore().entries
     @State private var localEventsRevealMessage: String?
 
-    private let customSourceStore = CustomUsageSourceStore()
-    @State private var customSources = CustomUsageSourceStore().sources
-    @State private var customSourceName = ""
-    @State private var customSourceFilePath = ""
-
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
               let output = PricingSettingsStore.strictDecimal(from: outputPrice) else {
@@ -93,48 +88,7 @@ struct LimitBarSettingsView: View {
                 }
             }
 
-            Section("Custom Usage Sources") {
-                Text("Track any tool LimitBar has no built-in support for. Point at a local log file where each line is JSON with timestamp, model, inputTokens, and outputTokens, one line per response - works for Aider, Cursor, Windsurf, or anything else that can write a log line. A source only appears on the Usage tab once its file actually has matching events; nothing shows for tools you don't use.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(#"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-
-                TextField("Name (e.g. Aider)", text: $customSourceName)
-                HStack {
-                    TextField("Log file path", text: $customSourceFilePath)
-                    Button("Choose File...") {
-                        chooseCustomSourceFile()
-                    }
-                }
-                Button("Add Source") {
-                    addCustomSource()
-                }
-                .disabled(customSourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || customSourceFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if customSources.isEmpty {
-                    Text("No custom sources configured.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(customSources) { source in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(source.name)
-                                Text(source.filePath)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Remove") {
-                                removeCustomSource(id: source.id)
-                            }
-                        }
-                    }
-                }
-            }
+            CustomUsageSourcesSection()
 
             Section("Pricing") {
                 Text("Manual prices are used only when a provider does not report spend.")
@@ -198,29 +152,6 @@ struct LimitBarSettingsView: View {
         }
     }
 
-    private func addCustomSource() {
-        if customSourceStore.add(name: customSourceName, filePath: customSourceFilePath) {
-            customSources = customSourceStore.sources
-            customSourceName = ""
-            customSourceFilePath = ""
-        }
-    }
-
-    private func removeCustomSource(id: UUID) {
-        customSourceStore.remove(id: id)
-        customSources = customSourceStore.sources
-    }
-
-    private func chooseCustomSourceFile() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        if panel.runModal() == .OK, let url = panel.url {
-            customSourceFilePath = url.path
-        }
-    }
-
     private func revealLocalEventsPath() {
         guard let url = try? LocalUsageEventImporter.usageEventsURL() else {
             localEventsRevealMessage = "Could not resolve the local events path."
@@ -238,6 +169,91 @@ struct LimitBarSettingsView: View {
         } catch {
             localEventsRevealMessage = "Could not create the local events directory."
         }
+    }
+}
+
+struct CustomUsageSourcesSection: View {
+    private let store: CustomUsageSourceStore
+    private let chooseFile: () -> String?
+
+    @State private var sources: [CustomUsageSource]
+    @State private var name = ""
+    @State private var filePath = ""
+
+    init(
+        store: CustomUsageSourceStore = CustomUsageSourceStore(),
+        chooseFile: @escaping () -> String? = CustomUsageSourcesSection.chooseFileWithPanel
+    ) {
+        self.store = store
+        self.chooseFile = chooseFile
+        _sources = State(initialValue: store.sources)
+    }
+
+    var body: some View {
+        Section("Custom Usage Sources") {
+            Text("Track any tool LimitBar has no built-in support for. Point at a local log file where each line is JSON with timestamp, model, inputTokens, and outputTokens, one line per response - works for Aider, Cursor, Windsurf, or anything else that can write a log line. A source only appears on the Usage tab once its file actually has matching events; nothing shows for tools you don't use.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(#"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":100,"outputTokens":20}"#)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            TextField("Name (e.g. Aider)", text: $name)
+                .accessibilityIdentifier("custom-source-name")
+            HStack {
+                TextField("Log file path", text: $filePath)
+                    .accessibilityIdentifier("custom-source-path")
+                Button("Choose File...") {
+                    if let selectedPath = chooseFile() {
+                        filePath = selectedPath
+                    }
+                }
+                .accessibilityIdentifier("custom-source-choose-file")
+            }
+            Button("Add Source") {
+                if store.add(name: name, filePath: filePath) {
+                    sources = store.sources
+                    name = ""
+                    filePath = ""
+                }
+            }
+            .accessibilityIdentifier("custom-source-add")
+            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if sources.isEmpty {
+                Text("No custom sources configured.")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("custom-sources-empty")
+            } else {
+                ForEach(sources) { source in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(source.name)
+                            Text(source.filePath)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Remove") {
+                            store.remove(id: source.id)
+                            sources = store.sources
+                        }
+                        .accessibilityIdentifier("custom-source-remove")
+                    }
+                    .accessibilityIdentifier("custom-source-row")
+                }
+            }
+        }
+    }
+
+    private static func chooseFileWithPanel() -> String? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        return panel.runModal() == .OK ? panel.url?.path : nil
     }
 }
 
