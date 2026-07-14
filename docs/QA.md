@@ -2,7 +2,7 @@
 
 Date: 2026-07-13.
 Target: macOS 14 or newer.
-Scope: reliability, security, privacy, exact usage windows, local refresh behavior, custom-source resource limits, and migration acceptance evidence.
+Scope: reliability, security, privacy, exact usage windows, local refresh behavior, local alerts, custom-source resource limits, and migration acceptance evidence.
 
 ## Verification Commands
 
@@ -52,6 +52,9 @@ git diff --check
 
 Verification on 2026-07-13 completed with 268 tests in 22 suites passing, the native app build succeeding, and `git diff --check` reporting no errors.
 
+Ticket 12 verification on 2026-07-14 completed with 288 tests in 24 suites passing, direct typechecking of every app Swift source passing, the Xcode project file validating, and `git diff --check` reporting no errors.
+The native `xcodebuild` command was attempted with isolated Derived Data but could not reach build planning because this machine reported `DARWIN_USER_CACHE_DIR` I/O and FSEvents startup failures.
+
 Inspect the app target's sandbox configuration and default paths:
 
 ```sh
@@ -86,6 +89,10 @@ This check is not evidence of filesystem isolation.
 | HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
 | Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
 | Provider persistence safety | Anthropic and OpenAI provider tests verify cancellation preservation, scoped replacement, stale retained values after failure, exact local and UTC windows, and safe typed failure reasons. |
+| Alert qualification | `AlertCoreTests` verifies configurable thresholds, provider-product separation, Claude and Codex reset-boundary adapters, stale and malformed suppression, source and currency separation, API-over-local precedence, checked monetary aggregation, and privacy-safe copy. |
+| Alert deduplication | `SQLiteAlertDeliveryStoreTests` verifies atomic reservation, once-per-threshold delivery, retry after failure or lease expiry, exact-boundary pruning, persistence across relaunch, coexistence with usage tables, and user reset. |
+| Failed-source suppression | `LocalRefreshCoordinatorTests` verifies retained last-good Codex display data is marked as not refreshed after a failed scan, and `LimitBarState` excludes that data plus failed built-in imports from alert evaluation. |
+| Notification permission and privacy | Alert rules are disabled by default, `AlertSettingsView` requests permission only through an explicit action, and `AlertNotificationCoordinator` submits only core-generated coarse copy after durable reservation; real macOS presentation remains a manual check. |
 | Native compilation | The Xcode build command compiles the menu bar app, popover, settings, Keychain integration, provider clients, and local refresh wiring, while repository inspection confirms no app UI test target is currently present. |
 
 ## Manual Acceptance
@@ -103,6 +110,12 @@ These checks require a local signed app and should not be inferred from fixture 
 9. Disconnect the network and confirm the five-second local JSONL, custom, SQLite, and Codex refresh continues without provider polling.
 10. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
 11. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
+12. Open Alerts settings and confirm no notification permission prompt appears before pressing **Enable Notifications**.
+13. Enable notifications, configure a quota threshold below a fresh observed value, and confirm one coarse notification appears without account, project, model, source, exact spend, or budget-cap text.
+14. Relaunch within the same quota window and confirm the accepted threshold does not notify again.
+15. Clear notification history, accept the warning, and confirm an active threshold can notify again.
+16. Deny notification permission and confirm Settings reports the denial without consuming delivery state or repeatedly prompting.
+17. Configure provider-reported and calculated budgets in the same currency and confirm their notifications remain separately labeled.
 
 ## Repository-Only Boundary
 

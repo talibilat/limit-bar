@@ -81,12 +81,23 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
     public let usage: LocalUsageRefresh?
     public let codex: CodexRateLimitSnapshot?
     public let refreshedAt: Date
+    public let usageRefreshed: Bool
+    public let codexRefreshed: Bool
 
-    public init(sequence: UInt64, usage: LocalUsageRefresh?, codex: CodexRateLimitSnapshot?, refreshedAt: Date) {
+    public init(
+        sequence: UInt64,
+        usage: LocalUsageRefresh?,
+        codex: CodexRateLimitSnapshot?,
+        refreshedAt: Date,
+        usageRefreshed: Bool = true,
+        codexRefreshed: Bool = true
+    ) {
         self.sequence = sequence
         self.usage = usage
         self.codex = codex
         self.refreshedAt = refreshedAt
+        self.usageRefreshed = usageRefreshed
+        self.codexRefreshed = codexRefreshed
     }
 }
 
@@ -234,11 +245,13 @@ public actor LocalRefreshCoordinator {
         async let usageResult = asyncResult { try await dependencies.refreshUsage(refreshDate, calendar) }
         async let codexResult = asyncResult { try await dependencies.scanCodex(refreshDate) }
 
-        if case let .success(usage) = await usageResult {
+        let resolvedUsage = await usageResult
+        let resolvedCodex = await codexResult
+        if case let .success(usage) = resolvedUsage {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastUsage = usage
         }
-        if case let .success(codex) = await codexResult {
+        if case let .success(codex) = resolvedCodex {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastCodex = codex
         }
@@ -250,8 +263,17 @@ public actor LocalRefreshCoordinator {
             sequence: sequence,
             usage: lastUsage,
             codex: lastCodex,
-            refreshedAt: refreshDate
+            refreshedAt: refreshDate,
+            usageRefreshed: resolvedUsage.isSuccess,
+            codexRefreshed: resolvedCodex.isSuccess
         ))
+    }
+}
+
+private extension Result {
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
     }
 }
 

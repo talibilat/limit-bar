@@ -19,6 +19,7 @@ Click it for two tabs:
 - **Usage tracking** imports normalized LimitBar JSONL events and can fetch supported provider usage after an explicit action in Settings.
 - **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
 - **Cost labels** distinguish provider-reported values from calculated estimates.
+- **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
 ## Prerequisites
@@ -54,6 +55,27 @@ Concurrent ticks are coalesced, and a failed local component keeps its last succ
 The five-second loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
 It also does not poll macOS Keychain.
 Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
+
+Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
+Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.
+
+## Local Alerts
+
+Alerts are disabled by default.
+Settings lets you explicitly request macOS notification permission and configure unique percentage thresholds from 1% through 100%, with 70% and 90% suggested.
+
+Quota alerts require a fresh Claude Code or Codex observation with a provider-reported future reset boundary.
+Cost budgets specify an API product, currency, provider-reported or calculated provenance, exact period, cap, and percentage thresholds.
+Provider-reported costs use their UTC billing week, while calculated estimates use local Today or Current Week windows.
+
+LimitBar sends at most one notification for each configured threshold and exact subject window.
+If one observation newly passes several thresholds, only the highest notification is shown and all passed thresholds are recorded.
+The delivery ledger is stored locally in `usage-metrics.sqlite` so relaunching does not repeat an accepted notification.
+
+Lock-screen text contains only the coarse provider product, threshold, currency when relevant, and reported or estimated provenance.
+It excludes exact spend, budget caps, account, organization, project, model, deployment, and source labels.
+Stale, unhealthy, unsupported, legacy, expired, malformed, and inferred observations do not alert.
+Cost measurements older than 24 hours are stale for alerting even when their exact budget window remains active.
 
 ### Claude Authorization
 

@@ -21,6 +21,9 @@
 		AA000000000000000000000D /* RateLimitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* RateLimitView.swift */; };
 		AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001D /* PercentRateLimitRowView.swift */; };
 		AA000000000000000000000F /* CustomUsageSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001E /* CustomUsageSourceStore.swift */; };
+		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
+		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
+		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +40,9 @@
 		AA000000000000000000001C /* RateLimitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitView.swift; sourceTree = "<group>"; };
 		AA000000000000000000001D /* PercentRateLimitRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PercentRateLimitRowView.swift; sourceTree = "<group>"; };
 		AA000000000000000000001E /* CustomUsageSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomUsageSourceStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E0 /* AlertSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertNotificationCoordinator.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E2 /* AlertSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -76,6 +82,9 @@
 				AA000000000000000000001C /* RateLimitView.swift */,
 				AA000000000000000000001D /* PercentRateLimitRowView.swift */,
 				AA000000000000000000001E /* CustomUsageSourceStore.swift */,
+				AA00000000000000000000E0 /* AlertSettingsStore.swift */,
+				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
+				AA00000000000000000000E2 /* AlertSettingsView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -166,6 +175,9 @@
 				AA000000000000000000000D /* RateLimitView.swift in Sources */,
 				AA000000000000000000000E /* PercentRateLimitRowView.swift in Sources */,
 				AA000000000000000000000F /* CustomUsageSourceStore.swift in Sources */,
+				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
+				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
+				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

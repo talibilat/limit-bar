@@ -3,6 +3,7 @@ import LimitBarCore
 import AppKit
 
 struct LimitBarSettingsView: View {
+    let state: LimitBarState
     private let pricingStore = PricingSettingsStore()
     private let localEventsPath = (try? LocalUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
@@ -36,6 +37,8 @@ struct LimitBarSettingsView: View {
 
     var body: some View {
         Form {
+            AlertSettingsView(store: state.alertSettingsStore, coordinator: state.alertCoordinator)
+
             Section("Provider Authentication") {
                 Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
                     .font(.caption)
@@ -242,5 +245,5 @@ struct LimitBarSettingsView: View {
 }
 
 #Preview {
-    LimitBarSettingsView()
+    LimitBarSettingsView(state: .shared)
 }
