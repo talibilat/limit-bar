@@ -164,7 +164,7 @@ public actor LocalRefreshCoordinator {
 
     private let dependencies: LocalRefreshDependencies
     private let clock: LocalRefreshClock
-    private let refreshInterval: TimeInterval
+    private var refreshInterval: TimeInterval
     private let now: @Sendable () -> Date
     private let calendar: Calendar
     private let continuation: AsyncStream<LocalRefreshSnapshot>.Continuation
@@ -202,11 +202,27 @@ public actor LocalRefreshCoordinator {
 
     public func start() {
         guard periodicTask == nil else { return }
+        startPeriodicTask(refreshImmediately: true)
+    }
+
+    public func setRefreshInterval(_ refreshInterval: TimeInterval) {
+        precondition(refreshInterval > 0)
+        guard refreshInterval != self.refreshInterval else { return }
+        self.refreshInterval = refreshInterval
+        guard periodicTask != nil else { return }
+        periodicTask?.cancel()
+        periodicTask = nil
+        startPeriodicTask(refreshImmediately: true)
+    }
+
+    private func startPeriodicTask(refreshImmediately: Bool) {
         let startGeneration = generation
         let clock = clock
         let refreshInterval = refreshInterval
-        periodicTask = Task { [weak self, startGeneration, clock, refreshInterval] in
-            await self?.scheduleRefresh(for: startGeneration)
+        periodicTask = Task { [weak self, startGeneration, clock, refreshInterval, refreshImmediately] in
+            if refreshImmediately {
+                await self?.scheduleRefresh(for: startGeneration)
+            }
             while !Task.isCancelled {
                 do {
                     try await clock.sleep(for: refreshInterval)

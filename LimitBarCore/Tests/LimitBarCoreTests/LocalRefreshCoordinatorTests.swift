@@ -26,6 +26,54 @@ struct LocalRefreshCoordinatorTests {
         await coordinator.stop()
     }
 
+    @Test("changing cadence refreshes immediately and restarts periodic timing")
+    func cadenceChange() async {
+        let clock = ManualRefreshClock()
+        let calls = CallRecorder()
+        let coordinator = LocalRefreshCoordinator(dependencies: dependencies(calls: calls), clock: clock.clock)
+
+        await coordinator.start()
+        await eventually { await calls.usageCount == 1 }
+
+        await coordinator.setRefreshInterval(15)
+        await eventually { await calls.usageCount == 2 }
+        await clock.advance(by: 5)
+        await Task.yield()
+        #expect(await calls.usageCount == 2)
+
+        await clock.advance(by: 10)
+        await eventually { await calls.usageCount == 3 }
+        await coordinator.stop()
+    }
+
+    @Test("changing cadence during a refresh preserves one coalesced follow-up")
+    func cadenceChangeDuringRefresh() async {
+        let clock = ManualRefreshClock()
+        let gate = AsyncGate()
+        let calls = CallRecorder()
+        let coordinator = LocalRefreshCoordinator(
+            dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in
+                    await calls.recordUsage()
+                    await gate.wait()
+                    return emptyUsageRefresh()
+                },
+                scanCodex: { _ in await calls.recordCodex(); return nil }
+            ),
+            clock: clock.clock
+        )
+
+        await coordinator.start()
+        await eventually { await calls.usageCount == 1 }
+        await coordinator.setRefreshInterval(15)
+        await coordinator.setRefreshInterval(30)
+        await gate.open()
+        await eventually { await calls.usageCount == 2 }
+
+        #expect(await calls.usageCount == 2)
+        await coordinator.stop()
+    }
+
     @Test("multiple requests during a refresh produce at most one coalesced refresh")
     func coalescing() async {
         let gate = AsyncGate()
