@@ -6,6 +6,7 @@ struct LimitBarSettingsView: View {
     var showsProviderAuthentication = true
     var state = LimitBarState.shared
     private let pricingStore = PricingSettingsStore()
+    private let localRefreshSettingsStore = LocalRefreshSettingsStore()
     private let localEventsPath = (try? LocalUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
     @State private var storedMetrics: StoredUsageMetricsSnapshot?
@@ -23,6 +24,7 @@ struct LimitBarSettingsView: View {
     @State private var historyRetention = HistoricalUsageRetention.default
     @State private var showsDeleteHistoryConfirmation = false
     @State private var historyMessage: String?
+    @State private var localRefreshCadence = LocalRefreshSettingsStore().cadence
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -125,6 +127,26 @@ struct LimitBarSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+            }
+
+            Section("Local Refresh") {
+                Text("Choose how often LimitBar imports Local Usage Events and Custom Usage Sources, reads its SQLite snapshot, and scans local Codex sessions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Cadence", selection: $localRefreshCadence) {
+                    ForEach(LocalRefreshCadence.allCases, id: \.self) { cadence in
+                        Text(cadence.displayName).tag(cadence)
+                    }
+                }
+                .onChange(of: localRefreshCadence) { _, cadence in
+                    localRefreshSettingsStore.cadence = cadence
+                }
+                Text("Shorter intervals show local changes sooner and do more background file and database work. Longer intervals may use less power but delay updates.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("This setting never schedules provider API requests or macOS Keychain checks.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Historical Usage") {

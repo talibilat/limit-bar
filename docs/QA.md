@@ -86,7 +86,7 @@ This check is not evidence of filesystem isolation.
 
 | Area | Acceptance evidence |
 | --- | --- |
-| Five-second local refresh | `LocalRefreshCoordinatorTests` verifies immediate start, exact five-second scheduling, coalescing, cancellation, generation isolation, ordered snapshots, and last successful component retention; `LocalRefreshProductionWiringTests` verifies the production seam contains local usage refresh and Codex scanning. |
+| Configurable local refresh | `LocalRefreshCoordinatorTests` verifies immediate start, exact scheduling, live cadence changes, coalescing, cancellation, generation isolation, ordered snapshots, and last successful component retention; `LocalRefreshSettingsStoreTests` verifies the 5, 15, and 30 second allowlist, persistence, notifications, and safe fallback; `LocalRefreshProductionWiringTests` verifies the production seam contains only local usage refresh and Codex scanning. |
 | No periodic provider or Keychain polling | `LimitBarState` wires only `ApplicationLocalUsageRefresher` and `CodexSessionScanner` into `LocalRefreshCoordinator`, provider clients are absent from `LocalRefreshDependencies`, and `ClaudeRateLimitsModelTests` verifies Claude work starts through view appearance or explicit model actions. |
 | Claude passive and interactive authorization | `ClaudeCredentialBrokerTests` verifies passive reads use authentication-UI-fail and interactive reads use authentication-UI-allow, while `ClaudeRateLimitsModelTests` verifies appearance is passive, no API request occurs when interaction is required, and explicit Connect permits interaction before fetching. |
 | Claude credential lifetime | `ClaudeCredentialBrokerTests` verifies future-expiry credentials are retained in process memory and explicit invalidation clears them, while `ClaudeCredentialBroker` checks expiry on each access and clears an expired cached value before rereading Keychain rather than proactively removing it at the expiry instant; `ProviderAuthenticationTests` verifies persisted settings exclude secret fields. |
@@ -128,7 +128,7 @@ These checks require a local signed app and should not be inferred from fixture 
 9. Press **Check Again** and confirm it remains a passive no-UI action.
 10. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
 11. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
-12. Disconnect the network and confirm the five-second local JSONL, custom, SQLite, and Codex refresh continues without provider polling.
+12. Select each Local Refresh cadence, disconnect the network, and confirm Local Usage Events, Custom Usage Sources, SQLite, and Codex refresh continues without provider polling or Keychain prompts.
 13. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
 14. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
 15. Open Alerts settings and confirm no notification permission prompt appears before pressing **Enable Notifications**.

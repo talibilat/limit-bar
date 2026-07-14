@@ -60,11 +60,12 @@ final class LimitBarState {
 
     private init() {
         let sessionsDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
             codex: CodexSessionScanner(sessionsDirectory: sessionsDirectory)
-        ))
+        ), refreshInterval: refreshCadence.seconds)
         claudeModel = ClaudeRateLimitsModel(
             credentials: ClaudeCredentialBroker.shared,
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
@@ -108,6 +109,12 @@ final class LimitBarState {
         guard usesLiveRefresh else { return }
         providerSettings = ProviderSettingsStore().settings
         Task { [coordinator] in await coordinator.requestRefresh() }
+    }
+
+    func localRefreshSettingsChanged() {
+        guard usesLiveRefresh else { return }
+        let cadence = LocalRefreshSettingsStore().cadence
+        Task { [coordinator] in await coordinator.setRefreshInterval(cadence.seconds) }
     }
 
     func clearHistoricalUsage() {
@@ -195,6 +202,9 @@ private struct MenuBarStatusLabel: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .historicalUsageDidChange)) { _ in
                 state.requestLocalRefresh()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .localRefreshSettingsDidChange)) { _ in
+                state.localRefreshSettingsChanged()
             }
             .onReceive(NotificationCenter.default.publisher(for: .alertSettingsDidChange)) { _ in
                 state.alertSettingsChanged()
