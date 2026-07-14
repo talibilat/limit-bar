@@ -80,6 +80,22 @@ struct ClaudeRateLimitsModelTests {
         #expect(!model.isRefreshing)
     }
 
+    @Test("interactive authorization failure keeps Connect available for retry")
+    func interactiveAuthorizationFailure() async {
+        let client = ClaudeClientSpy(result: .failure(.requestRejected))
+        let model = ClaudeRateLimitsModel(
+            credentials: CredentialProviderSpy(results: [.failure(.authFailed)]),
+            client: client
+        )
+
+        await model.connect()
+
+        #expect(model.state == .authorizationRequired)
+        #expect(model.isPresent)
+        #expect(!model.isRefreshing)
+        #expect(client.tokens.isEmpty)
+    }
+
     @Test("API cancellation preserves prior state and clears refresh flag")
     func apiCancellation() async {
         let prior = makeClaudeSnapshot()

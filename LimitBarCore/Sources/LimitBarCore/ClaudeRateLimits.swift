@@ -322,6 +322,10 @@ public final class ClaudeRateLimitsModel {
             return
         case .failure(.userCancelled):
             return
+        case .failure(.authFailed) where intent == .interactive:
+            isPresent = true
+            state = .authorizationRequired
+            return
         case let .failure(error):
             isPresent = true
             state = .failed(error.displayText)

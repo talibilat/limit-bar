@@ -39,6 +39,8 @@ struct ClaudeCredentialBrokerTests {
         (errSecAuthFailed, .failure(.authFailed)),
         (errSecNotAvailable, .failure(.notAvailable)),
         (errSecMissingEntitlement, .failure(.noAccess)),
+        (errSecNotTrusted, .failure(.noAccess)),
+        (OSStatus(-25_243), .failure(.noAccess)),
         (OSStatus(-777_777), .failure(.unexpected(-777_777)))
     ])
     func mapsSecurityStatus(status: OSStatus, expected: ClaudeCredentialResult) async {
