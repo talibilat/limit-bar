@@ -47,6 +47,92 @@ struct UsageDatabaseTests {
         #expect(attempts.value == 2)
     }
 
+    @Test("clean database recovery archives the database and sidecars before replacement")
+    func cleanDatabaseRecoveryArchivesOriginalFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        _ = try SQLiteUsageMetricStore(path: path)
+        try Data("synthetic wal".utf8).write(to: URL(fileURLWithPath: path + "-wal"))
+        try Data("synthetic shm".utf8).write(to: URL(fileURLWithPath: path + "-shm"))
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery(
+            at: Date(timeIntervalSince1970: 1_783_716_000)
+        )
+
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-wal").path))
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-shm").path))
+        let snapshot = await database.snapshot(now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
+        #expect(snapshot.health.isOpen)
+        #expect(snapshot.metrics.isEmpty)
+    }
+
+    @Test("clean database recovery refuses a database held by another writer")
+    func cleanDatabaseRecoveryRefusesLockedDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let retained = metric(model: "retained", window: try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar()).today, refreshedAt: now)
+        do {
+            let store = try SQLiteUsageMetricStore(path: path)
+            try store.save([retained])
+        }
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        #expect(await database.snapshot(now: now, calendar: utcCalendar()).metrics == [retained])
+        var lockDatabase: OpaquePointer?
+        guard sqlite3_open(path, &lockDatabase) == SQLITE_OK else { throw TestError.openFailed }
+        defer { sqlite3_close(lockDatabase) }
+        guard sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil) == SQLITE_OK else {
+            throw TestError.openFailed
+        }
+        await #expect(throws: UsageDatabaseRecoveryError.databaseBusy) {
+            try await database.createCleanDatabaseRecovery()
+        }
+
+        #expect(FileManager.default.fileExists(atPath: path))
+        let fallback = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(fallback.metrics == [retained])
+        #expect(!fallback.health.isOpen)
+    }
+
+    @Test("clean database recovery retains a corrupt database before replacement")
+    func cleanDatabaseRecoveryRetainsCorruptDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let corruptBytes = Data("not a sqlite database".utf8)
+        try corruptBytes.write(to: URL(fileURLWithPath: path))
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery()
+
+        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics.sqlite")) == corruptBytes)
+        #expect((try? SQLiteUsageMetricStore(path: path)) != nil)
+    }
+
+    @Test("clean database recovery retains a read-only database before replacement")
+    func cleanDatabaseRecoveryRetainsReadOnlyDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        _ = try SQLiteUsageMetricStore(path: path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let archive = try await database.createCleanDatabaseRecovery()
+
+        #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
+        #expect((try? SQLiteUsageMetricStore(path: path)) != nil)
+    }
+
     @Test("provider apply and reads are serialized through the actor")
     func providerApplyAndReadAreSerialized() async throws {
         let path = temporaryDatabasePath()

@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "fixtures": [
+    {
+      "id": "usage-pre-release-v0",
+      "store": "usage-metrics",
+      "logicalSchema": "pre-provenance",
+      "sqliteUserVersion": 0,
+      "releaseRange": "source builds before the first public release",
+      "origin": "synthetic",
+      "file": "usage-pre-release-v0.sql",
+      "expected": {
+        "resultUserVersion": 2,
+        "rowCount": 4,
+        "recordSHA256": "6c723b5c2ed3dc314ef14f2fd92d41d895f2408fa26af6b477a6bd177aa53d48"
+      }
+    },
+    {
+      "id": "usage-first-release-v2",
+      "store": "usage-metrics",
+      "logicalSchema": "exact-window-provenance",
+      "sqliteUserVersion": 2,
+      "releaseRange": "first public release baseline",
+      "origin": "synthetic",
+      "file": "usage-first-release-v2.sql",
+      "expected": {
+        "resultUserVersion": 2,
+        "rowCount": 4,
+        "recordSHA256": "6f38d808c80571f2289bb72d72857a1d7aa7ec8d6f35520829821d83d7cab9d5"
+      }
+    }
+  ]
+}

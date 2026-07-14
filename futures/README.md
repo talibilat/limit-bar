@@ -9,7 +9,7 @@ They preserve concrete next questions while keeping current behavior honest.
 2. Complete representative measurements for [`04-refresh-performance-profiling.md`](04-refresh-performance-profiling.md) before making cadence configurable.
 3. Add CI for core tests, native builds, whitespace checks, and migration fixtures.
 4. Decide the long-term App Sandbox and file-access model before public distribution.
-5. Run release-level migration QA against copied databases from every shipped schema.
+5. Maintain the implemented [`release migration QA`](07-release-migration-qa.md) matrix and run binary-to-binary acceptance after the first public release exists.
 
 Native app integration tests and UI automation are implemented in [`03-native-app-test-target-ui-automation.md`](03-native-app-test-target-ui-automation.md).
 

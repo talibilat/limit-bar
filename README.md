@@ -93,6 +93,10 @@ If SQLite becomes unavailable after a valid snapshot, LimitBar returns that last
 If no valid snapshot exists yet, it returns empty metrics with unhealthy status.
 Custom-source failures similarly preserve that source's previously persisted metrics and emit a generic failure diagnostic.
 
+Schema migrations accept only known schema fingerprints and run transactionally.
+An unsupported database remains in place, and Settings provides retry and explicit archival recovery actions instead of silently replacing it.
+See [`docs/MIGRATIONS_AND_RECOVERY.md`](docs/MIGRATIONS_AND_RECOVERY.md) for the release matrix and recovery procedure.
+
 ## Local Files And Custom Sources
 
 The default local paths are:

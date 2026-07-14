@@ -16,6 +16,8 @@ struct LimitBarSettingsView: View {
     @State private var effectiveAt = Date()
     @State private var pricingEntries = PricingSettingsStore().entries
     @State private var localEventsRevealMessage: String?
+    @State private var databaseRecoveryMessage: String?
+    @State private var confirmsCleanDatabase = false
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -56,6 +58,34 @@ struct LimitBarSettingsView: View {
                 }
                 if let storedMetrics {
                     LabeledContent("Usage database", value: storedMetrics.health.message)
+                    if !storedMetrics.health.isOpen {
+                        Text("The existing database has been left unchanged. Retry with this or a newer LimitBar version before creating a clean database.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Button("Retry") {
+                                    retryDatabase()
+                                }
+                                Button("Open Recovery Guide") {
+                                    openRecoveryGuide()
+                                }
+                            }
+                            HStack {
+                                Button("Reveal Database Folder") {
+                                    revealDatabaseFolder()
+                                }
+                                Button("Create Clean Database", role: .destructive) {
+                                    confirmsCleanDatabase = true
+                                }
+                            }
+                        }
+                    }
+                    if let databaseRecoveryMessage {
+                        Text(databaseRecoveryMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     LabeledContent("Local events imported", value: "\(storedMetrics.localImport.validEventCount)")
                     LabeledContent("Local malformed events", value: "\(storedMetrics.localImport.malformedEventCount)")
                     if storedMetrics.localImport.failureMessage != nil {
@@ -130,6 +160,18 @@ struct LimitBarSettingsView: View {
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
         }
+        .confirmationDialog(
+            "Archive the existing usage database and create a clean one?",
+            isPresented: $confirmsCleanDatabase,
+            titleVisibility: .visible
+        ) {
+            Button("Archive and Create Clean Database", role: .destructive) {
+                createCleanDatabase()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Metrics that cannot be reimported remain only in the local Recovery folder. Settings and Keychain credentials are not changed.")
+        }
     }
 
     private func savePricing() {
@@ -168,6 +210,48 @@ struct LimitBarSettingsView: View {
             }
         } catch {
             localEventsRevealMessage = "Could not create the local events directory."
+        }
+    }
+
+    private func retryDatabase() {
+        Task {
+            storedMetrics = await UsageDatabase.shared.snapshot()
+            databaseRecoveryMessage = storedMetrics?.health.isOpen == true
+                ? "The usage database opened successfully."
+                : "The usage database is still unavailable."
+        }
+    }
+
+    private func openRecoveryGuide() {
+        guard let url = URL(string: "https://github.com/talibilat/limit-bar/blob/main/docs/MIGRATIONS_AND_RECOVERY.md") else { return }
+        if !NSWorkspace.shared.open(url) {
+            databaseRecoveryMessage = "Could not open the recovery guide."
+        }
+    }
+
+    private func revealDatabaseFolder() {
+        Task {
+            do {
+                let directory = try await UsageDatabase.shared.databaseDirectoryURL()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                databaseRecoveryMessage = NSWorkspace.shared.open(directory)
+                    ? nil
+                    : "Could not reveal the usage database folder."
+            } catch {
+                databaseRecoveryMessage = "Could not reveal the usage database folder."
+            }
+        }
+    }
+
+    private func createCleanDatabase() {
+        Task {
+            do {
+                let archive = try await UsageDatabase.shared.createCleanDatabaseRecovery()
+                storedMetrics = await UsageDatabase.shared.snapshot()
+                databaseRecoveryMessage = "The original database was retained in \(archive.lastPathComponent)."
+            } catch {
+                databaseRecoveryMessage = "Could not create a clean database. The original database was not intentionally deleted."
+            }
         }
     }
 }

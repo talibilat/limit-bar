@@ -356,59 +356,52 @@ public final class SQLiteUsageMetricStore {
 
     private func migrateSchema() throws {
         let version = try userVersion()
-        guard version <= 2 else {
+        guard version == 0 || version == 2 else {
             throw UsageMetricStoreError.executeFailed("Unsupported usage metric schema version \(version)")
         }
-        guard version < 2 else { return }
 
         if version == 0, try !tableExists("usage_metrics") {
+            guard try schemaObjects().isEmpty else {
+                throw UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 0")
+            }
             try createLatestSchema()
-        } else {
+        } else if version == 0 {
+            guard try tableFingerprint("usage_metrics") == Self.legacyUsageMetricFingerprint,
+                  try schemaObjects() == ["table:usage_metrics"],
+                  try normalizedTableSQL("usage_metrics") == Self.normalizedLegacyUsageMetricsTableSQL else {
+                throw UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version \(version)")
+            }
             try migrateLegacySchema()
+        } else {
+            let allowedObjects: Set<String> = [
+                "table:usage_metrics", "table:app_metadata",
+                "index:usage_metrics_current_windows", "index:usage_metrics_replacement_scope"
+            ]
+            let fingerprint = try tableFingerprint("usage_metrics")
+            let normalizedSQL = try normalizedTableSQL("usage_metrics")
+            let isCanonical = fingerprint == Self.currentUsageMetricFingerprint
+                && normalizedSQL == Self.normalizedCurrentUsageMetricsTableSQL
+            let isKnownWeakVariant = fingerprint == Self.legacyMigratedCurrentFingerprint
+                && normalizedSQL == Self.normalizedLegacyMigratedUsageMetricsTableSQL
+            guard try schemaObjects().isSubset(of: allowedObjects), isCanonical || isKnownWeakVariant else {
+                throw UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 2")
+            }
+            guard try tableFingerprint("app_metadata") == Self.metadataFingerprint,
+                  try normalizedSchemaObjectSQL(type: "table", name: "app_metadata") == Self.normalizedMetadataTableSQL else {
+                throw UsageMetricStoreError.executeFailed("Unsupported app metadata schema fingerprint for version 2")
+            }
+            if isKnownWeakVariant {
+                try rebuildCurrentSchema()
+            } else {
+                try repairSupportingIndexes()
+            }
         }
     }
 
     private func createLatestSchema() throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
-            try execute("""
-            CREATE TABLE usage_metrics (
-                id TEXT PRIMARY KEY,
-                provider TEXT NOT NULL,
-                account_label TEXT,
-                project_label TEXT,
-                model_label TEXT NOT NULL,
-                deployment_label TEXT,
-                time_window TEXT NOT NULL,
-                source_kind TEXT NOT NULL CHECK (source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom')),
-                source_identifier TEXT,
-                window_start INTEGER,
-                window_end INTEGER,
-                window_basis TEXT CHECK (window_basis IS NULL OR window_basis IN ('localCalendar', 'utcBilling')),
-                aggregation_version INTEGER CHECK (aggregation_version IS NULL OR (typeof(aggregation_version) = 'integer' AND aggregation_version > 0)),
-                input_tokens INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                cost_amount TEXT,
-                cost_currency_code TEXT,
-                cost_source TEXT,
-                limit_status TEXT NOT NULL,
-                limit_used REAL,
-                limit_value REAL,
-                refreshed_at REAL,
-                freshness_status TEXT NOT NULL,
-                missed_refreshes INTEGER NOT NULL,
-                CHECK (
-                    (source_kind = 'legacy' AND source_identifier IS NULL AND window_start IS NULL AND window_end IS NULL AND window_basis IS NULL AND aggregation_version IS NULL)
-                    OR
-                    (source_kind IN ('providerAPI', 'builtInLocalLog', 'custom') AND window_start IS NOT NULL AND window_end IS NOT NULL AND typeof(window_start) = 'integer' AND typeof(window_end) = 'integer' AND window_end > window_start AND window_basis IS NOT NULL AND aggregation_version IS NOT NULL AND typeof(aggregation_version) = 'integer')
-                ),
-                CHECK (
-                    (source_kind = 'custom' AND source_identifier IS NOT NULL)
-                    OR
-                    (source_kind != 'custom' AND source_identifier IS NULL)
-                )
-            );
-            """)
+            try createUsageMetricsTable()
             try createSupportingSchema()
             try execute("PRAGMA user_version = 2;")
             try execute("COMMIT;")
@@ -421,12 +414,23 @@ public final class SQLiteUsageMetricStore {
     private func migrateLegacySchema() throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
-            try execute("ALTER TABLE usage_metrics ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom'));")
-            try execute("ALTER TABLE usage_metrics ADD COLUMN source_identifier TEXT;")
-            try execute("ALTER TABLE usage_metrics ADD COLUMN window_start INTEGER CHECK (window_start IS NULL OR typeof(window_start) = 'integer');")
-            try execute("ALTER TABLE usage_metrics ADD COLUMN window_end INTEGER CHECK (window_end IS NULL OR typeof(window_end) = 'integer');")
-            try execute("ALTER TABLE usage_metrics ADD COLUMN window_basis TEXT CHECK (window_basis IS NULL OR window_basis IN ('localCalendar', 'utcBilling'));")
-            try execute("ALTER TABLE usage_metrics ADD COLUMN aggregation_version INTEGER CHECK (aggregation_version IS NULL OR (typeof(aggregation_version) = 'integer' AND aggregation_version > 0));")
+            try execute("ALTER TABLE usage_metrics RENAME TO usage_metrics_legacy;")
+            try createUsageMetricsTable()
+            try execute("""
+            INSERT INTO usage_metrics (
+                id, provider, account_label, project_label, model_label, deployment_label, time_window,
+                source_kind, source_identifier, window_start, window_end, window_basis, aggregation_version,
+                input_tokens, output_tokens, cost_amount, cost_currency_code, cost_source,
+                limit_status, limit_used, limit_value, refreshed_at, freshness_status, missed_refreshes
+            )
+            SELECT
+                id, provider, account_label, project_label, model_label, deployment_label, time_window,
+                'legacy', NULL, NULL, NULL, NULL, NULL,
+                input_tokens, output_tokens, cost_amount, cost_currency_code, cost_source,
+                limit_status, limit_used, limit_value, refreshed_at, freshness_status, missed_refreshes
+            FROM usage_metrics_legacy;
+            """)
+            try execute("DROP TABLE usage_metrics_legacy;")
             try createSupportingSchema()
             try execute("PRAGMA user_version = 2;")
             try execute("COMMIT;")
@@ -441,6 +445,282 @@ public final class SQLiteUsageMetricStore {
         try execute("CREATE INDEX IF NOT EXISTS usage_metrics_current_windows ON usage_metrics (time_window, window_start, window_end, window_basis);")
         try execute("CREATE INDEX IF NOT EXISTS usage_metrics_replacement_scope ON usage_metrics (provider, time_window, source_kind, source_identifier);")
     }
+
+    private func rebuildCurrentSchema() throws {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try execute("ALTER TABLE usage_metrics RENAME TO usage_metrics_previous;")
+            try createUsageMetricsTable()
+            try execute("""
+            INSERT INTO usage_metrics (\(selectColumns))
+            SELECT \(selectColumns) FROM usage_metrics_previous;
+            """)
+            try execute("DROP TABLE usage_metrics_previous;")
+            try createSupportingSchema()
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    private func createUsageMetricsTable() throws {
+        try execute(Self.currentUsageMetricsTableSQL)
+    }
+
+    private func repairSupportingIndexes() throws {
+        let expected: [(String, [String], String)] = [
+            (
+                "usage_metrics_current_windows",
+                ["time_window", "window_start", "window_end", "window_basis"],
+                Self.normalizedCurrentWindowsIndexSQL
+            ),
+            (
+                "usage_metrics_replacement_scope",
+                ["provider", "time_window", "source_kind", "source_identifier"],
+                Self.normalizedReplacementScopeIndexSQL
+            )
+        ]
+        guard try expected.contains(where: {
+            try indexColumns($0.0) != $0.1
+                || normalizedSchemaObjectSQL(type: "index", name: $0.0) != $0.2
+        }) else { return }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            for (name, _, _) in expected {
+                try execute("DROP INDEX IF EXISTS \(name);")
+            }
+            try createSupportingSchema()
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    private func indexColumns(_ name: String) throws -> [String] {
+        let statement = try prepare("PRAGMA index_info(\(name));")
+        defer { sqlite3_finalize(statement) }
+        var columns: [String] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            if let name = stringColumn(statement, index: 2) { columns.append(name) }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
+        }
+        return columns
+    }
+
+    private func tableFingerprint(_ table: String) throws -> [ColumnFingerprint] {
+        let statement = try prepare("PRAGMA table_info(\(table));")
+        defer { sqlite3_finalize(statement) }
+        var columns: [ColumnFingerprint] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            columns.append(ColumnFingerprint(
+                name: requiredString(statement, index: 1),
+                type: requiredString(statement, index: 2).uppercased(),
+                isRequired: sqlite3_column_int(statement, 3) == 1,
+                isPrimaryKey: sqlite3_column_int(statement, 5) == 1
+            ))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
+        }
+        return columns
+    }
+
+    private func schemaObjects() throws -> Set<String> {
+        let statement = try prepare("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%';")
+        defer { sqlite3_finalize(statement) }
+        var objects = Set<String>()
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            objects.insert("\(requiredString(statement, index: 0)):\(requiredString(statement, index: 1))")
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else {
+            throw UsageMetricStoreError.executeFailed(Self.message(from: database))
+        }
+        return objects
+    }
+
+    private func normalizedTableSQL(_ table: String) throws -> String? {
+        try normalizedSchemaObjectSQL(type: "table", name: table)
+    }
+
+    private func normalizedSchemaObjectSQL(type: String, name: String) throws -> String? {
+        let statement = try prepare("SELECT sql FROM sqlite_master WHERE type = ? AND name = ?;")
+        defer { sqlite3_finalize(statement) }
+        bind(type, at: 1, in: statement)
+        bind(name, at: 2, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW, let sql = stringColumn(statement, index: 0) else { return nil }
+        return Self.normalizeSchemaSQL(sql)
+    }
+
+    private struct ColumnFingerprint: Equatable {
+        let name: String
+        let type: String
+        let isRequired: Bool
+        let isPrimaryKey: Bool
+    }
+
+    private static let legacyUsageMetricFingerprint = fingerprints([
+        ("id", "TEXT", false, true), ("provider", "TEXT", true, false),
+        ("account_label", "TEXT", false, false), ("project_label", "TEXT", false, false),
+        ("model_label", "TEXT", true, false), ("deployment_label", "TEXT", false, false),
+        ("time_window", "TEXT", true, false), ("input_tokens", "INTEGER", true, false),
+        ("output_tokens", "INTEGER", true, false), ("cost_amount", "TEXT", false, false),
+        ("cost_currency_code", "TEXT", false, false), ("cost_source", "TEXT", false, false),
+        ("limit_status", "TEXT", true, false), ("limit_used", "REAL", false, false),
+        ("limit_value", "REAL", false, false), ("refreshed_at", "REAL", false, false),
+        ("freshness_status", "TEXT", true, false), ("missed_refreshes", "INTEGER", true, false)
+    ])
+
+    private static let currentUsageMetricFingerprint = fingerprints([
+        ("id", "TEXT", false, true), ("provider", "TEXT", true, false),
+        ("account_label", "TEXT", false, false), ("project_label", "TEXT", false, false),
+        ("model_label", "TEXT", true, false), ("deployment_label", "TEXT", false, false),
+        ("time_window", "TEXT", true, false), ("source_kind", "TEXT", true, false),
+        ("source_identifier", "TEXT", false, false), ("window_start", "INTEGER", false, false),
+        ("window_end", "INTEGER", false, false), ("window_basis", "TEXT", false, false),
+        ("aggregation_version", "INTEGER", false, false), ("input_tokens", "INTEGER", true, false),
+        ("output_tokens", "INTEGER", true, false), ("cost_amount", "TEXT", false, false),
+        ("cost_currency_code", "TEXT", false, false), ("cost_source", "TEXT", false, false),
+        ("limit_status", "TEXT", true, false), ("limit_used", "REAL", false, false),
+        ("limit_value", "REAL", false, false), ("refreshed_at", "REAL", false, false),
+        ("freshness_status", "TEXT", true, false), ("missed_refreshes", "INTEGER", true, false)
+    ])
+
+    private static let legacyMigratedCurrentFingerprint = legacyUsageMetricFingerprint + fingerprints([
+        ("source_kind", "TEXT", true, false), ("source_identifier", "TEXT", false, false),
+        ("window_start", "INTEGER", false, false), ("window_end", "INTEGER", false, false),
+        ("window_basis", "TEXT", false, false), ("aggregation_version", "INTEGER", false, false)
+    ])
+
+    private static let metadataFingerprint = fingerprints([
+        ("key", "TEXT", false, true), ("value", "TEXT", true, false)
+    ])
+
+    private static func fingerprints(_ values: [(String, String, Bool, Bool)]) -> [ColumnFingerprint] {
+        values.map { ColumnFingerprint(name: $0.0, type: $0.1, isRequired: $0.2, isPrimaryKey: $0.3) }
+    }
+
+    private static func normalizeSchemaSQL(_ sql: String) -> String {
+        sql.lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: ";").union(.whitespacesAndNewlines))
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .replacingOccurrences(of: " ,", with: ",")
+            .replacingOccurrences(of: "( ", with: "(")
+            .replacingOccurrences(of: " )", with: ")")
+    }
+
+    private static let legacyUsageMetricsTableSQL = """
+    CREATE TABLE usage_metrics (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        account_label TEXT,
+        project_label TEXT,
+        model_label TEXT NOT NULL,
+        deployment_label TEXT,
+        time_window TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cost_amount TEXT,
+        cost_currency_code TEXT,
+        cost_source TEXT,
+        limit_status TEXT NOT NULL,
+        limit_used REAL,
+        limit_value REAL,
+        refreshed_at REAL,
+        freshness_status TEXT NOT NULL,
+        missed_refreshes INTEGER NOT NULL
+    );
+    """
+
+    private static let normalizedLegacyUsageMetricsTableSQL = normalizeSchemaSQL(legacyUsageMetricsTableSQL)
+    private static let normalizedCurrentUsageMetricsTableSQL = normalizeSchemaSQL(currentUsageMetricsTableSQL)
+    private static let normalizedMetadataTableSQL = normalizeSchemaSQL(
+        "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    private static let normalizedCurrentWindowsIndexSQL = normalizeSchemaSQL(
+        "CREATE INDEX usage_metrics_current_windows ON usage_metrics (time_window, window_start, window_end, window_basis);"
+    )
+    private static let normalizedReplacementScopeIndexSQL = normalizeSchemaSQL(
+        "CREATE INDEX usage_metrics_replacement_scope ON usage_metrics (provider, time_window, source_kind, source_identifier);"
+    )
+    private static let normalizedLegacyMigratedUsageMetricsTableSQL = normalizeSchemaSQL("""
+    CREATE TABLE usage_metrics (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        account_label TEXT,
+        project_label TEXT,
+        model_label TEXT NOT NULL,
+        deployment_label TEXT,
+        time_window TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cost_amount TEXT,
+        cost_currency_code TEXT,
+        cost_source TEXT,
+        limit_status TEXT NOT NULL,
+        limit_used REAL,
+        limit_value REAL,
+        refreshed_at REAL,
+        freshness_status TEXT NOT NULL,
+        missed_refreshes INTEGER NOT NULL,
+        source_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom')),
+        source_identifier TEXT,
+        window_start INTEGER CHECK (window_start IS NULL OR typeof(window_start) = 'integer'),
+        window_end INTEGER CHECK (window_end IS NULL OR typeof(window_end) = 'integer'),
+        window_basis TEXT CHECK (window_basis IS NULL OR window_basis IN ('localCalendar', 'utcBilling')),
+        aggregation_version INTEGER CHECK (aggregation_version IS NULL OR (typeof(aggregation_version) = 'integer' AND aggregation_version > 0))
+    );
+    """)
+
+    private static let currentUsageMetricsTableSQL = """
+    CREATE TABLE usage_metrics (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        account_label TEXT,
+        project_label TEXT,
+        model_label TEXT NOT NULL,
+        deployment_label TEXT,
+        time_window TEXT NOT NULL,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('legacy', 'providerAPI', 'builtInLocalLog', 'custom')),
+        source_identifier TEXT,
+        window_start INTEGER,
+        window_end INTEGER,
+        window_basis TEXT CHECK (window_basis IS NULL OR window_basis IN ('localCalendar', 'utcBilling')),
+        aggregation_version INTEGER CHECK (aggregation_version IS NULL OR (typeof(aggregation_version) = 'integer' AND aggregation_version > 0)),
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cost_amount TEXT,
+        cost_currency_code TEXT,
+        cost_source TEXT,
+        limit_status TEXT NOT NULL,
+        limit_used REAL,
+        limit_value REAL,
+        refreshed_at REAL,
+        freshness_status TEXT NOT NULL,
+        missed_refreshes INTEGER NOT NULL,
+        CHECK (
+            (source_kind = 'legacy' AND source_identifier IS NULL AND window_start IS NULL AND window_end IS NULL AND window_basis IS NULL AND aggregation_version IS NULL)
+            OR
+            (source_kind IN ('providerAPI', 'builtInLocalLog', 'custom') AND window_start IS NOT NULL AND window_end IS NOT NULL AND typeof(window_start) = 'integer' AND typeof(window_end) = 'integer' AND window_end > window_start AND window_basis IS NOT NULL AND aggregation_version IS NOT NULL AND typeof(aggregation_version) = 'integer')
+        ),
+        CHECK (
+            (source_kind = 'custom' AND source_identifier IS NOT NULL)
+            OR
+            (source_kind != 'custom' AND source_identifier IS NULL)
+        )
+    );
+    """
 
     private func userVersion() throws -> Int {
         let statement = try prepare("PRAGMA user_version;")
