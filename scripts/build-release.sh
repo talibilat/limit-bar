@@ -1,0 +1,58 @@
+#!/bin/bash
+set -euo pipefail
+
+required=(RELEASE_TAG RELEASE_BUILD_NUMBER DEVELOPER_ID_APPLICATION APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD)
+for name in "${required[@]}"; do
+  if [[ -z "${!name:-}" ]]; then
+    printf 'error: required release value %s is missing\n' "$name" >&2
+    exit 1
+  fi
+done
+
+version="${RELEASE_TAG#v}"
+archive="$RUNNER_TEMP/LimitBar.xcarchive"
+export_path="$RUNNER_TEMP/LimitBar-export"
+submission_zip="$RUNNER_TEMP/LimitBar-notarization.zip"
+artifact="dist/LimitBar-$version.zip"
+rm -rf "$archive" "$export_path" dist
+mkdir -p "$export_path" dist
+
+xcodebuild archive \
+  -project LimitBar.xcodeproj \
+  -scheme LimitBar \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -archivePath "$archive" \
+  CODE_SIGN_STYLE=Manual \
+  CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION" \
+  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+  MARKETING_VERSION="$version" \
+  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
+
+app="$archive/Products/Applications/LimitBar.app"
+codesign --verify --deep --strict --verbose=2 "$app"
+identity="$(codesign -dv --verbose=4 "$app" 2>&1 | awk -F= '/^Authority=Developer ID Application:/ { print $2; exit }')"
+if [[ "$identity" != "$DEVELOPER_ID_APPLICATION" ]]; then
+  printf 'error: archived app does not have the expected stable signing identity\n' >&2
+  exit 1
+fi
+
+ditto -c -k --keepParent "$app" "$submission_zip"
+xcrun notarytool submit "$submission_zip" \
+  --apple-id "$APPLE_ID" \
+  --team-id "$APPLE_TEAM_ID" \
+  --password "$APPLE_APP_PASSWORD" \
+  --wait
+xcrun stapler staple "$app"
+xcrun stapler validate "$app"
+spctl --assess --type execute --verbose=2 "$app"
+codesign --verify --deep --strict --verbose=2 "$app"
+
+ditto -c -k --keepParent "$app" "$artifact"
+unpacked="$RUNNER_TEMP/LimitBar-verify"
+rm -rf "$unpacked"
+mkdir -p "$unpacked"
+ditto -x -k "$artifact" "$unpacked"
+codesign --verify --deep --strict --verbose=2 "$unpacked/LimitBar.app"
+xcrun stapler validate "$unpacked/LimitBar.app"
+printf 'verified signed and notarized release artifact %s\n' "$(basename "$artifact")"

@@ -13,6 +13,10 @@ let package = Package(
             targets: ["LimitBarCore"]
         ),
         .executable(
+            name: "LimitBarRefreshBenchmark",
+            targets: ["LimitBarRefreshBenchmark"]
+        ),
+        .executable(
             name: "limitbar-collect",
             targets: ["CollectorCLI"]
         ),
@@ -29,8 +33,13 @@ let package = Package(
         .target(
             name: "LimitBarCore",
             linkerSettings: [
-                .linkedFramework("Security")
+                .linkedFramework("Security"),
+                .linkedLibrary("sqlite3")
             ]
+        ),
+        .executableTarget(
+            name: "LimitBarRefreshBenchmark",
+            dependencies: ["LimitBarCore"]
         ),
         .executableTarget(
             name: "CollectorCLI",

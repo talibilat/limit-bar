@@ -37,6 +37,9 @@ jobs:
       - name: Test core
         run: swift test --package-path LimitBarCore
 
+      - name: Validate migrations with release tooling
+        run: scripts/validate-migrations.sh
+
       - name: Build unsigned app
         run: >-
           xcodebuild

@@ -89,6 +89,7 @@ This check is not evidence of filesystem isolation.
 | Claude credential lifetime | `ClaudeCredentialBrokerTests` verifies future-expiry credentials are retained in process memory and explicit invalidation clears them, while `ClaudeCredentialBroker` checks expiry on each access and clears an expired cached value before rereading Keychain rather than proactively removing it at the expiry instant; `ProviderAuthenticationTests` verifies persisted settings exclude secret fields. |
 | Local Monday week and UTC billing week | `UsageModelTests` verifies local Monday boundaries independent of `firstWeekday`, exclusive following-Monday ends, DST-aware local days, and Monday-midnight UTC billing boundaries, while `UsagePresentationTests` verifies UTC billing rows are separate from local cards. |
 | Exact snapshots | `UsageModelTests`, `SQLiteUsageMetricStoreTests`, and `UsageDatabaseTests` verify validation, bounded provenance encoding, exact identity round trips, and selection of only current bounded rows. |
+| Historical usage | `HistoricalUsageTrendStoreTests` and `UsageDatabaseTests` verify exact periods, DST and timezone identity, immutable corrections, rollover finalization, observed zero versus gaps, provider-authoritative totals with retained model attribution, source removal, bounded retention, deletion, pricing revisions, and the positive privacy allowlist. |
 | Legacy behavior | `UsageModelTests`, `SQLiteUsageMetricStoreTests`, and `UsagePresentationTests` verify legacy JSON decoding, physical v1 migration without invented bounds, and exclusion from provider cards. |
 | SQLite last-good behavior | `UsageDatabaseTests` verifies cancellation and exclusive-lock failures preserve the last valid metrics with unhealthy status before recovery and verifies failed custom refreshes preserve the prior source snapshot. |
 | Built-in JSONL safety | `LocalUsageEventImporterTests` verifies the 100 MiB file cap, 1 MiB line cap, 10,000 aggregate-key cap, regular-file checks, malformed and invalid UTF-8 handling, checked token sums, five-minute future-skew boundary, cancellation before and during streaming, current exact-window replacement, and preservation of previous metrics on failure or cancellation. |
@@ -103,7 +104,7 @@ This check is not evidence of filesystem isolation.
 | HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
 | Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
 | Provider persistence safety | Anthropic and OpenAI provider tests verify cancellation preservation, scoped replacement, stale retained values after failure, exact local and UTC windows, and safe typed failure reasons. |
-| Native app automation | `LimitBarTests` covers app-owned persistence and `LimitBarUITests` launches the app executable against production popover and Custom Usage Source views. Debug-only composition injects synthetic Claude state, disabled refresh, temporary files, and isolated UserDefaults without reading production SQLite, provider settings, Keychain, Codex sessions, or network resources. |
+| Native app automation | The Xcode build compiles the app, History chart, and production integrations. `LimitBarTests` covers app-owned persistence, while `LimitBarUITests` launches the app against production popover and Custom Usage Source views. Debug-only composition injects synthetic state without reading production SQLite, provider settings, Keychain, Codex sessions, or network resources; historical chart inspection remains manual. |
 
 ## Manual Acceptance
 
@@ -114,12 +115,15 @@ These checks require a local signed app and should not be inferred from fixture 
 3. Press **Connect** and confirm macOS presents the Keychain authorization UI.
 4. Choose **Always Allow**, relaunch the same signed build, and confirm the existing item can be read without another prompt.
 5. Change the build's code identity or recreate the `Claude Code-credentials` item, then confirm macOS may request authorization again.
-6. Press **Check Again** and confirm it remains a passive no-UI action.
-7. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
-8. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
-9. Disconnect the network and confirm the five-second local JSONL, custom, SQLite, and Codex refresh continues without provider polling.
-10. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
-11. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
+6. Open History and confirm observed zero periods render as zero while unavailable periods render as gaps.
+7. Change the system timezone, refresh, and confirm existing periods retain their original timezone labels without being rebucketed.
+8. Change historical retention in Settings, then delete history and confirm current usage, settings, credentials, and source files remain available.
+9. Press **Check Again** and confirm it remains a passive no-UI action.
+10. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
+11. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
+12. Disconnect the network and confirm the five-second local JSONL, custom, SQLite, and Codex refresh continues without provider polling.
+13. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
+14. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
 
 ## Repository-Only Boundary
 

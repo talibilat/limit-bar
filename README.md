@@ -9,6 +9,7 @@ Click it for two tabs:
 
 - **Rate Limit** shows percent used, remaining, and reset time for Claude Code and Codex.
 - **Usage** shows confirmed token counts and costs by provider and model for Today or Current Week.
+- **History** shows local 30-day and 12-week token trends, exact gaps, in-progress periods, and costs grouped by currency.
 
 ![LimitBar Rate Limit tab showing Claude session and weekly windows](docs/ss3.png)
 
@@ -89,6 +90,12 @@ Legacy JSON also decodes as legacy provenance when it has only a `timeWindow` va
 Legacy rows remain available to low-level storage reads and legacy replacement APIs, but current snapshots and provider cards intentionally exclude them.
 Rows with a `refreshedAt` older than 90 days are deleted during snapshot loading.
 
+Successful refreshes also preserve privacy-safe historical aggregates in `historical-usage-trends.sqlite`.
+Historical periods retain exact boundaries and timezone identity, distinguish unavailable gaps from observed zero usage, and preserve corrected values as explicit revisions rather than silently rewriting them.
+Provider API measurements are preferred for totals when local measurements cover the same provider, while local model attribution remains non-additive supporting detail.
+Calculated historical costs are frozen against the configured price effective at the usage window start and retain a pricing revision.
+Settings offers bounded 30, 90, 365, and 730-day retention, with 365 days as the default, plus deletion that leaves current usage, settings, credentials, and source files untouched.
+
 If SQLite becomes unavailable after a valid snapshot, LimitBar returns that last valid in-process snapshot with unhealthy store status instead of replacing the display with empty data.
 If no valid snapshot exists yet, it returns empty metrics with unhealthy status.
 Custom-source failures similarly preserve that source's previously persisted metrics and emit a generic failure diagnostic.
@@ -104,6 +111,7 @@ The default local paths are:
 - `~/.codex/sessions` for Codex session logs and local rate-limit snapshots.
 - `~/Library/Application Support/LimitBar/usage-events.jsonl` for normalized LimitBar usage events.
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
+- `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.

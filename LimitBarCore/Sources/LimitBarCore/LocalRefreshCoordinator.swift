@@ -5,10 +5,16 @@ import os
 public struct LocalUsageRefresh: Equatable, Sendable {
     public let snapshot: StoredUsageMetricsSnapshot
     public let customDiagnostics: [CustomUsageRefreshDiagnostic]
+    public let history: HistoricalUsageSnapshot
 
-    public init(snapshot: StoredUsageMetricsSnapshot, customDiagnostics: [CustomUsageRefreshDiagnostic]) {
+    public init(
+        snapshot: StoredUsageMetricsSnapshot,
+        customDiagnostics: [CustomUsageRefreshDiagnostic],
+        history: HistoricalUsageSnapshot = .loading
+    ) {
         self.snapshot = snapshot
         self.customDiagnostics = customDiagnostics
+        self.history = history
     }
 }
 
@@ -109,6 +115,7 @@ public final class LimitBarLocalStateProjection {
     public private(set) var customImportFailures = 0
     public private(set) var customRejectedLines = 0
     public private(set) var codexSnapshot: CodexRateLimitSnapshot?
+    public private(set) var history = HistoricalUsageSnapshot.loading
 
     public init() {}
 
@@ -119,9 +126,19 @@ public final class LimitBarLocalStateProjection {
             localImport = usage.snapshot.localImport
             customImportFailures = usage.customDiagnostics.filter { $0.failureMessage != nil }.count
             customRejectedLines = usage.customDiagnostics.reduce(0) { $0 + $1.rejectedLineCount }
+            history = usage.history
             status = AppStatus.from(menuBarStatus: MenuBarStatus.from(metrics: metrics))
         }
         codexSnapshot = refresh.codex
+    }
+
+    public func clearHistory() {
+        history = HistoricalUsageSnapshot(
+            dailyBuckets: [],
+            weeklyBuckets: [],
+            health: UsageStoreHealth(isOpen: true, message: "Historical usage database opened"),
+            retention: history.retention
+        )
     }
 }
 

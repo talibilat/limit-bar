@@ -3,6 +3,9 @@ import LimitBarCore
 import AppKit
 
 struct LimitBarSettingsView: View {
+    var showsProviderAuthentication = true
+    var state = LimitBarState.shared
+
     private let pricingStore = PricingSettingsStore()
     private let localEventsPath = (try? LocalUsageEventImporter.usageEventsURL().path) ?? "Unavailable"
 
@@ -18,6 +21,9 @@ struct LimitBarSettingsView: View {
     @State private var localEventsRevealMessage: String?
     @State private var databaseRecoveryMessage: String?
     @State private var confirmsCleanDatabase = false
+    @State private var historyRetention = HistoricalUsageRetention.default
+    @State private var showsDeleteHistoryConfirmation = false
+    @State private var historyMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -33,11 +39,13 @@ struct LimitBarSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Provider Authentication") {
-                Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ProviderSettingsView(settings: $providerSettings)
+            if showsProviderAuthentication {
+                Section("Provider Authentication") {
+                    Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ProviderSettingsView(settings: $providerSettings)
+                }
             }
 
             Section("Diagnostics") {
@@ -118,6 +126,36 @@ struct LimitBarSettingsView: View {
                 }
             }
 
+            Section("Historical Usage") {
+                Text("Normalized daily and weekly aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Retention", selection: $historyRetention) {
+                    ForEach(HistoricalUsageRetention.allCases, id: \.rawValue) { retention in
+                        Text(retention.displayName).tag(retention)
+                    }
+                }
+                .onChange(of: historyRetention) { _, retention in
+                    Task {
+                        if await UsageDatabase.shared.setHistoricalRetention(retention) {
+                            historyMessage = "Retention updated."
+                            NotificationCenter.default.post(name: .historicalUsageDidChange, object: nil)
+                        } else {
+                            historyMessage = "Could not update historical retention."
+                        }
+                    }
+                }
+                Button("Delete Historical Usage", role: .destructive) {
+                    showsDeleteHistoryConfirmation = true
+                }
+                .accessibilityIdentifier("delete-historical-usage")
+                if let historyMessage {
+                    Text(historyMessage)
+                        .font(.caption)
+                        .foregroundStyle(historyMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
             CustomUsageSourcesSection()
 
             Section("Pricing") {
@@ -159,6 +197,26 @@ struct LimitBarSettingsView: View {
         .frame(width: 620, height: 720)
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
+            historyRetention = await UsageDatabase.shared.historicalRetention()
+        }
+        .confirmationDialog(
+            "Delete all historical usage?",
+            isPresented: $showsDeleteHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete History", role: .destructive) {
+                Task {
+                    if await UsageDatabase.shared.deleteHistoricalUsage() {
+                        state.clearHistoricalUsage()
+                        historyMessage = "Historical usage deleted. Source files and current usage were not changed."
+                    } else {
+                        historyMessage = "Could not delete historical usage."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained aggregates only. Settings, credentials, current usage, and source JSONL files remain unchanged.")
         }
         .confirmationDialog(
             "Archive the existing usage database and create a clean one?",
@@ -186,7 +244,7 @@ struct LimitBarSettingsView: View {
             modelLabel: modelLabel.trimmingCharacters(in: .whitespacesAndNewlines),
             inputPricePerMillionTokens: input,
             outputPricePerMillionTokens: output,
-            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
             effectiveAt: effectiveAt
         )
         if pricingStore.add(entry) {

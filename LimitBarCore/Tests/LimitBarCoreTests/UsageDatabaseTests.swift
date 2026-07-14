@@ -30,6 +30,103 @@ struct UsageDatabaseTests {
         #expect(second.metrics == first.metrics)
     }
 
+    @Test("archives bounded metrics and exposes gaps separately from confirmed zero")
+    func archivesHistoricalUsage() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        let zero = metric(model: "confirmed-zero", window: windows.today, refreshedAt: now, input: 0, output: 0)
+
+        let history = await database.historicalUsage(metrics: [zero], now: now, calendar: calendar)
+
+        #expect(history.health.isOpen)
+        #expect(history.dailyBuckets.last?.value != .gap)
+        guard case let .observed(observations) = history.dailyBuckets.last?.value else {
+            Issue.record("Expected an observed zero bucket")
+            return
+        }
+        #expect(observations.first?.sample.tokenUsage.totalTokens == 0)
+        #expect(history.dailyBuckets.last?.authoritativeTotals.count == 1)
+        #expect(history.dailyBuckets.last?.modelAttributions.count == 1)
+        #expect(history.dailyBuckets.last?.preferredTokenObservations.count == 1)
+        #expect(history.dailyBuckets.last?.preferredTokenObservations.first?.sample.coverage == .providerTotal)
+        #expect(history.dailyBuckets.dropLast().allSatisfy { $0.value == HistoricalUsageTrendBucket.Value.gap })
+    }
+
+    @Test("history deletion preserves current metrics")
+    func deletesOnlyHistoricalUsage() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let retained = metric(model: "retained", window: windows.today, refreshedAt: now)
+        let currentStore = try SQLiteUsageMetricStore(path: currentPath)
+        try currentStore.save([retained])
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        _ = await database.historicalUsage(metrics: [retained], now: now, calendar: calendar)
+
+        #expect(await database.deleteHistoricalUsage())
+        let current = await database.snapshot(now: now, calendar: calendar)
+        let history = await database.historicalUsage(metrics: [], now: now, calendar: calendar)
+
+        #expect(current.metrics == [retained])
+        #expect(history.dailyBuckets.allSatisfy { $0.value == HistoricalUsageTrendBucket.Value.gap })
+    }
+
+    @Test("successful empty local source records observed zero")
+    func emptyLocalSourceRecordsZero() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        let local = metric(
+            model: "removed",
+            window: windows.today,
+            refreshedAt: now,
+            source: .builtInLocalLog
+        )
+        _ = await database.historicalUsage(metrics: [local], now: now, calendar: calendar)
+
+        let history = await database.historicalUsage(
+            metrics: [],
+            now: now.addingTimeInterval(60),
+            calendar: calendar,
+            observedSources: [.builtInLocalLog]
+        )
+
+        #expect(history.dailyBuckets.last?.preferredTotalTokens == 0)
+    }
+
     @Test("retries opening after failure instead of caching a broken connection")
     func retriesOpenAfterFailure() async {
         let attempts = LockedCounter()
@@ -456,8 +553,15 @@ struct UsageDatabaseTests {
         #expect(recovered.metrics == valid.metrics)
     }
 
-    private func metric(model: String, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {
-        UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: 1, outputTokens: 1), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
+    private func metric(
+        model: String,
+        window: ExactUsageWindow,
+        refreshedAt: Date,
+        input: Int = 1,
+        output: Int = 1,
+        source: UsageMetricSource = .providerAPI
+    ) -> UsageMetric {
+        UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: source, window: window), tokenUsage: TokenUsage(inputTokens: input, outputTokens: output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
     }
 
     private func customMetric(source: CustomUsageSource, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {

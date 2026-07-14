@@ -20,6 +20,14 @@ struct PricingSettingsStore {
         PricingTable(entries: entries)
     }
 
+    var revision: String {
+        let bytes = (defaults.string(forKey: Self.storageKey) ?? Self.defaultJSON).utf8
+        let hash = bytes.reduce(UInt64(14_695_981_039_346_656_037)) { value, byte in
+            (value ^ UInt64(byte)) &* 1_099_511_628_211
+        }
+        return "manual-\(String(hash, radix: 16))"
+    }
+
     @discardableResult
     func add(_ entry: PricingEntry) -> Bool {
         guard !entry.modelLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

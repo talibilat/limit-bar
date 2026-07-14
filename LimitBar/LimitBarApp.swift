@@ -32,10 +32,10 @@ struct LimitBarApp: App {
             if AppTestConfiguration.isEnabled {
                 EmptyView()
             } else {
-                LimitBarSettingsView()
+                LimitBarSettingsView(state: state)
             }
 #else
-            LimitBarSettingsView()
+            LimitBarSettingsView(state: state)
 #endif
         }
     }
@@ -97,13 +97,33 @@ final class LimitBarState {
         Task { [coordinator] in await coordinator.requestRefresh() }
     }
 
+    func clearHistoricalUsage() {
+        local.clearHistory()
+    }
+
 }
 
 private struct ApplicationLocalUsageRefresher: LocalUsageRefreshing {
     func refresh(now: Date, calendar: Calendar) async -> LocalUsageRefresh {
         let diagnostics = await UsageDatabase.shared.refreshCustomSources(CustomUsageSourceStore().sources, now: now, calendar: calendar)
         let snapshot = await UsageDatabase.shared.snapshot(now: now, calendar: calendar)
-        return LocalUsageRefresh(snapshot: snapshot, customDiagnostics: diagnostics)
+        let pricing = PricingSettingsStore()
+        var observedSources = Set<UsageMetricSource>()
+        if snapshot.localImport.failureMessage == nil {
+            observedSources.insert(.builtInLocalLog)
+        }
+        for diagnostic in diagnostics where diagnostic.failureMessage == nil {
+            observedSources.insert(.custom(diagnostic.sourceID))
+        }
+        let history = await UsageDatabase.shared.historicalUsage(
+            metrics: snapshot.metrics,
+            now: now,
+            calendar: calendar,
+            pricing: pricing.pricingTable,
+            pricingRevision: pricing.revision,
+            observedSources: observedSources
+        )
+        return LocalUsageRefresh(snapshot: snapshot, customDiagnostics: diagnostics, history: history)
     }
 }
 
@@ -122,6 +142,9 @@ private struct MenuBarStatusLabel: View {
             .onReceive(NotificationCenter.default.publisher(for: .customUsageSourcesDidChange)) { _ in
                 state.requestLocalRefresh()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .historicalUsageDidChange)) { _ in
+                state.requestLocalRefresh()
+            }
     }
 
     private var statusColor: Color {
@@ -136,4 +159,8 @@ private struct MenuBarStatusLabel: View {
             .secondary
         }
     }
+}
+
+extension Notification.Name {
+    static let historicalUsageDidChange = Notification.Name("LimitBar.historicalUsageDidChange")
 }

@@ -51,12 +51,13 @@ public enum CostCalculator {
     private static let tokenUnit = Decimal(1_000_000)
 
     public static func cost(for metric: UsageMetric, pricing: PricingTable) -> Cost? {
+        guard let usageDate = metric.refreshedAt else { return nil }
+        return cost(for: metric, pricing: pricing, usageDate: usageDate)
+    }
+
+    public static func cost(for metric: UsageMetric, pricing: PricingTable, usageDate: Date) -> Cost? {
         if let cost = metric.cost, cost.source == .providerReported {
             return cost
-        }
-
-        guard let usageDate = metric.refreshedAt else {
-            return nil
         }
         guard let price = pricing.price(for: metric, usageDate: usageDate) else {
             return nil

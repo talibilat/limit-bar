@@ -1,11 +1,13 @@
 import SwiftUI
 import LimitBarCore
+import Charts
 
 struct MonitoringPopoverView: View {
     let state: LimitBarState
     private enum PopoverTab: String, CaseIterable {
         case rateLimit
         case usage
+        case history
 
         var displayName: String {
             switch self {
@@ -13,6 +15,8 @@ struct MonitoringPopoverView: View {
                 "Rate Limit"
             case .usage:
                 "Usage"
+            case .history:
+                "History"
             }
         }
     }
@@ -50,6 +54,8 @@ struct MonitoringPopoverView: View {
                 RateLimitView(state: state, pricingTable: pricingTable)
             case .usage:
                 usageTab
+            case .history:
+                HistoricalUsageView(snapshot: state.local.history)
             }
 
             HStack {
@@ -123,6 +129,161 @@ struct MonitoringPopoverView: View {
         return parts.isEmpty ? "" : " · Custom sources: " + parts.joined(separator: ", ")
     }
 
+}
+
+private struct HistoricalUsageView: View {
+    private enum Grain: String, CaseIterable {
+        case daily = "30 Days"
+        case weekly = "12 Weeks"
+    }
+
+    let snapshot: HistoricalUsageSnapshot
+    @State private var grain = Grain.daily
+
+    private var buckets: [HistoricalUsageTrendBucket] {
+        grain == .daily ? snapshot.dailyBuckets : snapshot.weeklyBuckets
+    }
+
+    private var points: [HistoricalUsagePoint] {
+        buckets.compactMap(HistoricalUsagePoint.init)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("History range", selection: $grain) {
+                ForEach(Grain.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+
+            if !snapshot.health.isOpen {
+                Text(snapshot.health.message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            if points.isEmpty {
+                Label("No observed usage in this range", systemImage: "chart.bar.xaxis")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Chart(points) { point in
+                    BarMark(
+                        x: .value("Period", point.start),
+                        y: .value("Tokens", point.totalTokens)
+                    )
+                    .foregroundStyle(point.isProvisional ? Color.accentColor.opacity(0.45) : Color.accentColor)
+                }
+                .chartYAxisLabel("Tokens")
+                .frame(height: 190)
+                .accessibilityIdentifier("historical-usage-chart")
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(Array(buckets.reversed().enumerated()), id: \.offset) { _, bucket in
+                        HistoricalUsageBucketRow(bucket: bucket)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+}
+
+private struct HistoricalUsagePoint: Identifiable {
+    let id: HistoricalUsageTrendPeriod
+    let start: Date
+    let totalTokens: Int
+    let isProvisional: Bool
+
+    init?(bucket: HistoricalUsageTrendBucket) {
+        guard case let .observed(observations) = bucket.value else { return nil }
+        id = bucket.period
+        start = bucket.period.window.start
+        guard let preferredTotalTokens = bucket.preferredTotalTokens else { return nil }
+        totalTokens = preferredTotalTokens
+        isProvisional = observations.contains { $0.lifecycle == .provisional }
+    }
+}
+
+private struct HistoricalUsageBucketRow: View {
+    let bucket: HistoricalUsageTrendBucket
+
+    private var periodText: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(identifier: bucket.period.timeZoneIdentifier)
+        return formatter.string(from: bucket.period.window.start)
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(periodText)
+                .font(.caption.weight(.medium))
+            Text(bucket.period.timeZoneIdentifier)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Spacer()
+            switch bucket.value {
+            case .gap:
+                Text("Unavailable")
+                    .foregroundStyle(.secondary)
+            case let .observed(observations):
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let totalTokens = bucket.preferredTotalTokens {
+                        Text("\(totalTokens.formatted()) tokens")
+                            .monospacedDigit()
+                    } else {
+                        Text("Token total unavailable")
+                            .foregroundStyle(.orange)
+                    }
+                    ForEach(historicalCostLabels(bucket.preferredCostObservations), id: \.self) { label in
+                        Text(label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if observations.contains(where: { $0.lifecycle == .provisional }) {
+                        Text("In progress")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.blue)
+                    }
+                }
+            }
+        }
+        .font(.caption)
+        .padding(8)
+        .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private func historicalCostLabels(_ observations: [HistoricalUsageTrendObservation]) -> [String] {
+    let costs = observations.compactMap { observation -> HistoricalCostValue? in
+        if let cost = observation.sample.providerReportedCost {
+            return HistoricalCostValue(cost: cost, provenance: "Provider reported")
+        }
+        if let cost = observation.sample.calculatedCost?.cost {
+            return HistoricalCostValue(cost: cost, provenance: "Calculated")
+        }
+        return nil
+    }
+    let grouped = Dictionary(grouping: costs) {
+        HistoricalCostKey(currency: $0.cost.currencyCode.uppercased(), provenance: $0.provenance)
+    }
+    return grouped.keys.sorted { ($0.currency, $0.provenance) < ($1.currency, $1.provenance) }.map { key in
+        let total = grouped[key, default: []].reduce(Decimal.zero) { $0 + $1.cost.amount }
+        return "\(key.currency) \(total.description) · \(key.provenance)"
+    }
+}
+
+private struct HistoricalCostValue {
+    let cost: Cost
+    let provenance: String
+}
+
+private struct HistoricalCostKey: Hashable {
+    let currency: String
+    let provenance: String
 }
 
 private struct UTCBillingWeekView: View {
