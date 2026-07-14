@@ -113,6 +113,8 @@ struct LimitBarSettingsView: View {
                 }
             }
 
+            DiagnosticExportSection(state: state)
+
             Section("Provider Refresh History") {
                 Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
                     .font(.caption)

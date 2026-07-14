@@ -21,6 +21,7 @@ Click it for two tabs:
 - **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
 - **Cost labels** distinguish provider-reported values from calculated estimates.
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
+- **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
 ## Prerequisites
@@ -61,6 +62,16 @@ Explicit Anthropic API and OpenAI API usage and cost refreshes record a local, p
 Entries contain only the provider product, fixed operation and outcome categories, start time, a duration bucket, and affected exact windows.
 History is limited to 30 days and 200 entries per provider product; Settings shows the latest outcome and last full success and can clear this history without changing usage, settings, or credentials.
 History persistence is best effort and never changes the provider refresh result.
+
+## Diagnostic Export
+
+Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, and a coarse projection of provider refresh-history summaries.
+The preview displays the exact immutable JSON bytes before any file is written.
+Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomically writes those same bytes only to the selected destination.
+
+The schema is a positive allow-list independent from internal settings and storage models.
+It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
+Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
 Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.
@@ -210,7 +221,8 @@ Request timeout is 15 seconds and resource timeout is 30 seconds.
 Redirects carrying `Authorization`, `Proxy-Authorization`, `x-api-key`, or `api-key` credentials are refused unless scheme, host, and effective port remain the same.
 Uncredentialed requests may follow cross-origin redirects.
 
-Diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, accepted or rejected event counts, and bounded allow-listed provider refresh outcomes.
+On-screen diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, and accepted or rejected event counts.
+Exported diagnostics use a narrower versioned allow-list and include only coarse provider state categories plus bounded, separately projected provider refresh outcomes.
 They do not contain credentials, prompts, responses, request bodies, terminal output, source code, raw provider responses, or rejected JSONL content.
 Errors shown for custom import failures are generic and do not include private file paths.
 

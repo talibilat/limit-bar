@@ -9,8 +9,7 @@ A filename containing `-d-` lists the ticket numbers that must be completed firs
 2. [`02-d-01-real-account-keychain-qa.md`](02-d-01-real-account-keychain-qa.md)
 3. [`06-app-sandbox-file-access-decision.md`](06-app-sandbox-file-access-decision.md)
 4. [`08-d-04-configurable-refresh-cadence.md`](08-d-04-configurable-refresh-cadence.md)
-5. [`11-d-10-privacy-safe-diagnostic-export.md`](11-d-10-privacy-safe-diagnostic-export.md)
-6. [`14-d-09-10-11-12-13-quota-doctor.md`](14-d-09-10-11-12-13-quota-doctor.md)
+5. [`14-d-09-10-11-12-13-quota-doctor.md`](14-d-09-10-11-12-13-quota-doctor.md)
 
 ## Parallel Execution Graph
 
@@ -20,9 +19,9 @@ Tickets in the same group can run in parallel.
 
 [![Future tickets parallel execution graph](parallel-execution-graph.svg)](parallel-execution-graph.svg)
 
-The current parallel set is tickets 01, 06, 08, and 11.
-Ticket 02 starts after ticket 01; ticket 11 retains its ticket 10 dependency marker, and that dependency is complete.
-Ticket 14 starts after ticket 11 is complete; tickets 04, 09, 10, 12, and 13 are already complete.
+The current parallel set is tickets 01, 06, 08, and 14.
+Ticket 02 starts after ticket 01.
+Ticket 14 can start because tickets 09, 10, 11, 12, and 13 are complete.
 
 Every proposal must preserve the default local privacy boundary.
 No proposal may collect or export raw prompts, code, model responses, terminal output, request bodies, credentials, or raw provider payloads.

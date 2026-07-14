@@ -30,6 +30,8 @@
 		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
 		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
 		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
+		AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E3 /* DiagnosticExportView.swift */; };
+		AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,6 +59,8 @@
 		AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomUsageSourceStoreTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000116 /* LimitBarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimitBarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRefreshHistoryPresentationTests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportPresentationTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E3 /* DiagnosticExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -134,6 +138,7 @@
 				AA00000000000000000000E0 /* AlertSettingsStore.swift */,
 				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
 				AA00000000000000000000E2 /* AlertSettingsView.swift */,
+				AA00000000000000000000E3 /* DiagnosticExportView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -161,6 +166,7 @@
 			children = (
 				AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */,
 				AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */,
+				AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */,
 			);
 			path = LimitBarTests;
 			sourceTree = "<group>";
@@ -308,6 +314,7 @@
 				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
 				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
 				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
+				AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -325,6 +332,7 @@
 			files = (
 				AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */,
 				AA0000000000000000000106 /* ProviderRefreshHistoryPresentationTests.swift in Sources */,
+				AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
