@@ -21,6 +21,11 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         XCTAssertEqual(PercentRateLimitPresentation.percentageUsed(24.6), "Measured: 25% used")
     }
 
+    func testClaudeLoginHelpUsesOfficialHTTPSDocumentation() {
+        XCTAssertEqual(ClaudeLoginHelp.url.scheme, "https")
+        XCTAssertEqual(ClaudeLoginHelp.url.host, "code.claude.com")
+    }
+
     func testRefreshExecutionCarriesServiceWindowsAcrossBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))

@@ -81,7 +81,10 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
 
 private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
     func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
-        switch intent {
+        if AppUITestConfiguration.screen == "claude-login-required" {
+            return .absent
+        }
+        return switch intent {
         case .passive:
             .failure(.interactionRequired)
         case .interactive:

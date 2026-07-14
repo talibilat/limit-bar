@@ -55,6 +55,7 @@ final class LimitBarUITests: XCTestCase {
         let authorizationMessage = app.staticTexts["claude-authorization-required"]
         XCTAssertTrue(authorizationMessage.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["claude-connect"].exists)
+        XCTAssertTrue(app.links["claude-login-help"].exists)
     }
 
     func testConnectUsesInteractiveFixture() {
@@ -68,6 +69,15 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Session (5 hours)"].exists)
         XCTAssertTrue(app.staticTexts["75% left"].exists)
         XCTAssertFalse(authorizationMessage.exists)
+    }
+
+    func testMissingClaudeLoginProvidesRecoveryInstructions() {
+        launch(screen: "claude-login-required")
+
+        XCTAssertTrue(app.staticTexts["No active Claude Code login found. Run Claude Code and enter /login, then check again."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.links["claude-login-help"].exists)
+        XCTAssertTrue(app.buttons["Check Again"].exists)
+        XCTAssertFalse(app.buttons["claude-connect"].exists)
     }
 
     func testConfiguresPersistsAndRemovesCustomUsageSource() {

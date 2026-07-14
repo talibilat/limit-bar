@@ -58,11 +58,49 @@ struct ClaudeRateLimitsModelTests {
         )
 
         await model.appeared()
+        #expect(model.state == .notConnected)
         await model.refresh()
 
         #expect(await credentials.invalidationCount == 1)
         #expect(await credentials.recordedIntents() == [.passive, .passive])
         #expect(model.state == .notConnected)
+    }
+
+    @Test("known expired credentials request login without calling the usage API")
+    func knownExpiredCredentialRequiresLogin() async {
+        let credential = ClaudeCodeOAuthCredential(
+            accessToken: "expired",
+            expiresAt: Date(timeIntervalSince1970: 1),
+            subscriptionType: "pro"
+        )
+        let credentials = CredentialProviderSpy(results: [.credential(credential)])
+        let client = ClaudeClientSpy(result: .success(makeClaudeSnapshot()))
+        let model = ClaudeRateLimitsModel(credentials: credentials, client: client)
+
+        await model.appeared()
+
+        #expect(model.state == .notConnected)
+        #expect(client.tokens.isEmpty)
+        #expect(await credentials.invalidationCount == 1)
+    }
+
+    @Test("Check Again loads the credential replaced by Claude Code login")
+    func refreshAfterLoginReplacement() async {
+        let oldCredential = ClaudeCodeOAuthCredential(accessToken: "old", expiresAt: .distantFuture, subscriptionType: "pro")
+        let newCredential = ClaudeCodeOAuthCredential(accessToken: "new", expiresAt: .distantFuture, subscriptionType: "pro")
+        let credentials = CredentialProviderSpy(results: [.credential(oldCredential), .credential(newCredential)])
+        let snapshot = makeClaudeSnapshot()
+        let client = ClaudeClientSpy(results: [.failure(.expiredLogin), .success(snapshot)])
+        let model = ClaudeRateLimitsModel(credentials: credentials, client: client)
+
+        await model.appeared()
+        #expect(model.state == .notConnected)
+
+        await model.refresh()
+
+        #expect(model.state == .loaded(snapshot, subscription: "pro"))
+        #expect(client.tokens == ["old", "new"])
+        #expect(await credentials.recordedIntents() == [.passive, .passive])
     }
 
     @Test("credential cancellation preserves prior state and clears refresh flag")
@@ -117,16 +155,22 @@ private actor CredentialProviderSpy: ClaudeCredentialProviding {
 
 private final class ClaudeClientSpy: ClaudeRateLimitsFetching, @unchecked Sendable {
     private let lock = NSLock()
-    private let result: Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure>
+    private var results: [Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure>]
     private(set) var tokens: [String] = []
 
     init(result: Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure>) {
-        self.result = result
+        results = [result]
+    }
+
+    init(results: [Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure>]) {
+        self.results = results
     }
 
     func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
-        lock.withLock { tokens.append(accessToken) }
-        return result
+        lock.withLock {
+            tokens.append(accessToken)
+            return results.count == 1 ? results[0] : results.removeFirst()
+        }
     }
 }
 
