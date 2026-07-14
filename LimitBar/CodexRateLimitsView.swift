@@ -5,6 +5,8 @@ struct CodexRateLimitsView: View {
     let snapshot: CodexRateLimitSnapshot
     let metrics: [UsageMetric]
     let pricingTable: PricingTable
+    let insights: [QuotaWindowIdentity: QuotaInsightState]
+    let insightsStorageAvailable: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -40,15 +42,20 @@ struct CodexRateLimitsView: View {
     private func individualPlanSection(_ snapshot: CodexRateLimitSnapshot) -> some View {
         VStack(spacing: 10) {
             if let primary = snapshot.primary {
-                PercentRateLimitRowView(label: primary.displayLabel, percentUsed: primary.percentUsed, severity: .unknown, resetsAt: primary.resetsAt, isActive: false)
+                PercentRateLimitRowView(label: primary.displayLabel, percentUsed: primary.percentUsed, severity: .unknown, resetsAt: primary.resetsAt, isActive: false, insight: insight(slot: "primary", window: primary), insightsStorageAvailable: insightsStorageAvailable)
             }
             if let secondary = snapshot.secondary {
-                PercentRateLimitRowView(label: secondary.displayLabel, percentUsed: secondary.percentUsed, severity: .unknown, resetsAt: secondary.resetsAt, isActive: false)
+                PercentRateLimitRowView(label: secondary.displayLabel, percentUsed: secondary.percentUsed, severity: .unknown, resetsAt: secondary.resetsAt, isActive: false, insight: insight(slot: "secondary", window: secondary), insightsStorageAvailable: insightsStorageAvailable)
             }
             if let credits = snapshot.credits, credits.hasCredits, let balance = credits.balance {
                 CreditsUsageRowView(label: "Credits balance", cost: Cost(amount: balance, currencyCode: "credits", source: .providerReported))
             }
         }
+    }
+
+    private func insight(slot: String, window: CodexRateLimitWindow) -> QuotaInsightState? {
+        guard let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
+        return insights[identity]
     }
 
 }
@@ -84,7 +91,9 @@ private struct CreditsUsageRowView: View {
     CodexRateLimitsView(
         snapshot: CodexRateLimitSnapshot(planType: "plus", primary: CodexRateLimitWindow(percentUsed: 10, windowMinutes: 300, resetsAt: nil), secondary: nil, credits: nil, reportedAt: Date()),
         metrics: [],
-        pricingTable: .empty
+        pricingTable: .empty,
+        insights: [:],
+        insightsStorageAvailable: true
     )
         .padding(20)
         .frame(width: 440, height: 300)

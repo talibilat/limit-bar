@@ -112,6 +112,9 @@ struct ClaudeRateLimitsTests {
         let unauthorized = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(response: HTTPResponse(statusCode: 401, data: Data())))
         #expect(await unauthorized.fetchRateLimits(accessToken: "token") == .failure(.expiredLogin))
 
+        let forbidden = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(response: HTTPResponse(statusCode: 403, data: Data())))
+        #expect(await forbidden.fetchRateLimits(accessToken: "token") == .failure(.requestRejected))
+
         let serverError = ClaudeOAuthUsageClient(httpClient: StubHTTPClient(response: HTTPResponse(statusCode: 500, data: Data())))
         #expect(await serverError.fetchRateLimits(accessToken: "token") == .failure(.requestRejected))
 

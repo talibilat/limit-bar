@@ -55,6 +55,7 @@ final class LimitBarUITests: XCTestCase {
         let authorizationMessage = app.staticTexts["claude-authorization-required"]
         XCTAssertTrue(authorizationMessage.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["claude-connect"].exists)
+        XCTAssertTrue(app.links["claude-login-help"].exists)
     }
 
     func testConnectUsesInteractiveFixture() {
@@ -68,6 +69,15 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Session (5 hours)"].exists)
         XCTAssertTrue(app.staticTexts["75% left"].exists)
         XCTAssertFalse(authorizationMessage.exists)
+    }
+
+    func testMissingClaudeLoginProvidesRecoveryInstructions() {
+        launch(screen: "claude-login-required")
+
+        XCTAssertTrue(app.staticTexts["No active Claude Code login found. Run Claude Code and enter /login, then check again."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.links["claude-login-help"].exists)
+        XCTAssertTrue(app.buttons["Check Again"].exists)
+        XCTAssertFalse(app.buttons["claude-connect"].exists)
     }
 
     func testConfiguresPersistsAndRemovesCustomUsageSource() {
@@ -88,6 +98,20 @@ final class LimitBarUITests: XCTestCase {
         app.buttons["custom-source-remove"].click()
         XCTAssertTrue(app.staticTexts["custom-sources-empty"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Fixture Tool"].exists)
+    }
+
+    func testDiagnosticExportRequiresReviewBeforeSave() {
+        launch(screen: "diagnostic-export")
+
+        let previewButton = app.buttons["diagnostic-export-preview"]
+        XCTAssertTrue(previewButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
+        previewButton.click()
+
+        XCTAssertTrue(app.staticTexts["Review Diagnostic Export"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].exists)
+        XCTAssertTrue(app.buttons["diagnostic-export-save"].exists)
+        XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].label.contains("schemaVersion"))
     }
 
     private func launch(screen: String) {

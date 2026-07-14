@@ -58,7 +58,7 @@ public enum ProviderConnectionState: String, Codable, CaseIterable, Equatable, S
     public var displayText: String {
         switch self {
         case .missing:
-            "Missing"
+            "Not configured"
         case .configured:
             "Configured, validation pending"
         case .connected:

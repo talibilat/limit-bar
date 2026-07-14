@@ -2,7 +2,7 @@
 
 Date: 2026-07-13.
 Target: macOS 14 or newer.
-Scope: reliability, security, privacy, exact usage windows, local refresh behavior, local alerts, custom-source resource limits, and migration acceptance evidence.
+Scope: reliability, security, privacy, exact usage windows, local refresh behavior, quota insights, local alerts, diagnostic export, custom-source resource limits, and migration acceptance evidence.
 
 ## Verification Commands
 
@@ -72,11 +72,17 @@ Verification on 2026-07-13 completed with 268 tests in 22 suites passing, the na
 Ticket 12 verification on 2026-07-14 completed with 288 tests in 24 suites passing, direct typechecking of every app Swift source passing, the Xcode project file validating, and `git diff --check` reporting no errors.
 The native `xcodebuild` command was attempted with isolated Derived Data but could not reach build planning because this machine reported `DARWIN_USER_CACHE_DIR` I/O and FSEvents startup failures.
 
+Ticket 11 verification on 2026-07-14 completed with 367 tests in 32 suites passing, the diagnostic export focused suite passing, Debug build-for-testing succeeding, and the unsigned Release build succeeding.
+Focused native app and UI tests compiled, but this Xcode installation asserted `childPID > 0` in `IDELaunchServicesLauncher` before XCTest started; the commands were terminated after their timeouts.
+
+Ticket 14 verification on 2026-07-14 completed with 375 tests in 33 suites passing, the focused quota insight and diagnostic export suites passing, Debug build-for-testing succeeding, and the unsigned Release build succeeding.
+The focused native diagnostic presentation test compiled, but this Xcode installation again asserted `childPID > 0` in `IDELaunchServicesLauncher` before XCTest started and the command timed out.
+
 Inspect the app target's sandbox configuration and default paths:
 
 ```sh
 scripts/validate-file-access-policy.sh
-grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite\|historical-usage-trends.sqlite" LimitBar LimitBarCore/Sources
+grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite\|historical-usage-trends.sqlite\|quota-observations.sqlite\|provider-refresh-history.sqlite" LimitBar LimitBarCore/Sources
 ```
 
 The validation script confirms that both app configurations explicitly set `ENABLE_APP_SANDBOX = NO` and configure no entitlements file.
@@ -107,12 +113,18 @@ This check is not evidence of filesystem isolation.
 | Process-only secret use | `CredentialStoreTests` and `ProviderAuthenticationTests` verify dedicated Keychain storage, exact byte handling, and secret-free settings and diagnostics, while provider refresh services pass credentials directly to request clients and persist only normalized results and safe diagnostics. |
 | HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
 | Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
+| Privacy-safe diagnostic export | `DiagnosticExportTests` snapshots every recursively encoded v1 key, verifies version-aware decoding, rejects unsupported versions, bounds optional refresh history, checks prohibited key and content sentinels, and proves preview bytes equal atomically saved bytes. `DiagnosticExportPresentationTests` verifies the app-owned live-state projection drops private settings and exact refresh-window fields, saves without regeneration, and exposes only fixed generic failures. UI automation verifies Save is unavailable until the exact JSON preview is shown. |
 | Provider persistence safety | Anthropic and OpenAI provider tests verify cancellation preservation, scoped replacement, stale retained values after failure, exact local and UTC windows, and safe typed failure reasons. |
 | Native app automation | The Xcode build compiles the app, History chart, and production integrations. `LimitBarTests` covers app-owned persistence, while `LimitBarUITests` launches the app against production popover and Custom Usage Source views. Debug-only composition injects synthetic state without reading production SQLite, provider settings, Keychain, Codex sessions, or network resources; historical chart inspection remains manual. |
 | Alert qualification | `AlertCoreTests` verifies configurable thresholds, provider-product separation, Claude and Codex reset-boundary adapters, stale and malformed suppression, source and currency separation, API-over-local precedence, checked monetary aggregation, and privacy-safe copy. |
 | Alert deduplication | `SQLiteAlertDeliveryStoreTests` verifies atomic reservation, once-per-threshold delivery, retry after failure or lease expiry, exact-boundary pruning, persistence across relaunch, coexistence with usage tables, and user reset. |
 | Failed-source suppression | `LocalRefreshCoordinatorTests` verifies retained last-good Codex display data is marked as not refreshed after a failed scan, and `LimitBarState` excludes that data plus failed built-in imports from alert evaluation. |
 | Notification permission and privacy | Alert rules are disabled by default, `AlertSettingsView` requests permission only through an explicit action, and `AlertNotificationCoordinator` submits only core-generated coarse copy after durable reservation; real macOS presentation remains a manual check. |
+| Quota observation boundary | `QuotaInsightsTests` verifies Claude adaptation retains only account-wide percentage limits, Codex adaptation retains only individual-plan percentage reports, identities use exact provider-reported resets, and model-scoped or business-plan data is excluded. The schema contains no prompt, code, account, project, agent, model, token, or payload fields. |
+| Quota persistence | `QuotaInsightsTests` verifies immutable insert behavior, exact repeat-scan deduplication, 30-day and 500-observation-per-window retention, explicit deletion, and canonical SQL type, nullability, check, primary-key, and index fingerprint validation without mutating unknown schemas. Production storage is isolated in `quota-observations.sqlite`. |
+| Qualified quota analytics | `QuotaInsightsTests` verifies four-distinct-observation and 15-minute minimums, robust pairwise-slope burn ranges, exhaustion only when both projected bounds precede reset, and explicit unavailable states for counter decreases, resets, staleness, flat usage, and insufficient evidence. |
+| Quota presentation and alerts | Existing Claude and Codex rate-limit rows show concise **Measured** and **Calculated** labels without another gauge or dashboard. Every existing local refresh publication reevaluates retained Claude evidence against the current time without recording another Claude observation. `LimitBarState` records insights separately from `AlertCoordinator`; ticket 12 alert adapters, qualification, notification copy, and delivery ledger are unchanged. |
+| Quota diagnostic export | `DiagnosticExportTests` snapshots the v3 allow-list with typed forecast-method metadata, validates bounded quota findings, and verifies v1 and v2 decode compatibility. `DiagnosticExportPresentationTests` verifies exact quota identities and reset boundaries are not projected into the preview. |
 
 ## Manual Acceptance
 
@@ -139,6 +151,14 @@ These checks require a local signed app and should not be inferred from fixture 
 19. Clear notification history, accept the warning, and confirm an active threshold can notify again.
 20. Deny notification permission and confirm Settings reports the denial without consuming delivery state or repeatedly prompting.
 21. Configure provider-reported and calculated budgets in the same currency and confirm their notifications remain separately labeled.
+22. In Settings, press **Preview Diagnostic Export** and inspect the complete JSON before saving.
+23. Confirm **Save As...** presents a macOS destination panel, cancel leaves no file, and choosing a destination writes the exact previewed bytes.
+24. Induce a preparation or destination-write failure and confirm the UI shows only the fixed generic message without a path or underlying error.
+25. Refresh the same unchanged Codex session report several times and confirm the measured observation count does not increase.
+26. Collect at least four increasing observations across 15 minutes and confirm the existing row shows separate **Measured** evidence and a **Calculated** burn range, with exhaustion omitted when reset occurs first.
+27. Confirm a counter decrease, stale report, or expired reset replaces the calculated range with an explicit unavailable explanation.
+28. Delete quota observations in Settings and confirm current rate limits, usage, alert rules, delivery state, settings, and credentials remain available; confirm the UI explains that an unchanged current report can be measured again on a later refresh.
+29. Preview a diagnostic export and confirm quota findings contain only coarse product/window categories, bounded counts/span, status, method version, and calculated ranges, with no exact reset or internal window identifier.
 
 ## Repository-Only Boundary
 

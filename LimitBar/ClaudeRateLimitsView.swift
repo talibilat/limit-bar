@@ -3,6 +3,8 @@ import LimitBarCore
 
 struct ClaudeRateLimitsView: View {
     @Bindable var model: ClaudeRateLimitsModel
+    let insights: [QuotaWindowIdentity: QuotaInsightState]
+    let insightsStorageAvailable: Bool
     let onActionCompleted: () -> Void
 
     var body: some View {
@@ -27,21 +29,19 @@ struct ClaudeRateLimitsView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
             case .notConnected:
-                HStack {
-                    Text("No Claude Code login found.")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No active Claude Code login found. Run Claude Code and enter /login, then check again.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Check Again") {
-                        Task {
-                            await model.refresh()
-                            onActionCompleted()
-                        }
-                    }
-                    Button("Connect") {
-                        Task {
-                            await model.connect()
-                            onActionCompleted()
+                    HStack {
+                        Link("Open login instructions", destination: ClaudeLoginHelp.url)
+                            .accessibilityIdentifier("claude-login-help")
+                        Spacer()
+                        Button("Check Again") {
+                            Task {
+                                await model.refresh()
+                                onActionCompleted()
+                            }
                         }
                     }
                 }
@@ -58,6 +58,8 @@ struct ClaudeRateLimitsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("claude-authorization-required")
                     Spacer()
+                    Link("Login instructions", destination: ClaudeLoginHelp.url)
+                        .accessibilityIdentifier("claude-login-help")
                     Button(model.isRefreshing ? "Connecting..." : "Connect") {
                         Task {
                             await model.connect()
@@ -76,7 +78,9 @@ struct ClaudeRateLimitsView: View {
                             percentUsed: limit.percentUsed,
                             severity: limit.severity,
                             resetsAt: limit.resetsAt,
-                            isActive: limit.isActive
+                            isActive: limit.isActive,
+                            insight: insight(for: limit),
+                            insightsStorageAvailable: insightsStorageAvailable
                         )
                     }
                 }
@@ -98,6 +102,15 @@ struct ClaudeRateLimitsView: View {
             onActionCompleted()
         }
     }
+
+    private func insight(for limit: ClaudeRateLimit) -> QuotaInsightState? {
+        guard let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
+        return insights[identity]
+    }
+}
+
+enum ClaudeLoginHelp {
+    static let url = URL(string: "https://code.claude.com/docs/en/iam#log-in-to-claude-code")!
 }
 
 #Preview {
@@ -106,6 +119,8 @@ struct ClaudeRateLimitsView: View {
             credentials: ClaudeCredentialBroker.shared,
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         ),
+        insights: [:],
+        insightsStorageAvailable: true,
         onActionCompleted: {}
     )
         .padding(20)

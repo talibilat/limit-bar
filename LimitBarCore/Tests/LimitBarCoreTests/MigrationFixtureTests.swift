@@ -14,6 +14,6 @@ struct MigrationFixtureTests {
             at: fixtureDirectory.appendingPathComponent("manifest.json")
         )
 
-        #expect(report.fixtureCount == 2)
+        #expect(report.fixtureCount == 6)
     }
 }

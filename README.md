@@ -21,6 +21,8 @@ Click it for two tabs:
 - **Custom local tools** can be added as a name and a JSONL file that already follows LimitBar's custom event schema.
 - **Cost labels** distinguish provider-reported values from calculated estimates.
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
+- **Quota insights** retain privacy-safe measured Claude Code and Codex percentages locally and calculate qualified recent burn and exhaustion ranges without project, agent, model, or token attribution.
+- **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
 ## Prerequisites
@@ -52,12 +54,29 @@ To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar f
 LimitBar starts one local refresh immediately and schedules another using the cadence selected in Settings: every 5, 15, or 30 seconds.
 Five seconds is the default, and invalid saved values return to that default.
 Shorter intervals show local changes sooner and do more background file and database work, while longer intervals may use less power but delay updates.
-That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, and scans local Codex sessions.
+That loop only imports the built-in local JSONL file, refreshes configured custom JSONL files, reads the SQLite snapshot, scans local Codex sessions, and deduplicates supported measured Codex quota observations in local SQLite.
 Concurrent ticks are coalesced, and a failed local component keeps its last successful in-process component in the published refresh snapshot.
 
 The local refresh loop does not call Anthropic, OpenAI, Azure OpenAI, or Claude provider APIs.
 It also does not poll macOS Keychain.
 Provider API requests happen only through explicit provider actions in Settings, except for the Claude behavior described below.
+
+Explicit Anthropic API and OpenAI API usage and cost refreshes record a local, privacy-safe outcome history in `provider-refresh-history.sqlite`.
+Entries contain only the provider product, fixed operation and outcome categories, start time, a duration bucket, and affected exact windows.
+History is limited to 30 days and 200 entries per provider product; Settings shows the latest outcome and last full success and can clear this history without changing usage, settings, or credentials.
+History persistence is best effort and never changes the provider refresh result.
+
+## Diagnostic Export
+
+Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, a coarse projection of provider refresh-history summaries, and bounded quota finding categories.
+The preview displays the exact immutable JSON bytes before any file is written.
+Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomically writes those same bytes only to the selected destination.
+
+The schema is a positive allow-list independent from internal settings and storage models.
+It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
+Schema v3 includes coarse quota product and window categories, measured observation counts and span, finding status, calculated burn or exhaustion-minute ranges, and typed forecast-method metadata for qualified findings.
+The decoder remains compatible with schema v1 artifacts without quota findings and schema v2 findings whose qualified forecast method is the legacy pairwise-slope method.
+Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
 Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.
@@ -79,6 +98,23 @@ Lock-screen text contains only the coarse provider product, threshold, currency 
 It excludes exact spend, budget caps, account, organization, project, model, deployment, and source labels.
 Stale, unhealthy, unsupported, legacy, expired, malformed, and inferred observations do not alert.
 Cost measurements older than 24 hours are stale for alerting even when their exact budget window remains active.
+
+## Quota Insights
+
+LimitBar stores only percentage observations for Claude Code account-wide windows and Codex individual-plan windows that have a provider-reported exact reset boundary.
+Claude scoped model limits, Codex business credit pools, account labels, prompts, code, projects, agents, models, tokens, and raw provider or session payloads are not stored in quota history.
+
+Observations are keyed by the existing provider product, stable window identifier, and exact provider-reported reset boundary.
+Identical Codex reports encountered by repeated local scans are deduplicated rather than counted as new evidence.
+The dedicated `quota-observations.sqlite` database retains at most 30 days and 500 observations per exact quota window.
+Settings can delete this history explicitly without changing current rate limits, usage, alert rules, alert delivery state, settings, or credentials.
+Deletion does not alter current Claude provider reports or Codex session reports, so a report that remains available can be measured again on a later refresh.
+
+Calculated findings require at least four distinct measured observations spanning at least 15 minutes.
+The burn range uses the middle half of positive pairwise percentage slopes, and exhaustion is shown only when both bounds of that range project exhaustion before the reported reset.
+Counter decreases, expired windows, stale evidence, flat usage, short spans, and insufficient observations produce an explicit unavailable state instead of a forecast.
+The existing rate-limit rows label provider inputs as **Measured** and derived ranges as **Calculated**; there is no additional gauge or dashboard.
+These findings do not drive notifications, so ticket 12 alert qualification and measured-only behavior remain unchanged.
 
 ### Claude Authorization
 
@@ -136,6 +172,8 @@ The default local paths are:
 - `~/Library/Application Support/LimitBar/usage-events.jsonl` for normalized LimitBar usage events.
 - `~/Library/Application Support/LimitBar/usage-metrics.sqlite` for normalized usage metrics.
 - `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
+- `~/Library/Application Support/LimitBar/quota-observations.sqlite` for bounded measured quota observations.
+- `~/Library/Application Support/LimitBar/provider-refresh-history.sqlite` for bounded privacy-safe provider refresh outcomes and affected windows.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.
@@ -207,7 +245,8 @@ Request timeout is 15 seconds and resource timeout is 30 seconds.
 Redirects carrying `Authorization`, `Proxy-Authorization`, `x-api-key`, or `api-key` credentials are refused unless scheme, host, and effective port remain the same.
 Uncredentialed requests may follow cross-origin redirects.
 
-Diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, and accepted or rejected event counts.
+On-screen diagnostics contain provider identity, coarse connection state, fixed failure reason, update time, database health, and accepted or rejected event counts.
+Exported diagnostics use a narrower versioned allow-list and include only coarse provider state categories plus bounded, separately projected provider refresh outcomes.
 They do not contain credentials, prompts, responses, request bodies, terminal output, source code, raw provider responses, or rejected JSONL content.
 Errors shown for custom import failures are generic and do not include private file paths.
 

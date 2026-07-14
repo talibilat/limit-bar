@@ -81,7 +81,10 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
 
 private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
     func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
-        switch intent {
+        if AppUITestConfiguration.screen == "claude-login-required" {
+            return .absent
+        }
+        return switch intent {
         case .passive:
             .failure(.interactionRequired)
         case .interactive:
@@ -130,10 +133,38 @@ private struct LimitBarUITestHostView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
+        case "diagnostic-export":
+            Form {
+                DiagnosticExportSection(model: AppUITestDiagnosticExport.model())
+            }
+            .formStyle(.grouped)
+            .padding(20)
+            .frame(width: 620, height: 720)
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+@MainActor
+private enum AppUITestDiagnosticExport {
+    static func model() -> DiagnosticExportModel {
+        DiagnosticExportModel(
+            makeArtifact: {
+                try DiagnosticExport.make(from: DiagnosticExportInput(
+                    generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    appVersion: DiagnosticVersion(major: 1, minor: 2, patch: 3),
+                    appBuild: 42,
+                    operatingSystemVersion: DiagnosticVersion(major: 15, minor: 0, patch: 0),
+                    providerStatuses: [DiagnosticProviderStatus(provider: .anthropic, state: .connected)],
+                    databaseState: .available,
+                    importCounts: DiagnosticImportCounts(accepted: 7, rejected: 2),
+                    resourceLimitReasons: []
+                ))
+            },
+            chooseDestination: { nil }
+        )
     }
 }
 #endif

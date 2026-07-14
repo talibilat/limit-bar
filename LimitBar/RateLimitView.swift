@@ -10,12 +10,23 @@ struct RateLimitView: View {
             VStack(alignment: .leading, spacing: 16) {
                 if state.claudeModel.isPresent {
                     sectionHeader("Claude")
-                    ClaudeRateLimitsView(model: state.claudeModel, onActionCompleted: state.claudeActionCompleted)
+                    ClaudeRateLimitsView(
+                        model: state.claudeModel,
+                        insights: state.quotaInsights,
+                        insightsStorageAvailable: state.quotaInsightsStorageAvailable,
+                        onActionCompleted: state.claudeActionCompleted
+                    )
                 }
 
                 if let codexSnapshot = state.local.codexSnapshot {
                     sectionHeader("Codex")
-                    CodexRateLimitsView(snapshot: codexSnapshot, metrics: state.local.metrics, pricingTable: pricingTable)
+                    CodexRateLimitsView(
+                        snapshot: codexSnapshot,
+                        metrics: state.local.metrics,
+                        pricingTable: pricingTable,
+                        insights: state.quotaInsights,
+                        insightsStorageAvailable: state.quotaInsightsStorageAvailable
+                    )
                 }
 
                 if !state.claudeModel.isPresent && state.local.codexSnapshot == nil {

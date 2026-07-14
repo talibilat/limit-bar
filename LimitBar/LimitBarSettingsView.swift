@@ -25,6 +25,11 @@ struct LimitBarSettingsView: View {
     @State private var showsDeleteHistoryConfirmation = false
     @State private var historyMessage: String?
     @State private var localRefreshCadence = LocalRefreshSettingsStore().cadence
+    @State private var refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary] = [:]
+    @State private var showsClearRefreshHistoryConfirmation = false
+    @State private var refreshHistoryMessage: String?
+    @State private var showsDeleteQuotaConfirmation = false
+    @State private var quotaDeletionMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -109,6 +114,45 @@ struct LimitBarSettingsView: View {
                     }
                 } else {
                     ProgressView("Loading diagnostics")
+                }
+            }
+
+            DiagnosticExportSection(state: state)
+
+            Section("Quota Observations") {
+                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per exact quota window. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Quota Observations", role: .destructive) {
+                    showsDeleteQuotaConfirmation = true
+                }
+                if let quotaDeletionMessage {
+                    Text(quotaDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Provider Refresh History") {
+                Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(ProviderRefreshProduct.allCases, id: \.self) { product in
+                    let summary = refreshHistory[product]
+                    LabeledContent("\(product.displayName) latest", value: ProviderRefreshHistoryStatusText.latest(summary?.latest))
+                    LabeledContent("\(product.displayName) last full success", value: ProviderRefreshHistoryStatusText.lastFullSuccess(summary?.lastFullSuccess))
+                }
+                Button("Clear Provider Refresh History", role: .destructive) {
+                    showsClearRefreshHistoryConfirmation = true
+                }
+                .accessibilityIdentifier("clear-provider-refresh-history")
+                if let refreshHistoryMessage {
+                    Text(refreshHistoryMessage)
+                        .font(.caption)
+                        .foregroundStyle(refreshHistoryMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
                 }
             }
 
@@ -221,6 +265,45 @@ struct LimitBarSettingsView: View {
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
             historyRetention = await UsageDatabase.shared.historicalRetention()
+            refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerRefreshHistoryDidChange)) { _ in
+            Task { refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries() }
+        }
+        .confirmationDialog(
+            "Delete all quota observations?",
+            isPresented: $showsDeleteQuotaConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Quota Observations", role: .destructive) {
+                Task {
+                    quotaDeletionMessage = await state.deleteQuotaObservations()
+                        ? "Retained quota observations deleted. Current reports may be observed again on a later refresh."
+                        : "Could not delete quota observations."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained quota history and calculated findings only. Current reports remain available and may be observed again on a later refresh. Alert rules and delivery state, settings, credentials, and usage remain unchanged.")
+        }
+        .confirmationDialog(
+            "Clear provider refresh history?",
+            isPresented: $showsClearRefreshHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Refresh History", role: .destructive) {
+                Task {
+                    if await ProviderRefreshHistoryRepository.shared.deleteAll() {
+                        refreshHistory = [:]
+                        refreshHistoryMessage = "Provider refresh history cleared. Usage, settings, and credentials were not changed."
+                    } else {
+                        refreshHistoryMessage = "Could not clear provider refresh history."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes refresh outcomes only. Current and historical usage, provider settings, and Keychain credentials remain unchanged.")
         }
         .confirmationDialog(
             "Delete all historical usage?",
@@ -333,6 +416,29 @@ struct LimitBarSettingsView: View {
             } catch {
                 databaseRecoveryMessage = "Could not create a clean database. The original database was not intentionally deleted."
             }
+        }
+    }
+}
+
+enum ProviderRefreshHistoryStatusText {
+    static func latest(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No explicit refresh recorded" }
+        return "\(outcome(entry.outcome)) \(entry.startedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    static func lastFullSuccess(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No full success recorded" }
+        return entry.startedAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func outcome(_ outcome: ProviderRefreshOutcome) -> String {
+        switch outcome {
+        case .success: "Succeeded"
+        case .partialFailure: "Partially failed"
+        case .cancelled: "Cancelled"
+        case .authenticationFailure: "Authentication failed"
+        case .networkFailure: "Network failed"
+        case .failed: "Failed"
         }
     }
 }
