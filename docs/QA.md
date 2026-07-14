@@ -81,11 +81,12 @@ The focused native diagnostic presentation test compiled, but this Xcode install
 Inspect the app target's sandbox configuration and default paths:
 
 ```sh
-grep -n "ENABLE_APP_SANDBOX\|CODE_SIGN_ENTITLEMENTS" LimitBar.xcodeproj/project.pbxproj
-grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite" LimitBar LimitBarCore/Sources
+scripts/validate-file-access-policy.sh
+grep -R -n "\.codex/sessions\|usage-events.jsonl\|usage-metrics.sqlite\|historical-usage-trends.sqlite" LimitBar LimitBarCore/Sources
 ```
 
-The absence of `ENABLE_APP_SANDBOX`, `CODE_SIGN_ENTITLEMENTS`, and an entitlements file is acceptance evidence that this source target is intentionally unsandboxed.
+The validation script confirms that both app configurations explicitly set `ENABLE_APP_SANDBOX = NO` and configure no entitlements file.
+Release packaging separately rejects an effective signed entitlement set containing `com.apple.security.app-sandbox`.
 This check is not evidence of filesystem isolation.
 
 ## Acceptance Matrix
@@ -108,7 +109,7 @@ This check is not evidence of filesystem isolation.
 | Custom persistence and visibility | `UsageDatabaseTests` verifies custom aggregates persist by source UUID in SQLite, survive failed refreshes, update after rename, and disappear after source removal; `ProviderUsageCard.cards` includes providers with metrics, while custom-specific card visibility remains a manual UI acceptance check. |
 | Import metadata caches | `UsageDatabaseTests` verifies unchanged successful built-in and custom files reuse in-process results, local day changes invalidate built-in reuse, and future-timestamp rejection prevents reuse; the fingerprints use file modification date and size rather than a content hash, and the built-in test demonstrates that a same-size rewrite with a restored modification date remains cached until the day changes. |
 | Custom diagnostics and caching | `UsageDatabaseTests` and `CustomUsageSourceTests` verify generic failures preserve prior metrics and future-timestamp rejection prevents cache reuse even when that diagnostic is outside the 20-sample set; `CustomUsageAggregator` checks cancellation before loading and between streamed chunks. |
-| Unsandboxed file boundary | Project configuration has no App Sandbox entitlement, production defaults are `~/.codex/sessions`, `~/Library/Application Support/LimitBar/usage-events.jsonl`, and `~/Library/Application Support/LimitBar/usage-metrics.sqlite`, and custom sources can use explicit arbitrary regular-file paths. |
+| Unsandboxed file boundary | Project configuration explicitly disables App Sandbox, release packaging inspects effective entitlements, production defaults are the four logical resources in ADR 0001, Codex and custom readers reject symlinks, and custom sources can use explicit arbitrary regular-file paths. |
 | Process-only secret use | `CredentialStoreTests` and `ProviderAuthenticationTests` verify dedicated Keychain storage, exact byte handling, and secret-free settings and diagnostics, while provider refresh services pass credentials directly to request clients and persist only normalized results and safe diagnostics. |
 | HTTP isolation | `HTTPClientTests` verifies ephemeral configuration, no cache, no cookies, 15-second request timeout, 30-second resource timeout, same-origin enforcement for credentialed redirects, all protected credential header spellings, and URL-session invalidation. |
 | Privacy-safe diagnostics | `ProviderAuthenticationTests` and `CustomUsageSourceTests` verify that diagnostics omit credential and content fields, typed errors do not leak private paths, and importer models retain only counts plus bounded line-number and reason samples. |
@@ -140,23 +141,24 @@ These checks require a local signed app and should not be inferred from fixture 
 9. Press **Check Again** and confirm it remains a passive no-UI action.
 10. Configure a custom JSONL path outside Application Support and confirm the unsandboxed build can read it.
 11. Confirm a valid custom event produces a custom card and that removing the configured source removes its persisted metrics and card.
-12. Select each Local Refresh cadence, disconnect the network, and confirm Local Usage Events, Custom Usage Sources, SQLite, and Codex refresh continues without provider polling or Keychain prompts.
-13. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
-14. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
-15. Open Alerts settings and confirm no notification permission prompt appears before pressing **Enable Notifications**.
-16. Enable notifications, configure a quota threshold below a fresh observed value, and confirm one coarse notification appears without account, project, model, source, exact spend, or budget-cap text.
-17. Relaunch within the same quota window and confirm the accepted threshold does not notify again.
-18. Clear notification history, accept the warning, and confirm an active threshold can notify again.
-19. Deny notification permission and confirm Settings reports the denial without consuming delivery state or repeatedly prompting.
-20. Configure provider-reported and calculated budgets in the same currency and confirm their notifications remain separately labeled.
-21. In Settings, press **Preview Diagnostic Export** and inspect the complete JSON before saving.
-22. Confirm **Save As...** presents a macOS destination panel, cancel leaves no file, and choosing a destination writes the exact previewed bytes.
-23. Induce a preparation or destination-write failure and confirm the UI shows only the fixed generic message without a path or underlying error.
-24. Refresh the same unchanged Codex session report several times and confirm the measured observation count does not increase.
-25. Collect at least four increasing observations across 15 minutes and confirm the existing row shows separate **Measured** evidence and a **Calculated** burn range, with exhaustion omitted when reset occurs first.
-26. Confirm a counter decrease, stale report, or expired reset replaces the calculated range with an explicit unavailable explanation.
-27. Delete quota observations in Settings and confirm current rate limits, usage, alert rules, delivery state, settings, and credentials remain available; confirm the UI explains that an unchanged current report can be measured again on a later refresh.
-28. Preview a diagnostic export and confirm quota findings contain only coarse product/window categories, bounded counts/span, status, and calculated ranges, with no exact reset or internal window identifier.
+12. Confirm removal also deletes the source's historical aggregates after Refresh Snapshot Publication.
+13. Select each Local Refresh cadence, disconnect the network, and confirm Local Usage Events, Custom Usage Sources, SQLite, and Codex refresh continues without provider polling or Keychain prompts.
+14. Trigger explicit provider refreshes and confirm request failures retain the documented last-good metrics and safe status text.
+15. Inspect Today, Current Week, and UTC Billing Week near local and UTC Monday boundaries.
+16. Open Alerts settings and confirm no notification permission prompt appears before pressing **Enable Notifications**.
+17. Enable notifications, configure a quota threshold below a fresh observed value, and confirm one coarse notification appears without account, project, model, source, exact spend, or budget-cap text.
+18. Relaunch within the same quota window and confirm the accepted threshold does not notify again.
+19. Clear notification history, accept the warning, and confirm an active threshold can notify again.
+20. Deny notification permission and confirm Settings reports the denial without consuming delivery state or repeatedly prompting.
+21. Configure provider-reported and calculated budgets in the same currency and confirm their notifications remain separately labeled.
+22. In Settings, press **Preview Diagnostic Export** and inspect the complete JSON before saving.
+23. Confirm **Save As...** presents a macOS destination panel, cancel leaves no file, and choosing a destination writes the exact previewed bytes.
+24. Induce a preparation or destination-write failure and confirm the UI shows only the fixed generic message without a path or underlying error.
+25. Refresh the same unchanged Codex session report several times and confirm the measured observation count does not increase.
+26. Collect at least four increasing observations across 15 minutes and confirm the existing row shows separate **Measured** evidence and a **Calculated** burn range, with exhaustion omitted when reset occurs first.
+27. Confirm a counter decrease, stale report, or expired reset replaces the calculated range with an explicit unavailable explanation.
+28. Delete quota observations in Settings and confirm current rate limits, usage, alert rules, delivery state, settings, and credentials remain available; confirm the UI explains that an unchanged current report can be measured again on a later refresh.
+29. Preview a diagnostic export and confirm quota findings contain only coarse product/window categories, bounded counts/span, status, method version, and calculated ranges, with no exact reset or internal window identifier.
 
 ## Repository-Only Boundary
 

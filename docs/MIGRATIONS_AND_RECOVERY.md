@@ -1,6 +1,6 @@
 # Database Migrations And Recovery
 
-LimitBar migrates `usage-metrics.sqlite` transactionally before reading metrics.
+LimitBar opens `usage-metrics.sqlite` and `historical-usage-trends.sqlite` transactionally before reading Usage Aggregates.
 It never treats an unknown table shape as a known historical schema.
 
 ## Release Matrix
@@ -83,10 +83,10 @@ After a newer LimitBar version successfully opens a database, do not open it wit
 If LimitBar cannot open the database:
 
 1. Quit LimitBar before making a manual copy.
-2. Back up `usage-metrics.sqlite` and adjacent `-wal` and `-shm` files as one set.
+2. Back up `usage-metrics.sqlite`, `historical-usage-trends.sqlite`, and their adjacent `-wal` and `-shm` files as complete sets.
 3. Keep the backup local because labels and usage aggregates can be private.
 4. Retry with the same or a newer LimitBar release.
-5. In Settings, use **Reveal Database Folder** to inspect the location or **Create Clean Database** to archive the original set under `Recovery` before creating a replacement.
+5. In Settings, use **Reveal Database Folder** to inspect the location or **Create Clean Database** to archive and replace `usage-metrics.sqlite`; this action does not replace the historical database.
 6. Reimport retained normalized local and custom JSONL sources and explicitly refresh configured providers.
 
 Copying only the main SQLite file is not a reliable backup when sidecars exist.

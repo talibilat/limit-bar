@@ -44,15 +44,7 @@ public final class HistoricalUsageTrendStore {
     }
 
     public static func applicationSupportStore(fileManager: FileManager = .default) throws -> HistoricalUsageTrendStore {
-        let applicationSupport = try fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return try HistoricalUsageTrendStore(path: directory.appendingPathComponent("historical-usage-trends.sqlite").path)
+        try HistoricalUsageTrendStore(path: LimitBarFileLocations.production(fileManager: fileManager).historicalUsageDatabase.path)
     }
 
     @discardableResult
@@ -187,6 +179,24 @@ public final class HistoricalUsageTrendStore {
         try execute("PRAGMA wal_checkpoint(TRUNCATE);")
         try execute("VACUUM;")
         return deleted
+    }
+
+    @discardableResult
+    public func deleteCustomSources(excluding sourceIDs: Set<UUID>) throws -> Int {
+        let sql: String
+        if sourceIDs.isEmpty {
+            sql = "DELETE FROM historical_usage_observations WHERE source_kind = 'custom';"
+        } else {
+            let placeholders = Array(repeating: "?", count: sourceIDs.count).joined(separator: ", ")
+            sql = "DELETE FROM historical_usage_observations WHERE source_kind = 'custom' AND source_identifier NOT IN (\(placeholders));"
+        }
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        for (index, sourceID) in sourceIDs.sorted(by: { $0.uuidString < $1.uuidString }).enumerated() {
+            bind(sourceID.uuidString, at: Int32(index + 1), in: statement)
+        }
+        try stepDone(statement)
+        return Int(sqlite3_changes(database))
     }
 
     func schemaColumnNames() throws -> Set<String> {

@@ -174,9 +174,16 @@ public enum CodexSessionRateLimitReader {
         fileManager: FileManager = .default
     ) throws -> CodexRateLimitSnapshot {
         try Task.checkCancellation()
+        guard let canonicalDirectory = SecureRegularFile.canonicalURL(sessionsDirectory) else {
+            throw CodexRateLimitFailure.notFound
+        }
+        guard !SecureRegularFile.isSymbolicLink(sessionsDirectory),
+              !SecureRegularFile.isSymbolicLink(sessionsDirectory.deletingLastPathComponent()) else {
+            throw CodexRateLimitFailure.notFound
+        }
         guard let enumerator = fileManager.enumerator(
-            at: sessionsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            at: canonicalDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else {
             throw CodexRateLimitFailure.notFound
@@ -189,6 +196,7 @@ public enum CodexSessionRateLimitReader {
             maximumEntries: 10_000,
             maximumFileSize: 8 * 1_024 * 1_024,
             maximumTotalReadSize: 32 * 1_024 * 1_024,
+            allowedDirectory: canonicalDirectory,
             fileManager: fileManager
         )
     }
@@ -200,6 +208,7 @@ public enum CodexSessionRateLimitReader {
         maximumEntries: Int,
         maximumFileSize: Int = 8 * 1_024 * 1_024,
         maximumTotalReadSize: Int = 32 * 1_024 * 1_024,
+        allowedDirectory: URL? = nil,
         fileManager: FileManager = .default,
         readFile: (URL, Int) throws -> Data = boundedRead
     ) throws -> CodexRateLimitSnapshot {
@@ -222,11 +231,20 @@ public enum CodexSessionRateLimitReader {
                 throw CodexRateLimitFailure.traversalLimitExceeded
             }
             guard fileURL.pathExtension == "jsonl" else { continue }
-            guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+            guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true,
                   let modified = values.contentModificationDate,
                   let fileSize = values.fileSize,
                   fileSize <= maximumFileSize,
                   modified >= cutoff else {
+                continue
+            }
+            if let allowedDirectory {
+                let rootPath = allowedDirectory.path
+                guard let candidatePath = SecureRegularFile.canonicalURL(fileURL)?.path else { continue }
+                guard candidatePath.hasPrefix(rootPath + "/") else { continue }
+                candidates.append((URL(fileURLWithPath: candidatePath), modified))
                 continue
             }
             candidates.append((fileURL, modified))
@@ -269,7 +287,7 @@ public enum CodexSessionRateLimitReader {
     }
 
     private static func boundedRead(_ fileURL: URL, byteCount: Int) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: fileURL)
+        let handle = try SecureRegularFile.open(fileURL)
         defer { try? handle.close() }
         var data = Data()
         while data.count < byteCount {
