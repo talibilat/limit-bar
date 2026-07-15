@@ -3,7 +3,6 @@ import Foundation
 public enum QuotaAnomalyValidationError: Error, Equatable {
     case invalidPeriod
     case invalidDenominator
-    case invalidEvidenceVersion
 }
 
 public enum QuotaAnomalyPeriodInclusionRule: String, Codable, Equatable, Sendable {
@@ -42,16 +41,178 @@ public enum QuotaAnomalyQualification: String, Codable, Equatable, Sendable {
     case unavailable
 }
 
-public enum QuotaAnomalyEvidenceClassification: String, Codable, Equatable, Sendable {
+public enum QuotaAnomalyEvidenceClassification: String, Codable, Equatable, Hashable, Sendable {
     case reported
     case measured
     case calculated
     case inferred
 }
 
+public enum QuotaAnomalyAdapterVersion: String, Codable, Equatable, Hashable, Sendable {
+    case quotaObservationV1 = "quota_observation_v1"
+    case quotaObservationV2 = "quota_observation_v2"
+}
+
+public enum QuotaAnomalyClientVersion: String, Codable, Equatable, Hashable, Sendable {
+    case notReported = "not_reported"
+    case codex0144 = "codex_0_144"
+    case codex0145 = "codex_0_145"
+    case claudeSupportedV1 = "claude_supported_v1"
+}
+
+public enum QuotaAnomalyProviderFormatVersion: String, Codable, Equatable, Hashable, Sendable {
+    case claudeProviderReportV1 = "claude_provider_report_v1"
+    case codexLocalReportV1 = "codex_local_report_v1"
+    case codexLocalReportV2 = "codex_local_report_v2"
+}
+
+public struct QuotaAnomalyEvidenceVersion: Codable, Equatable, Hashable, Sendable {
+    public let adapter: QuotaAnomalyAdapterVersion
+    public let client: QuotaAnomalyClientVersion
+    public let providerFormat: QuotaAnomalyProviderFormatVersion
+
+    public init(
+        adapter: QuotaAnomalyAdapterVersion,
+        client: QuotaAnomalyClientVersion,
+        providerFormat: QuotaAnomalyProviderFormatVersion
+    ) {
+        self.adapter = adapter
+        self.client = client
+        self.providerFormat = providerFormat
+    }
+}
+
+public enum QuotaAnomalyDenominatorKind: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case inputTokens = "input_tokens"
+    case requests
+    case agentSteps = "agent_steps"
+    case completedTasks = "completed_tasks"
+    case acceptedCodeChanges = "accepted_code_changes"
+    case activeMinutes = "active_minutes"
+
+    public var unit: QuotaAnomalyDenominatorUnit {
+        switch self {
+        case .inputTokens: .tokens
+        case .activeMinutes: .minutes
+        case .requests, .agentSteps, .completedTasks, .acceptedCodeChanges: .count
+        }
+    }
+}
+
+public enum QuotaAnomalyDenominatorUnit: String, Codable, Equatable, Hashable, Sendable {
+    case tokens
+    case count
+    case minutes
+}
+
+public enum QuotaAnomalyDenominatorSource: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case localUsageEvents = "local_usage_events"
+    case codexRolloutEvidence = "codex_rollout_evidence"
+    case collectorUsageEvents = "collector_usage_events"
+}
+
+public enum QuotaAnomalyDenominatorMethodVersion: String, Codable, Equatable, Hashable, Sendable {
+    case measuredIntervalAggregateV1 = "measured_interval_aggregate_v1"
+}
+
+public enum QuotaAnomalyDenominatorCoverage: Equatable, Sendable {
+    case complete
+    case partial(Double)
+    case gap
+}
+
+public struct QuotaAnomalyDenominatorInput: Equatable, Sendable {
+    public let period: QuotaAnomalyPeriod
+    public let kind: QuotaAnomalyDenominatorKind
+    public let source: QuotaAnomalyDenominatorSource
+    public let methodVersion: QuotaAnomalyDenominatorMethodVersion
+    public let value: Double?
+    public let observedAt: Date?
+    public let coverage: QuotaAnomalyDenominatorCoverage
+    public let classification: QuotaAnomalyEvidenceClassification?
+
+    public init(
+        period: QuotaAnomalyPeriod,
+        kind: QuotaAnomalyDenominatorKind,
+        source: QuotaAnomalyDenominatorSource,
+        methodVersion: QuotaAnomalyDenominatorMethodVersion = .measuredIntervalAggregateV1,
+        value: Double?,
+        observedAt: Date?,
+        coverage: QuotaAnomalyDenominatorCoverage
+    ) throws {
+        switch coverage {
+        case .complete:
+            guard let value, value.isFinite, value >= 0,
+                  let observedAt, observedAt.timeIntervalSince1970.isFinite,
+                  observedAt >= period.end else { throw QuotaAnomalyValidationError.invalidDenominator }
+        case let .partial(fraction):
+            guard fraction.isFinite, fraction > 0, fraction < 1,
+                  value.map({ $0.isFinite && $0 >= 0 }) ?? true,
+                  observedAt.map({ $0.timeIntervalSince1970.isFinite && $0 >= period.end }) ?? true else {
+                throw QuotaAnomalyValidationError.invalidDenominator
+            }
+        case .gap:
+            guard value == nil, observedAt == nil else { throw QuotaAnomalyValidationError.invalidDenominator }
+        }
+        self.period = period
+        self.kind = kind
+        self.source = source
+        self.methodVersion = methodVersion
+        self.value = value
+        self.observedAt = observedAt
+        self.coverage = coverage
+        self.classification = .measured
+    }
+
+    fileprivate init(
+        missingPeriod: QuotaAnomalyPeriod,
+        kind: QuotaAnomalyDenominatorKind,
+        source: QuotaAnomalyDenominatorSource,
+        methodVersion: QuotaAnomalyDenominatorMethodVersion
+    ) {
+        self.period = missingPeriod
+        self.kind = kind
+        self.source = source
+        self.methodVersion = methodVersion
+        self.value = nil
+        self.observedAt = nil
+        self.coverage = .gap
+        self.classification = nil
+    }
+}
+
+public struct QuotaAnomalyDenominatorRequest: Equatable, Sendable {
+    public let kind: QuotaAnomalyDenominatorKind
+    public let source: QuotaAnomalyDenominatorSource
+    public let methodVersion: QuotaAnomalyDenominatorMethodVersion
+    public let inputs: [QuotaAnomalyDenominatorInput]
+
+    public init(
+        kind: QuotaAnomalyDenominatorKind,
+        source: QuotaAnomalyDenominatorSource,
+        methodVersion: QuotaAnomalyDenominatorMethodVersion = .measuredIntervalAggregateV1,
+        inputs: [QuotaAnomalyDenominatorInput]
+    ) {
+        self.kind = kind
+        self.source = source
+        self.methodVersion = methodVersion
+        self.inputs = inputs
+    }
+}
+
+public enum QuotaAnomalyNormalization: Equatable, Sendable {
+    case directQuotaMovement
+    case measuredDenominator(QuotaAnomalyDenominatorRequest)
+}
+
 public enum QuotaAnomalyNormalizationSummary: Equatable, Sendable {
     case directQuotaMovement
-    case measuredDenominator(name: String, unit: String, version: String)
+    case measuredDenominator(
+        kind: QuotaAnomalyDenominatorKind,
+        unit: QuotaAnomalyDenominatorUnit,
+        source: QuotaAnomalyDenominatorSource,
+        methodVersion: QuotaAnomalyDenominatorMethodVersion
+    )
 }
 
 public enum QuotaAnomalyAttribution: String, Codable, Equatable, Sendable {
@@ -62,7 +223,9 @@ public enum QuotaAnomalyLimitation: String, Codable, Equatable, Hashable, Sendab
     case providerWeightingUnknown = "provider_weighting_unknown"
     case noCausalAttribution = "no_causal_attribution"
     case syntheticFixtureValidationOnly = "synthetic_fixture_validation_only"
-    case incompatibleInterpretationVersion = "incompatible_interpretation_version"
+    case incompatibleAdapterVersion = "incompatible_adapter_version"
+    case incompatibleClientVersion = "incompatible_client_version"
+    case incompatibleProviderFormatVersion = "incompatible_provider_format_version"
     case supersededEvidenceExcluded = "superseded_evidence_excluded"
 }
 
@@ -85,58 +248,7 @@ public enum QuotaAnomalyUnavailableReason: String, Codable, Error, Equatable, Se
     case incompatibleDenominator = "incompatible_denominator"
 }
 
-public struct QuotaConsumptionAnomalyFinding: Equatable, Sendable {
-    public let findingType: QuotaAnomalyFindingType
-    public let direction: QuotaAnomalyDirection
-    public let method: QuotaAnomalyMethod
-    public let qualification: QuotaAnomalyQualification
-    public let createdAt: Date
-    public let identity: QuotaWindowIdentity
-    public let currentPeriod: QuotaAnomalyPeriod
-    public let baselinePeriod: QuotaAnomalyPeriod
-    public let calculatedCurrentValue: Double
-    public let calculatedBaselineMedian: Double
-    public let calculatedRatio: Double
-    public let calculatedThreshold: Double
-    public let baselineSampleCount: Int
-    public let inputObservationIdentities: [QuotaObservationIdentity]
-    public let interpretationVersions: [QuotaObservationInterpretationVersion]
-    public let evidenceVersions: [QuotaAnomalyEvidenceVersion]
-    public let inputClassifications: [QuotaAnomalyEvidenceClassification]
-    public let normalization: QuotaAnomalyNormalizationSummary
-    public let denominatorInputs: [MeasuredQuotaAnomalyDenominator]
-    public let currentValueClassification: QuotaAnomalyEvidenceClassification
-    public let baselineClassification: QuotaAnomalyEvidenceClassification
-    public let scoreClassification: QuotaAnomalyEvidenceClassification
-    public let attribution: QuotaAnomalyAttribution
-    public let limitations: [QuotaAnomalyLimitation]
-}
-
-public struct QuotaAnomalyNoFinding: Equatable, Sendable {
-    public let method: QuotaAnomalyMethod
-    public let qualification: QuotaAnomalyQualification
-    public let createdAt: Date
-    public let identity: QuotaWindowIdentity
-    public let currentPeriod: QuotaAnomalyPeriod
-    public let baselinePeriod: QuotaAnomalyPeriod
-    public let calculatedCurrentValue: Double
-    public let calculatedBaselineMedian: Double
-    public let calculatedRatio: Double?
-    public let calculatedThreshold: Double
-    public let inputObservationIdentities: [QuotaObservationIdentity]
-    public let interpretationVersions: [QuotaObservationInterpretationVersion]
-    public let evidenceVersions: [QuotaAnomalyEvidenceVersion]
-    public let inputClassifications: [QuotaAnomalyEvidenceClassification]
-    public let normalization: QuotaAnomalyNormalizationSummary
-    public let denominatorInputs: [MeasuredQuotaAnomalyDenominator]
-    public let currentValueClassification: QuotaAnomalyEvidenceClassification
-    public let baselineClassification: QuotaAnomalyEvidenceClassification
-    public let scoreClassification: QuotaAnomalyEvidenceClassification
-    public let limitations: [QuotaAnomalyLimitation]
-}
-
-public struct UnavailableQuotaAnomalyAnalysis: Equatable, Sendable {
-    public let reason: QuotaAnomalyUnavailableReason
+public struct QuotaAnomalyResultMetadata: Equatable, Sendable {
     public let method: QuotaAnomalyMethod
     public let qualification: QuotaAnomalyQualification
     public let createdAt: Date?
@@ -147,86 +259,119 @@ public struct UnavailableQuotaAnomalyAnalysis: Equatable, Sendable {
     public let interpretationVersions: [QuotaObservationInterpretationVersion]
     public let evidenceVersions: [QuotaAnomalyEvidenceVersion]
     public let inputClassifications: [QuotaAnomalyEvidenceClassification]
-    public let denominatorInputs: [MeasuredQuotaAnomalyDenominator]
+    public let denominatorInputs: [QuotaAnomalyDenominatorInput]
     public let limitations: [QuotaAnomalyLimitation]
+}
+
+public struct QuotaConsumptionAnomalyFinding: Equatable, Sendable {
+    public let metadata: QuotaAnomalyResultMetadata
+    public let findingType: QuotaAnomalyFindingType
+    public let direction: QuotaAnomalyDirection
+    public let identity: QuotaWindowIdentity
+    public let calculatedCurrentValue: Double
+    public let calculatedBaselineValues: [Double]
+    public let calculatedBaselineMedian: Double
+    public let calculatedRatio: Double
+    public let calculatedThreshold: Double
+    public let normalization: QuotaAnomalyNormalizationSummary
+    public let valueClassification: QuotaAnomalyEvidenceClassification
+    public let attribution: QuotaAnomalyAttribution
+}
+
+public struct QuotaAnomalyNoFinding: Equatable, Sendable {
+    public let metadata: QuotaAnomalyResultMetadata
+    public let identity: QuotaWindowIdentity
+    public let calculatedCurrentValue: Double
+    public let calculatedBaselineValues: [Double]
+    public let calculatedBaselineMedian: Double
+    public let calculatedRatio: Double?
+    public let calculatedThreshold: Double
+    public let normalization: QuotaAnomalyNormalizationSummary
+    public let valueClassification: QuotaAnomalyEvidenceClassification
+}
+
+public struct QuotaAnomalyObservedZero: Equatable, Sendable {
+    public let metadata: QuotaAnomalyResultMetadata
+    public let identity: QuotaWindowIdentity
+    public let calculatedCurrentValue: Double
+    public let calculatedBaselineValues: [Double]
+    public let normalization: QuotaAnomalyNormalizationSummary
+    public let valueClassification: QuotaAnomalyEvidenceClassification
+}
+
+public struct UnavailableQuotaAnomalyAnalysis: Equatable, Sendable {
+    public let metadata: QuotaAnomalyResultMetadata
+    public let reason: QuotaAnomalyUnavailableReason
 }
 
 public enum QuotaAnomalyState: Equatable, Sendable {
     case finding(QuotaConsumptionAnomalyFinding)
     case noFinding(QuotaAnomalyNoFinding)
+    case observedZero(QuotaAnomalyObservedZero)
     case unavailable(UnavailableQuotaAnomalyAnalysis)
 }
 
-public struct MeasuredQuotaAnomalyDenominator: Equatable, Sendable {
-    public let period: QuotaAnomalyPeriod
-    public let name: String
-    public let unit: String
-    public let version: String
-    public let value: Double
-    public let observedAt: Date
-    public let coverage: Double
-    public let classification: QuotaAnomalyEvidenceClassification
-
-    public init(
-        period: QuotaAnomalyPeriod,
-        name: String,
-        unit: String,
-        version: String,
-        value: Double,
-        observedAt: Date,
-        coverage: Double = 1,
-        classification: QuotaAnomalyEvidenceClassification = .measured
-    ) throws {
-        let allowed = { (value: String) in
-            !value.isEmpty && value.utf8.count <= 64
-                && value.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }
-                && !value.containsQuotaAnomalyProhibitedContent
-        }
-        guard allowed(name), allowed(unit), allowed(version),
-              value.isFinite, value >= 0,
-              observedAt.timeIntervalSince1970.isFinite, observedAt >= period.end,
-              coverage.isFinite, (0...1).contains(coverage) else {
-            throw QuotaAnomalyValidationError.invalidDenominator
-        }
-        self.period = period
-        self.name = name
-        self.unit = unit
-        self.version = version
-        self.value = value
-        self.observedAt = observedAt
-        self.coverage = coverage
-        self.classification = classification
-    }
+enum QuotaAnomalyScoreMethod: Equatable {
+    case trailingMedianRatio
+    case medianAbsoluteDeviation
 }
 
-public enum QuotaAnomalyNormalization: Equatable, Sendable {
-    case directQuotaMovement
-    case measuredDenominator([MeasuredQuotaAnomalyDenominator])
+enum QuotaAnomalyScoreOutcome: Equatable {
+    case finding(Double)
+    case noFinding(Double?)
+    case unavailable
 }
 
-public struct QuotaAnomalyEvidenceVersion: Codable, Equatable, Hashable, Sendable {
-    public let adapterVersion: String
-    public let clientVersion: String?
-    public let providerFormatVersion: String
+struct QuotaAnomalyScoreEvaluation: Equatable {
+    let baselineMedian: Double
+    let outcome: QuotaAnomalyScoreOutcome
+}
 
-    public init(adapterVersion: String, clientVersion: String?, providerFormatVersion: String) throws {
-        let allowed = { (value: String) in
-            !value.isEmpty && value.utf8.count <= 64
-                && value.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 46 || $0 == 95 }
-                && !value.containsQuotaAnomalyProhibitedContent
+enum QuotaAnomalyScoring {
+    static func evaluate(
+        baseline: [Double],
+        current: Double,
+        method: QuotaAnomalyScoreMethod,
+        threshold: Double
+    ) -> QuotaAnomalyScoreEvaluation {
+        guard baseline.count == QuotaAnomalyAnalytics.minimumBaselineSampleCount,
+              baseline.allSatisfy({ $0.isFinite && $0 >= 0 }),
+              current.isFinite, current >= 0,
+              threshold.isFinite, threshold > 0 else {
+            return QuotaAnomalyScoreEvaluation(baselineMedian: 0, outcome: .unavailable)
         }
-        guard allowed(adapterVersion), allowed(providerFormatVersion), clientVersion.map(allowed) ?? true else {
-            throw QuotaAnomalyValidationError.invalidEvidenceVersion
+        let ordered = baseline.sorted()
+        let median = ordered[ordered.count / 2]
+        switch method {
+        case .trailingMedianRatio:
+            guard median > 0 else {
+                return QuotaAnomalyScoreEvaluation(
+                    baselineMedian: median,
+                    outcome: current == 0 ? .noFinding(nil) : .unavailable
+                )
+            }
+            let ratio = current / median
+            guard ratio.isFinite else { return QuotaAnomalyScoreEvaluation(baselineMedian: median, outcome: .unavailable) }
+            return QuotaAnomalyScoreEvaluation(
+                baselineMedian: median,
+                outcome: ratio >= threshold ? .finding(ratio) : .noFinding(ratio)
+            )
+        case .medianAbsoluteDeviation:
+            let deviations = ordered.map { abs($0 - median) }.sorted()
+            let dispersion = deviations[deviations.count / 2]
+            guard dispersion > 0 else {
+                return QuotaAnomalyScoreEvaluation(
+                    baselineMedian: median,
+                    outcome: current == median ? .noFinding(nil) : .unavailable
+                )
+            }
+            let score = 0.6745 * (current - median) / dispersion
+            guard score.isFinite else { return QuotaAnomalyScoreEvaluation(baselineMedian: median, outcome: .unavailable) }
+            return QuotaAnomalyScoreEvaluation(
+                baselineMedian: median,
+                outcome: score >= threshold ? .finding(score) : .noFinding(score)
+            )
         }
-        self.adapterVersion = adapterVersion
-        self.clientVersion = clientVersion
-        self.providerFormatVersion = providerFormatVersion
-    }
-
-    fileprivate init(trustedAdapterVersion: String, trustedProviderFormatVersion: String) {
-        self.adapterVersion = trustedAdapterVersion
-        self.clientVersion = nil
-        self.providerFormatVersion = trustedProviderFormatVersion
     }
 }
 
@@ -255,57 +400,66 @@ public enum QuotaAnomalyAnalytics {
         let identities = Array(Set(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })).sorted {
             ($0.product.rawValue, $0.identifier, $0.resetBoundary) < ($1.product.rawValue, $1.identifier, $1.resetBoundary)
         }
-        let versions = Array(Set(unique.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue }
-        let evidenceVersions = Array(Set(unique.map { observation in
-            suppliedEvidenceVersions[observation.stableIdentity] ?? defaultEvidenceVersion(for: observation)
-        })).sorted {
-            ($0.adapterVersion, $0.clientVersion ?? "", $0.providerFormatVersion)
-                < ($1.adapterVersion, $1.clientVersion ?? "", $1.providerFormatVersion)
-        }
-        let inputClassifications = Array(Set(unique.map { observation in
-            observation.source == .claudeProviderReport ? QuotaAnomalyEvidenceClassification.reported : .measured
-        })).sorted { $0.rawValue < $1.rawValue }
-        let requestedDenominators: [MeasuredQuotaAnomalyDenominator] = switch normalization {
+        let allEvidenceVersions = orderedEvidenceVersions(unique, supplied: suppliedEvidenceVersions)
+        let requestedDenominators: [QuotaAnomalyDenominatorInput] = switch normalization {
         case .directQuotaMovement: []
-        case let .measuredDenominator(values): values.sorted { ($0.period.start, $0.period.end) < ($1.period.start, $1.period.end) }
+        case let .measuredDenominator(request): request.inputs.sorted { ($0.period.start, $0.period.end) < ($1.period.start, $1.period.end) }
         }
         var limitations: [QuotaAnomalyLimitation] = [.providerWeightingUnknown, .noCausalAttribution, .syntheticFixtureValidationOnly]
         if !supersededObservationIdentities.isEmpty { limitations.append(.supersededEvidenceExcluded) }
 
+        func metadata(
+            qualification: QuotaAnomalyQualification,
+            current: QuotaAnomalyPeriod? = nil,
+            baseline: QuotaAnomalyPeriod? = nil,
+            inputs: [MeasuredQuotaObservation]? = nil,
+            evidenceVersions: [QuotaAnomalyEvidenceVersion]? = nil,
+            denominatorInputs: [QuotaAnomalyDenominatorInput]? = nil,
+            extraLimitations: [QuotaAnomalyLimitation] = []
+        ) -> QuotaAnomalyResultMetadata {
+            let effectiveInputs = inputs ?? unique
+            let effectiveClassifications = Array(Set(effectiveInputs.map { observation in
+                observation.source == .claudeProviderReport ? QuotaAnomalyEvidenceClassification.reported : .measured
+            })).sorted { $0.rawValue < $1.rawValue }
+            return QuotaAnomalyResultMetadata(
+                method: method,
+                qualification: qualification,
+                createdAt: now.timeIntervalSince1970.isFinite ? now : nil,
+                implicatedIdentities: identities,
+                currentPeriod: current,
+                baselinePeriod: baseline,
+                inputObservationIdentities: effectiveInputs.map(\.stableIdentity),
+                interpretationVersions: Array(Set(effectiveInputs.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue },
+                evidenceVersions: evidenceVersions ?? allEvidenceVersions,
+                inputClassifications: effectiveClassifications,
+                denominatorInputs: denominatorInputs ?? requestedDenominators,
+                limitations: Array(Set(limitations + extraLimitations)).sorted { $0.rawValue < $1.rawValue }
+            )
+        }
         func unavailable(
             _ reason: QuotaAnomalyUnavailableReason,
             current: QuotaAnomalyPeriod? = nil,
             baseline: QuotaAnomalyPeriod? = nil,
-            createdAt: Date? = now.timeIntervalSince1970.isFinite ? now : nil,
+            denominatorInputs: [QuotaAnomalyDenominatorInput]? = nil,
             extraLimitations: [QuotaAnomalyLimitation] = []
         ) -> QuotaAnomalyState {
             .unavailable(UnavailableQuotaAnomalyAnalysis(
-                reason: reason,
-                method: method,
-                qualification: .unavailable,
-                createdAt: createdAt,
-                implicatedIdentities: identities,
-                currentPeriod: current,
-                baselinePeriod: baseline,
-                inputObservationIdentities: unique.map(\.stableIdentity),
-                interpretationVersions: versions,
-                evidenceVersions: evidenceVersions,
-                inputClassifications: inputClassifications,
-                denominatorInputs: requestedDenominators,
-                limitations: Array(Set(limitations + extraLimitations)).sorted { $0.rawValue < $1.rawValue }
+                metadata: metadata(
+                    qualification: .unavailable,
+                    current: current,
+                    baseline: baseline,
+                    denominatorInputs: denominatorInputs,
+                    extraLimitations: extraLimitations
+                ),
+                reason: reason
             ))
         }
 
         guard now.timeIntervalSince1970.isFinite,
-              maximumAge.isFinite, maximumAge >= 0 else {
-            return unavailable(.invalidEvaluation, createdAt: nil)
-        }
+              maximumAge.isFinite, maximumAge >= 0 else { return unavailable(.invalidEvaluation) }
         guard identities.count <= 1 else { return unavailable(.incompatibleEvidence) }
         guard let identity = unique.first?.identity ?? expectedIdentity else { return unavailable(.insufficientObservations) }
         guard identity.insightWindowKind != .other else { return unavailable(.incompatibleEvidence) }
-        guard versions.count <= 1 else {
-            return unavailable(.incompatibleEvidence, extraLimitations: [.incompatibleInterpretationVersion])
-        }
         let grouped = Dictionary(grouping: unique, by: \.observedAt)
         guard !grouped.values.contains(where: { Set($0.map(\.percentageUsed)).count > 1 }) else {
             return unavailable(.conflictingObservations)
@@ -321,14 +475,10 @@ public enum QuotaAnomalyAnalytics {
         }
 
         let selected = Array(distinct.suffix(minimumBaselineSampleCount + 2))
-        let selectedEvidenceVersions = Array(Set(selected.map { observation in
-            suppliedEvidenceVersions[observation.stableIdentity] ?? defaultEvidenceVersion(for: observation)
-        })).sorted {
-            ($0.adapterVersion, $0.clientVersion ?? "", $0.providerFormatVersion)
-                < ($1.adapterVersion, $1.clientVersion ?? "", $1.providerFormatVersion)
-        }
-        guard selectedEvidenceVersions.count == 1 else {
-            return unavailable(.incompatibleEvidence, extraLimitations: [.incompatibleInterpretationVersion])
+        let selectedEvidenceVersions = orderedEvidenceVersions(selected, supplied: suppliedEvidenceVersions)
+        let versionLimitations = incompatibleVersionLimitations(selectedEvidenceVersions)
+        guard versionLimitations.isEmpty else {
+            return unavailable(.incompatibleEvidence, extraLimitations: versionLimitations)
         }
         let intervals = zip(selected, selected.dropFirst()).map { lower, upper in
             (lower: lower, upper: upper, duration: upper.observedAt.timeIntervalSince(lower.observedAt), value: upper.percentageUsed - lower.percentageUsed)
@@ -347,71 +497,153 @@ public enum QuotaAnomalyAnalytics {
         }
 
         let rawValues = intervals.map(\.value)
-        let normalized: (values: [Double], summary: QuotaAnomalyNormalizationSummary, denominators: [MeasuredQuotaAnomalyDenominator])
+        let normalized: (values: [Double], summary: QuotaAnomalyNormalizationSummary, denominators: [QuotaAnomalyDenominatorInput])
         switch normalization {
         case .directQuotaMovement:
             normalized = (rawValues, .directQuotaMovement, [])
-        case let .measuredDenominator(denominators):
-            switch normalize(rawValues, intervals: intervals, denominators: denominators, now: now, maximumAge: maximumAge) {
+        case let .measuredDenominator(request):
+            switch normalize(rawValues, intervals: intervals, request: request, now: now, maximumAge: maximumAge) {
             case let .success(value): normalized = value
-            case let .failure(reason): return unavailable(reason, current: currentPeriod, baseline: baselinePeriod)
+            case let .failure(failure):
+                return unavailable(
+                    failure.reason,
+                    current: currentPeriod,
+                    baseline: baselinePeriod,
+                    denominatorInputs: failure.inputs
+                )
             }
         }
 
-        let baselineValues = Array(normalized.values.prefix(minimumBaselineSampleCount)).sorted()
+        let baselineValues = Array(normalized.values.prefix(minimumBaselineSampleCount))
         let currentValue = normalized.values.last!
-        let median = baselineValues[baselineValues.count / 2]
-        let trace = selected.map(\.stableIdentity)
-        let orderedLimitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
-        if median == 0 {
-            guard currentValue == 0 else {
-                return unavailable(.unstableBaseline, current: currentPeriod, baseline: baselinePeriod)
-            }
-            return .noFinding(QuotaAnomalyNoFinding(
-                method: method, qualification: .qualified, createdAt: now, identity: identity,
-                currentPeriod: currentPeriod, baselinePeriod: baselinePeriod,
-                calculatedCurrentValue: 0, calculatedBaselineMedian: 0, calculatedRatio: nil,
-                calculatedThreshold: ratioThreshold, inputObservationIdentities: trace,
-                interpretationVersions: versions, evidenceVersions: selectedEvidenceVersions,
-                inputClassifications: inputClassifications, normalization: normalized.summary,
-                denominatorInputs: normalized.denominators,
-                currentValueClassification: .calculated, baselineClassification: .calculated,
-                scoreClassification: .calculated,
-                limitations: orderedLimitations
+        let resultMetadata = metadata(
+            qualification: .qualified,
+            current: currentPeriod,
+            baseline: baselinePeriod,
+            inputs: selected,
+            evidenceVersions: selectedEvidenceVersions,
+            denominatorInputs: normalized.denominators
+        )
+        if selected.allSatisfy({ $0.percentageUsed == 0 }) {
+            return .observedZero(QuotaAnomalyObservedZero(
+                metadata: resultMetadata,
+                identity: identity,
+                calculatedCurrentValue: 0,
+                calculatedBaselineValues: baselineValues,
+                normalization: normalized.summary,
+                valueClassification: .calculated
             ))
         }
-        let ratio = currentValue / median
-        guard ratio.isFinite else {
+        let scoring = QuotaAnomalyScoring.evaluate(
+            baseline: baselineValues,
+            current: currentValue,
+            method: .trailingMedianRatio,
+            threshold: ratioThreshold
+        )
+        switch scoring.outcome {
+        case let .finding(ratio):
+            return .finding(QuotaConsumptionAnomalyFinding(
+                metadata: resultMetadata,
+                findingType: .quotaConsumptionAnomaly,
+                direction: .higher,
+                identity: identity,
+                calculatedCurrentValue: currentValue,
+                calculatedBaselineValues: baselineValues,
+                calculatedBaselineMedian: scoring.baselineMedian,
+                calculatedRatio: ratio,
+                calculatedThreshold: ratioThreshold,
+                normalization: normalized.summary,
+                valueClassification: .calculated,
+                attribution: .unattributed
+            ))
+        case let .noFinding(ratio):
+            return .noFinding(QuotaAnomalyNoFinding(
+                metadata: resultMetadata,
+                identity: identity,
+                calculatedCurrentValue: currentValue,
+                calculatedBaselineValues: baselineValues,
+                calculatedBaselineMedian: scoring.baselineMedian,
+                calculatedRatio: ratio,
+                calculatedThreshold: ratioThreshold,
+                normalization: normalized.summary,
+                valueClassification: .calculated
+            ))
+        case .unavailable:
             return unavailable(.unstableBaseline, current: currentPeriod, baseline: baselinePeriod)
         }
-        let direction: QuotaAnomalyDirection? = ratio >= ratioThreshold ? .higher : nil
-        guard let direction else {
-            return .noFinding(QuotaAnomalyNoFinding(
-                method: method, qualification: .qualified, createdAt: now, identity: identity,
-                currentPeriod: currentPeriod, baselinePeriod: baselinePeriod,
-                calculatedCurrentValue: currentValue, calculatedBaselineMedian: median, calculatedRatio: ratio,
-                calculatedThreshold: ratioThreshold, inputObservationIdentities: trace,
-                interpretationVersions: versions, evidenceVersions: selectedEvidenceVersions,
-                inputClassifications: inputClassifications, normalization: normalized.summary,
-                denominatorInputs: normalized.denominators,
-                currentValueClassification: .calculated, baselineClassification: .calculated,
-                scoreClassification: .calculated,
-                limitations: orderedLimitations
-            ))
+    }
+
+    private struct DenominatorFailure: Error {
+        let reason: QuotaAnomalyUnavailableReason
+        let inputs: [QuotaAnomalyDenominatorInput]
+    }
+
+    private static func normalize(
+        _ values: [Double],
+        intervals: [(lower: MeasuredQuotaObservation, upper: MeasuredQuotaObservation, duration: TimeInterval, value: Double)],
+        request: QuotaAnomalyDenominatorRequest,
+        now: Date,
+        maximumAge: TimeInterval
+    ) -> Result<(values: [Double], summary: QuotaAnomalyNormalizationSummary, denominators: [QuotaAnomalyDenominatorInput]), DenominatorFailure> {
+        let expectedPeriods = intervals.compactMap { try? QuotaAnomalyPeriod(start: $0.lower.observedAt, end: $0.upper.observedAt) }
+        let supplied = request.inputs.sorted { ($0.period.start, $0.period.end) < ($1.period.start, $1.period.end) }
+        guard Set(supplied.map(\.period)).count == supplied.count else {
+            return .failure(DenominatorFailure(reason: .incompatibleDenominator, inputs: supplied))
         }
-        return .finding(QuotaConsumptionAnomalyFinding(
-            findingType: .quotaConsumptionAnomaly, direction: direction, method: method,
-            qualification: .qualified, createdAt: now, identity: identity,
-            currentPeriod: currentPeriod, baselinePeriod: baselinePeriod,
-            calculatedCurrentValue: currentValue, calculatedBaselineMedian: median,
-            calculatedRatio: ratio, calculatedThreshold: ratioThreshold,
-            baselineSampleCount: minimumBaselineSampleCount, inputObservationIdentities: trace,
-            interpretationVersions: versions, evidenceVersions: selectedEvidenceVersions,
-            inputClassifications: inputClassifications, normalization: normalized.summary,
-            denominatorInputs: normalized.denominators,
-            currentValueClassification: .calculated, baselineClassification: .calculated,
-            scoreClassification: .calculated, attribution: .unattributed,
-            limitations: orderedLimitations
+        var byPeriod = Dictionary(grouping: supplied, by: \.period)
+        let completed = expectedPeriods.map { period in
+            byPeriod.removeValue(forKey: period)?.first ?? QuotaAnomalyDenominatorInput(
+                missingPeriod: period,
+                kind: request.kind,
+                source: request.source,
+                methodVersion: request.methodVersion
+            )
+        }
+        guard byPeriod.isEmpty else {
+            return .failure(DenominatorFailure(reason: .incompatibleDenominator, inputs: completed + byPeriod.values.flatMap { $0 }))
+        }
+        for denominator in completed {
+            guard denominator.kind == request.kind,
+                  denominator.source == request.source,
+                  denominator.methodVersion == request.methodVersion else {
+                return .failure(DenominatorFailure(reason: .incompatibleDenominator, inputs: completed))
+            }
+            switch denominator.coverage {
+            case .gap:
+                return .failure(DenominatorFailure(reason: .missingDenominator, inputs: completed))
+            case .partial:
+                return .failure(DenominatorFailure(reason: .partialDenominatorCoverage, inputs: completed))
+            case .complete:
+                break
+            }
+            guard let value = denominator.value, value > 0 else {
+                return .failure(DenominatorFailure(reason: .zeroDenominator, inputs: completed))
+            }
+            guard let observedAt = denominator.observedAt else {
+                return .failure(DenominatorFailure(reason: .missingDenominator, inputs: completed))
+            }
+            let age = now.timeIntervalSince(observedAt)
+            guard age >= 0, age <= maximumAge else {
+                return .failure(DenominatorFailure(reason: .staleDenominator, inputs: completed))
+            }
+        }
+        let denominatorValues = completed.compactMap(\.value)
+        guard denominatorValues.count == completed.count else {
+            return .failure(DenominatorFailure(reason: .missingDenominator, inputs: completed))
+        }
+        let normalizedValues = zip(values, denominatorValues).map(/)
+        guard normalizedValues.allSatisfy(\.isFinite) else {
+            return .failure(DenominatorFailure(reason: .incompatibleDenominator, inputs: completed))
+        }
+        return .success((
+            normalizedValues,
+            .measuredDenominator(
+                kind: request.kind,
+                unit: request.kind.unit,
+                source: request.source,
+                methodVersion: request.methodVersion
+            ),
+            completed
         ))
     }
 
@@ -419,49 +651,31 @@ public enum QuotaAnomalyAnalytics {
         lhs.start < rhs.end && rhs.start < lhs.end
     }
 
+    private static func orderedEvidenceVersions(
+        _ observations: [MeasuredQuotaObservation],
+        supplied: [QuotaObservationIdentity: QuotaAnomalyEvidenceVersion]
+    ) -> [QuotaAnomalyEvidenceVersion] {
+        Array(Set(observations.map { supplied[$0.stableIdentity] ?? defaultEvidenceVersion(for: $0) })).sorted {
+            ($0.adapter.rawValue, $0.client.rawValue, $0.providerFormat.rawValue)
+                < ($1.adapter.rawValue, $1.client.rawValue, $1.providerFormat.rawValue)
+        }
+    }
+
     private static func defaultEvidenceVersion(for observation: MeasuredQuotaObservation) -> QuotaAnomalyEvidenceVersion {
         QuotaAnomalyEvidenceVersion(
-            trustedAdapterVersion: observation.normalizationVersion.rawValue,
-            trustedProviderFormatVersion: observation.interpretationVersion.rawValue
+            adapter: .quotaObservationV1,
+            client: .notReported,
+            providerFormat: observation.source == .claudeProviderReport ? .claudeProviderReportV1 : .codexLocalReportV1
         )
     }
 
-    private static func normalize(
-        _ values: [Double],
-        intervals: [(lower: MeasuredQuotaObservation, upper: MeasuredQuotaObservation, duration: TimeInterval, value: Double)],
-        denominators: [MeasuredQuotaAnomalyDenominator],
-        now: Date,
-        maximumAge: TimeInterval
-    ) -> Result<(values: [Double], summary: QuotaAnomalyNormalizationSummary, denominators: [MeasuredQuotaAnomalyDenominator]), QuotaAnomalyUnavailableReason> {
-        guard denominators.count == intervals.count else { return .failure(.missingDenominator) }
-        let ordered = denominators.sorted { ($0.period.start, $0.period.end) < ($1.period.start, $1.period.end) }
-        guard let first = ordered.first else { return .failure(.missingDenominator) }
-        guard first.classification == .measured,
-              ordered.allSatisfy({ $0.classification == .measured && $0.name == first.name && $0.unit == first.unit && $0.version == first.version }) else {
-            return .failure(.incompatibleDenominator)
-        }
-        for (index, denominator) in ordered.enumerated() {
-            guard let period = try? QuotaAnomalyPeriod(start: intervals[index].lower.observedAt, end: intervals[index].upper.observedAt),
-                  denominator.period == period else { return .failure(.incompatibleDenominator) }
-            guard denominator.coverage == 1 else { return .failure(.partialDenominatorCoverage) }
-            guard denominator.value > 0 else { return .failure(.zeroDenominator) }
-            let age = now.timeIntervalSince(denominator.observedAt)
-            guard age >= 0, age <= maximumAge else { return .failure(.staleDenominator) }
-        }
-        let normalizedValues = zip(values, ordered).map { $0 / $1.value }
-        guard normalizedValues.allSatisfy(\.isFinite) else { return .failure(.incompatibleDenominator) }
-        return .success((
-            normalizedValues,
-            .measuredDenominator(name: first.name, unit: first.unit, version: first.version),
-            ordered
-        ))
-    }
-}
-
-private extension String {
-    var containsQuotaAnomalyProhibitedContent: Bool {
-        let normalized = lowercased()
-        return ["prompt", "response", "credential", "cookie", "terminal", "payload", "request-body", "request_body", "private-path", "private_path", "account-label", "account_label"]
-            .contains { normalized.contains($0) }
+    private static func incompatibleVersionLimitations(
+        _ versions: [QuotaAnomalyEvidenceVersion]
+    ) -> [QuotaAnomalyLimitation] {
+        var result: [QuotaAnomalyLimitation] = []
+        if Set(versions.map(\.adapter)).count > 1 { result.append(.incompatibleAdapterVersion) }
+        if Set(versions.map(\.client)).count > 1 { result.append(.incompatibleClientVersion) }
+        if Set(versions.map(\.providerFormat)).count > 1 { result.append(.incompatibleProviderFormatVersion) }
+        return result
     }
 }

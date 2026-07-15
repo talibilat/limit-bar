@@ -8,66 +8,60 @@ struct QuotaAnomalyTests {
 
     @Test("bursty measured consumption emits an exact traceable finding")
     func burstyFinding() throws {
-        let observations = try series(movements: [2, 2, 2, 2, 2, 8])
-        let now = base.addingTimeInterval(61 * 60)
-
-        guard case let .finding(finding) = QuotaAnomalyAnalytics.analyze(
-            observations,
-            now: now,
-            maximumAge: 5 * 60
-        ) else {
+        let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
+        guard case let .finding(finding) = analyze(observations) else {
             Issue.record("Expected a quota consumption anomaly")
             return
         }
-
-        #expect(finding.findingType == .quotaConsumptionAnomaly)
-        #expect(finding.direction == .higher)
-        #expect(finding.method == .trailingMedianRatioV1)
-        #expect(finding.qualification == .qualified)
-        #expect(finding.createdAt == now)
         let expectedCurrent = try period(50, 60)
         let expectedBaseline = try period(0, 50)
-        #expect(finding.currentPeriod == expectedCurrent)
-        #expect(finding.baselinePeriod == expectedBaseline)
-        #expect(finding.currentPeriod.inclusionRule == .startExclusiveEndInclusive)
-        #expect(finding.baselinePeriod.inclusionRule == .startExclusiveEndInclusive)
+        #expect(finding.findingType == .quotaConsumptionAnomaly)
+        #expect(finding.direction == .higher)
+        #expect(finding.metadata.method == .trailingMedianRatioV1)
+        #expect(finding.metadata.qualification == .qualified)
+        #expect(finding.metadata.createdAt == base.addingTimeInterval(61 * 60))
+        #expect(finding.metadata.currentPeriod == expectedCurrent)
+        #expect(finding.metadata.baselinePeriod == expectedBaseline)
+        #expect(finding.metadata.currentPeriod?.inclusionRule == .startExclusiveEndInclusive)
         #expect(finding.calculatedCurrentValue == 8)
+        #expect(finding.calculatedBaselineValues == [2, 2, 2, 2, 2])
         #expect(finding.calculatedBaselineMedian == 2)
         #expect(finding.calculatedRatio == 4)
         #expect(finding.calculatedThreshold == 3)
-        #expect(finding.inputObservationIdentities == observations.map(\.stableIdentity))
-        #expect(finding.interpretationVersions == [.codexLocalReportV1])
+        #expect(finding.metadata.inputObservationIdentities == observations.map(\.stableIdentity))
+        #expect(finding.metadata.interpretationVersions == [.codexLocalReportV1])
+        #expect(finding.metadata.inputClassifications == [.measured])
         #expect(finding.normalization == .directQuotaMovement)
         #expect(finding.attribution == .unattributed)
-        #expect(finding.limitations.contains(.providerWeightingUnknown))
+        #expect(finding.metadata.limitations.contains(.providerWeightingUnknown))
     }
 
-    @Test("stable and flat Observed Zero consumption remain distinct no-finding outcomes")
-    func noFindingAndObservedZero() throws {
-        let stable = try series(movements: [2, 2, 2, 2, 2, 2])
-        guard case let .noFinding(stableResult) = analyze(stable) else {
-            Issue.record("Expected stable consumption to produce no finding")
+    @Test("Observed Zero is distinct from unchanged nonzero cumulative usage")
+    func observedZeroSemantics() throws {
+        let flatNonzero = try series(initial: 10, movements: [0, 0, 0, 0, 0, 0])
+        guard case let .noFinding(flat) = analyze(flatNonzero) else {
+            Issue.record("Expected unchanged nonzero cumulative usage to be an ordinary no-finding result")
             return
         }
-        #expect(stableResult.calculatedRatio == 1)
-        #expect(stableResult.calculatedCurrentValue == 2)
-        #expect(stableResult.qualification == .qualified)
+        #expect(flat.calculatedCurrentValue == 0)
+        #expect(flat.calculatedBaselineMedian == 0)
+        #expect(flat.calculatedRatio == nil)
 
-        let zero = try series(movements: [0, 0, 0, 0, 0, 0])
-        guard case let .noFinding(zeroResult) = analyze(zero) else {
-            Issue.record("Expected Observed Zero consumption to produce no finding")
+        let zero = try series(initial: 0, movements: [0, 0, 0, 0, 0, 0])
+        guard case let .observedZero(result) = analyze(zero) else {
+            Issue.record("Expected an explicit Observed Zero result")
             return
         }
-        #expect(zeroResult.calculatedCurrentValue == 0)
-        #expect(zeroResult.calculatedBaselineMedian == 0)
-        #expect(zeroResult.calculatedRatio == nil)
+        #expect(result.calculatedCurrentValue == 0)
+        #expect(result.calculatedBaselineValues == [0, 0, 0, 0, 0])
+        #expect(result.metadata.qualification == .qualified)
 
-        expectUnavailable(analyze(try series(movements: [0, 0, 0, 0, 0, 1])), .unstableBaseline)
+        expectUnavailable(analyze(try series(initial: 0, movements: [0, 0, 0, 0, 0, 1])), .unstableBaseline)
     }
 
     @Test("Gap, sparse cadence, stale evidence, resets, and counter decreases are unavailable")
     func unsafeEvidence() throws {
-        let observations = try series(movements: [2, 2, 2, 2, 2, 8])
+        let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
         expectUnavailable(QuotaAnomalyAnalytics.analyze(
             observations,
             now: base.addingTimeInterval(61 * 60),
@@ -98,9 +92,9 @@ struct QuotaAnomalyTests {
 
     @Test("deduplication, ordering, conflicts, and explicit supersession are deterministic")
     func evidenceQualification() throws {
-        let original = try series(movements: [2, 2, 2, 2, 2, 8])
-        let reordered = Array(([original[2], original[0]] + original.reversed() + [original[2]]))
-        #expect(analyze(reordered) == analyze(original))
+        let original = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
+        let reordered = [original[2], original[0]] + original.reversed() + [original[2]]
+        #expect(analyze(Array(reordered)) == analyze(original))
 
         let conflict = try observation(identity: original[1].identity, minute: 10, percent: original[1].percentageUsed + 1)
         expectUnavailable(analyze(original + [conflict]), .conflictingObservations)
@@ -116,49 +110,89 @@ struct QuotaAnomalyTests {
             Issue.record("Expected the explicit correction to replace the superseded burst")
             return
         }
-        #expect(result.inputObservationIdentities.last == correction.stableIdentity)
-        #expect(result.limitations.contains(.supersededEvidenceExcluded))
+        #expect(result.metadata.inputObservationIdentities.last == correction.stableIdentity)
+        #expect(result.metadata.limitations.contains(.supersededEvidenceExcluded))
         #expect(analyze(original) != corrected)
     }
 
-    @Test("measured denominators require exact compatible complete nonzero coverage")
+    @Test("typed measured denominators retain source, coverage, missingness, and exact periods")
     func measuredDenominators() throws {
-        let observations = try series(movements: [2, 2, 2, 2, 2, 8])
-        let denominators = try denominatorSeries(values: [2, 2, 2, 2, 2, 1])
-        guard case let .finding(finding) = QuotaAnomalyAnalytics.analyze(
-            observations,
-            now: base.addingTimeInterval(61 * 60),
-            maximumAge: 5 * 60,
-            normalization: .measuredDenominator(denominators)
-        ) else {
+        let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
+        let inputs = try denominatorSeries(values: [2, 2, 2, 2, 2, 1])
+        let denominatorRequest = QuotaAnomalyDenominatorRequest(
+            kind: .inputTokens,
+            source: .localUsageEvents,
+            inputs: inputs
+        )
+        guard case let .finding(finding) = analyze(observations, normalization: .measuredDenominator(denominatorRequest)) else {
             Issue.record("Expected a safely normalized finding")
             return
         }
-        #expect(finding.normalization == .measuredDenominator(name: "input_tokens", unit: "tokens", version: "tokens_v1"))
+        #expect(finding.normalization == .measuredDenominator(
+            kind: .inputTokens,
+            unit: .tokens,
+            source: .localUsageEvents,
+            methodVersion: .measuredIntervalAggregateV1
+        ))
         #expect(finding.calculatedCurrentValue == 8)
         #expect(finding.calculatedBaselineMedian == 1)
-        #expect(finding.denominatorInputs == denominators)
+        #expect(finding.metadata.denominatorInputs == inputs)
+        #expect(finding.metadata.denominatorInputs.allSatisfy { $0.classification == .measured && $0.coverage == .complete })
 
-        var zero = denominators
+        var zero = inputs
         zero[5] = try denominator(periodIndex: 5, value: 0)
-        expectUnavailable(analyze(observations, normalization: .measuredDenominator(zero)), .zeroDenominator)
+        expectUnavailable(analyze(observations, normalization: request(with: zero)), .zeroDenominator)
 
-        var partial = denominators
-        partial[2] = try denominator(periodIndex: 2, value: 2, coverage: 0.5)
-        expectUnavailable(analyze(observations, normalization: .measuredDenominator(partial)), .partialDenominatorCoverage)
+        var partial = inputs
+        partial[2] = try QuotaAnomalyDenominatorInput(
+            period: period(20, 30),
+            kind: .inputTokens,
+            source: .localUsageEvents,
+            value: 2,
+            observedAt: base.addingTimeInterval(60 * 60),
+            coverage: .partial(0.5)
+        )
+        let partialState = analyze(observations, normalization: request(with: partial))
+        expectUnavailable(partialState, .partialDenominatorCoverage)
+        guard case let .unavailable(partialResult) = partialState else { return }
+        #expect(partialResult.metadata.denominatorInputs.contains { $0.coverage == QuotaAnomalyDenominatorCoverage.partial(0.5) })
 
-        var incompatible = denominators
-        incompatible[1] = try denominator(periodIndex: 1, value: 2, version: "tokens_v2")
-        expectUnavailable(analyze(observations, normalization: .measuredDenominator(incompatible)), .incompatibleDenominator)
+        let missingState = analyze(observations, normalization: request(with: Array(inputs.dropLast())))
+        expectUnavailable(missingState, .missingDenominator)
+        guard case let .unavailable(missingResult) = missingState else { return }
+        #expect(missingResult.metadata.denominatorInputs.count == 6)
+        #expect(missingResult.metadata.denominatorInputs.last?.coverage == .gap)
+        #expect(missingResult.metadata.denominatorInputs.last?.source == .localUsageEvents)
+        #expect(missingResult.metadata.denominatorInputs.last?.classification == nil)
 
-        expectUnavailable(analyze(observations, normalization: .measuredDenominator(Array(denominators.dropLast()))), .missingDenominator)
+        let incompatibleRequest = QuotaAnomalyDenominatorRequest(
+            kind: .requests,
+            source: .localUsageEvents,
+            inputs: inputs
+        )
+        expectUnavailable(analyze(observations, normalization: .measuredDenominator(incompatibleRequest)), .incompatibleDenominator)
+
+        var stale = inputs
+        stale[0] = try QuotaAnomalyDenominatorInput(
+            period: period(0, 10),
+            kind: .inputTokens,
+            source: .localUsageEvents,
+            value: 2,
+            observedAt: base.addingTimeInterval(50 * 60),
+            coverage: .complete
+        )
+        let staleState = analyze(observations, normalization: request(with: stale))
+        expectUnavailable(staleState, .staleDenominator)
+        guard case let .unavailable(staleResult) = staleState else { return }
+        #expect(staleResult.metadata.denominatorInputs[0].source == .localUsageEvents)
+        #expect(staleResult.metadata.denominatorInputs[0].observedAt == base.addingTimeInterval(50 * 60))
     }
 
-    @Test("adapter, client, and provider-format changes prevent cross-version findings")
+    @Test("typed adapter, client, and provider-format changes identify exact incompatibilities")
     func evidenceVersionCompatibility() throws {
-        let observations = try series(movements: [2, 2, 2, 2, 2, 8])
-        let v1 = try QuotaAnomalyEvidenceVersion(adapterVersion: "adapter_v1", clientVersion: "client_v1", providerFormatVersion: "format_v1")
-        let v2 = try QuotaAnomalyEvidenceVersion(adapterVersion: "adapter_v1", clientVersion: "client_v2", providerFormatVersion: "format_v1")
+        let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
+        let v1 = QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV1, client: .codex0144, providerFormat: .codexLocalReportV1)
+        let v2 = QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV2, client: .codex0145, providerFormat: .codexLocalReportV2)
         var versions = Dictionary(uniqueKeysWithValues: observations.map { ($0.stableIdentity, v1) })
         versions[observations.last!.stableIdentity] = v2
 
@@ -170,13 +204,15 @@ struct QuotaAnomalyTests {
         )
         expectUnavailable(state, .incompatibleEvidence)
         guard case let .unavailable(result) = state else { return }
-        #expect(result.evidenceVersions == [v1, v2])
-        #expect(result.limitations.contains(.incompatibleInterpretationVersion))
+        #expect(result.metadata.evidenceVersions == [v1, v2])
+        #expect(result.metadata.limitations.contains(.incompatibleAdapterVersion))
+        #expect(result.metadata.limitations.contains(.incompatibleClientVersion))
+        #expect(result.metadata.limitations.contains(.incompatibleProviderFormatVersion))
     }
 
-    @Test("different exact windows and unsupported quota contexts never form a baseline")
-    func exactWindowIsolation() throws {
-        let observations = try series(movements: [2, 2, 2, 2, 2, 8])
+    @Test("different Quota windows and unsupported contexts never form a baseline")
+    func quotaWindowIsolation() throws {
+        let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
         let changedIdentity = try QuotaWindowIdentity(
             product: .codex,
             identifier: "primary:300",
@@ -187,7 +223,7 @@ struct QuotaAnomalyTests {
 
         let unsupported = try QuotaWindowIdentity(
             product: .codex,
-            identifier: "private-context",
+            identifier: "unsupported-context",
             resetBoundary: observations[0].identity.resetBoundary
         )
         let unsupportedObservations = try observations.enumerated().map {
@@ -196,35 +232,23 @@ struct QuotaAnomalyTests {
         expectUnavailable(analyze(unsupportedObservations), .incompatibleEvidence)
     }
 
-    @Test("free-form metadata rejects prohibited-content sentinels")
-    func privacyAllowList() throws {
-        let safePeriod = try period(0, 10)
-        #expect(throws: QuotaAnomalyValidationError.invalidDenominator) {
-            try MeasuredQuotaAnomalyDenominator(
-                period: safePeriod,
-                name: "PROMPT_SECRET",
-                unit: "tokens",
-                version: "tokens_v1",
-                value: 1,
-                observedAt: base
-            )
-        }
-        #expect(throws: QuotaAnomalyValidationError.invalidEvidenceVersion) {
-            try QuotaAnomalyEvidenceVersion(
-                adapterVersion: "adapter_v1",
-                clientVersion: "RAW_PROVIDER_PAYLOAD",
-                providerFormatVersion: "format_v1"
-            )
-        }
+    @Test("denominator kinds and sources are a bounded positive semantic allow-list")
+    func denominatorAllowList() {
+        #expect(Set(QuotaAnomalyDenominatorKind.allCases) == [
+            .inputTokens, .requests, .agentSteps, .completedTasks, .acceptedCodeChanges, .activeMinutes,
+        ])
+        #expect(Set(QuotaAnomalyDenominatorSource.allCases) == [
+            .localUsageEvents, .codexRolloutEvidence, .collectorUsageEvents,
+        ])
     }
 
-    private func series(movements: [Double]) throws -> [MeasuredQuotaObservation] {
+    private func series(initial: Double, movements: [Double]) throws -> [MeasuredQuotaObservation] {
         let identity = try QuotaWindowIdentity(
             product: .codex,
             identifier: "primary:300",
             resetBoundary: base.addingTimeInterval(5 * 3_600)
         )
-        var value = 10.0
+        var value = initial
         var result = [try observation(identity: identity, minute: 0, percent: value)]
         for (index, movement) in movements.enumerated() {
             value += movement
@@ -245,35 +269,27 @@ struct QuotaAnomalyTests {
         )
     }
 
-    private func denominatorSeries(values: [Double]) throws -> [MeasuredQuotaAnomalyDenominator] {
+    private func request(with inputs: [QuotaAnomalyDenominatorInput]) -> QuotaAnomalyNormalization {
+        .measuredDenominator(QuotaAnomalyDenominatorRequest(
+            kind: .inputTokens,
+            source: .localUsageEvents,
+            inputs: inputs
+        ))
+    }
+
+    private func denominatorSeries(values: [Double]) throws -> [QuotaAnomalyDenominatorInput] {
         try values.enumerated().map { try denominator(periodIndex: $0.offset, value: $0.element) }
     }
 
-    private func denominator(
-        periodIndex: Int,
-        value: Double,
-        coverage: Double = 1,
-        version: String = "tokens_v1"
-    ) throws -> MeasuredQuotaAnomalyDenominator {
-        try MeasuredQuotaAnomalyDenominator(
+    private func denominator(periodIndex: Int, value: Double) throws -> QuotaAnomalyDenominatorInput {
+        try QuotaAnomalyDenominatorInput(
             period: period(Double(periodIndex) * 10, Double(periodIndex + 1) * 10),
-            name: "input_tokens",
-            unit: "tokens",
-            version: version,
+            kind: .inputTokens,
+            source: .localUsageEvents,
             value: value,
             observedAt: base.addingTimeInterval(60 * 60),
-            coverage: coverage
+            coverage: .complete
         )
-    }
-
-    private func expectUnavailable(_ state: QuotaAnomalyState, _ reason: QuotaAnomalyUnavailableReason) {
-        guard case let .unavailable(result) = state else {
-            Issue.record("Expected unavailable analysis for \(reason.rawValue)")
-            return
-        }
-        #expect(result.reason == reason)
-        #expect(result.method == .trailingMedianRatioV1)
-        #expect(result.qualification == .unavailable)
     }
 
     private func observation(identity: QuotaWindowIdentity, minute: Double, percent: Double) throws -> MeasuredQuotaObservation {
@@ -290,5 +306,15 @@ struct QuotaAnomalyTests {
             start: base.addingTimeInterval(startMinute * 60),
             end: base.addingTimeInterval(endMinute * 60)
         )
+    }
+
+    private func expectUnavailable(_ state: QuotaAnomalyState, _ reason: QuotaAnomalyUnavailableReason) {
+        guard case let .unavailable(result) = state else {
+            Issue.record("Expected unavailable analysis for \(reason.rawValue)")
+            return
+        }
+        #expect(result.reason == reason)
+        #expect(result.metadata.method == .trailingMedianRatioV1)
+        #expect(result.metadata.qualification == .unavailable)
     }
 }

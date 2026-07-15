@@ -3,14 +3,14 @@ import Testing
 
 @Suite("Quota anomaly candidate replay")
 struct QuotaAnomalyReplayTests {
-    @Test("frozen labeled fixtures uniquely select trailing-median ratio v1")
+    @Test("real frozen fixtures uniquely select production trailing-median ratio semantics")
     func candidateSelection() throws {
         let fixtures = try QuotaAnomalyFrozenCorpus.validatedFixtures()
         let report = try QuotaAnomalyCandidateEvaluator.evaluate(fixtures)
         let reversed = try QuotaAnomalyCandidateEvaluator.evaluate(fixtures.reversed())
 
         #expect(report == reversed)
-        #expect(QuotaAnomalyFrozenCorpus.version == "quota_anomaly_corpus_v1")
+        #expect(QuotaAnomalyFrozenCorpus.version == "quota_anomaly_corpus_v2")
         let computedDigest = try QuotaAnomalyFrozenCorpus.computedFreezeDigest()
         #expect(computedDigest == QuotaAnomalyFrozenCorpus.freezeDigest)
         #expect(fixtures.map(\.condition) == [.bursty, .changingVersion, .flat, .gradual, .mixedIntensity, .observedZero, .reset, .sparse, .stable])
@@ -35,15 +35,45 @@ struct QuotaAnomalyReplayTests {
         #expect(report.candidates.filter { $0.method == .medianAbsoluteDeviation }.allSatisfy {
             $0.metrics.unsafeAvailabilityMismatchCount >= 2
         })
-        #expect(report.limitations.contains(.syntheticFixtureValidationOnly))
     }
 
-    @Test("fixture validation and replay are deterministic and privacy-safe")
-    func validationAndPrivacy() throws {
-        #expect(throws: QuotaAnomalyReplayError.invalidFixture) {
-            try QuotaAnomalyReplayFixture(id: "Private/path", condition: .stable, movements: [1, 1, 1, 1, 1, 1], expected: .noFinding)
-        }
+    @Test("sparse, reset, and changing-version fixtures execute production qualification")
+    func failureFixturesUseProductionSemantics() throws {
         let fixtures = try QuotaAnomalyFrozenCorpus.validatedFixtures()
+        let sparse = try #require(fixtures.first { $0.condition == .sparse })
+        let reset = try #require(fixtures.first { $0.condition == .reset })
+        let changed = try #require(fixtures.first { $0.condition == .changingVersion })
+
+        #expect(sparse.observations.count == 6)
+        #expect(unavailableReason(sparse) == .insufficientBaseline)
+        #expect(reset.observations.count == 7)
+        #expect(unavailableReason(reset) == .resetOrExpired)
+        #expect(changed.observations.count == 7)
+        guard case let .unavailable(changedResult) = analyze(changed) else {
+            Issue.record("Expected changing-version fixture to be unavailable")
+            return
+        }
+        #expect(changedResult.reason == .incompatibleEvidence)
+        #expect(changedResult.metadata.limitations.contains(.incompatibleAdapterVersion))
+        #expect(changedResult.metadata.limitations.contains(.incompatibleClientVersion))
+        #expect(changedResult.metadata.limitations.contains(.incompatibleProviderFormatVersion))
+    }
+
+    @Test("fixture validation, replay order, and corpus fields are deterministic and privacy-safe")
+    func validationAndPrivacy() throws {
+        let fixtures = try QuotaAnomalyFrozenCorpus.validatedFixtures()
+        let valid = fixtures[0]
+        #expect(throws: QuotaAnomalyReplayError.invalidFixture) {
+            try QuotaAnomalyReplayFixture(
+                id: "Private/path",
+                condition: valid.condition,
+                observations: valid.observations,
+                evaluationTime: valid.evaluationTime,
+                maximumEvidenceAge: valid.maximumEvidenceAge,
+                expectedIdentity: valid.expectedIdentity,
+                expected: valid.expected
+            )
+        }
         #expect(throws: QuotaAnomalyReplayError.duplicateFixtureID) {
             try QuotaAnomalyCandidateEvaluator.evaluate(fixtures + [fixtures[0]])
         }
@@ -51,5 +81,20 @@ struct QuotaAnomalyReplayTests {
         for prohibited in ["prompt", "response", "credential", "account", "/users/", "payload", "terminal", "project"] {
             #expect(!text.contains(prohibited))
         }
+    }
+
+    private func analyze(_ fixture: QuotaAnomalyReplayFixture) -> QuotaAnomalyState {
+        QuotaAnomalyAnalytics.analyze(
+            fixture.observations,
+            now: fixture.evaluationTime,
+            maximumAge: fixture.maximumEvidenceAge,
+            expectedIdentity: fixture.expectedIdentity,
+            evidenceVersions: fixture.evidenceVersions
+        )
+    }
+
+    private func unavailableReason(_ fixture: QuotaAnomalyReplayFixture) -> QuotaAnomalyUnavailableReason? {
+        guard case let .unavailable(result) = analyze(fixture) else { return nil }
+        return result.reason
     }
 }
