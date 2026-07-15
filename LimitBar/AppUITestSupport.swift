@@ -108,7 +108,7 @@ private struct AppUITestClaudeRateLimitsClient: ClaudeRateLimitsFetching {
                     group: .session,
                     percentUsed: 25,
                     severity: .normal,
-                    resetsAt: nil,
+                    resetsAt: Date(timeIntervalSince1970: 2_000_000_000),
                     scopeDisplayName: nil,
                     isActive: true
                 )
@@ -140,10 +140,41 @@ private struct LimitBarUITestHostView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
+        case "quota-insight":
+            QuotaInsightUITestView()
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private struct QuotaInsightUITestView: View {
+    private let fixture: QuotaForecastReplayFixture
+    private let insight: QuotaInsightState
+
+    init() {
+        let fixtures = try! QuotaForecastFrozenCorpus.validatedFixtures()
+        fixture = fixtures.first { $0.id == "heldout-codex-stable-01" }!
+        insight = QuotaInsightAnalytics.analyze(
+            fixture.observations,
+            now: fixture.evaluationTime,
+            maximumAge: fixture.maximumEvidenceAge
+        )
+    }
+
+    var body: some View {
+        PercentRateLimitRowView(
+            label: "Session (5 hours)",
+            percentUsed: 76,
+            severity: .normal,
+            resetsAt: fixture.observations.first?.identity.resetBoundary,
+            isActive: true,
+            insight: insight,
+            insightsStorageAvailable: true
+        )
+        .padding(20)
+        .frame(width: 620, height: 300)
     }
 }
 

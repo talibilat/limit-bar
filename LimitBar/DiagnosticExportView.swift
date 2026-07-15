@@ -185,13 +185,19 @@ enum DiagnosticExportInputBuilder {
             case .other: .other
             }
             switch state {
-            case let .unavailable(reason, count, span):
+            case let .unavailable(finding):
+                let forecastMethod: DiagnosticQuotaForecastMethod = switch finding.forecastMethod {
+                case .pairwisePositiveSlopeInterquartileV1: .pairwisePositiveSlopeInterquartileV1
+                case .pairwisePositiveSlopeInterquartileV2: .pairwisePositiveSlopeInterquartileV2
+                }
                 findings.append(try DiagnosticQuotaFinding(
                     product: product,
                     windowKind: kind,
-                    status: diagnosticStatus(reason),
-                    measuredObservationCount: count,
-                    measuredSpanMinutes: min(43_200, max(0, Int(span / 60)))
+                    status: diagnosticStatus(finding.reason),
+                    qualification: .unavailable,
+                    measuredObservationCount: finding.measuredObservationCount,
+                    measuredSpanMinutes: min(43_200, max(0, Int(finding.measuredSpan / 60))),
+                    forecastMethod: forecastMethod
                 ))
             case let .qualified(finding):
                 let burnLower = min(10_000, max(0, finding.calculatedBurnPercentPerHour.lower))
@@ -204,11 +210,13 @@ enum DiagnosticExportInputBuilder {
                 }
                 let forecastMethod: DiagnosticQuotaForecastMethod = switch finding.forecastMethod {
                 case .pairwisePositiveSlopeInterquartileV1: .pairwisePositiveSlopeInterquartileV1
+                case .pairwisePositiveSlopeInterquartileV2: .pairwisePositiveSlopeInterquartileV2
                 }
                 findings.append(try DiagnosticQuotaFinding(
                     product: product,
                     windowKind: kind,
                     status: .qualified,
+                    qualification: .qualified,
                     measuredObservationCount: finding.measuredObservationCount,
                     measuredSpanMinutes: min(43_200, max(0, Int(finding.measuredSpan / 60))),
                     forecastMethod: forecastMethod,
@@ -232,6 +240,8 @@ enum DiagnosticExportInputBuilder {
         case .counterDecreased: .counterDecreased
         case .noPositiveBurn: .noPositiveBurn
         case .conflictingObservations: .conflictingObservations
+        case .incompatibleEvidence: .incompatibleEvidence
+        case .invalidEvaluation: .invalidEvaluation
         }
     }
 }

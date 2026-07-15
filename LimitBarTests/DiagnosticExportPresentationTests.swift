@@ -5,6 +5,26 @@ import XCTest
 
 @MainActor
 final class DiagnosticExportPresentationTests: XCTestCase {
+    func testQuotaInsightDisclosureStatesMethodQualificationAndLimitationConservatively() throws {
+        let fixtures = try QuotaForecastFrozenCorpus.validatedFixtures()
+        let qualifiedFixture = try XCTUnwrap(fixtures.first { $0.id == "heldout-codex-stable-01" })
+        let unavailableFixture = try XCTUnwrap(fixtures.first { $0.id == "heldout-claude-stale-01" })
+        let qualified = QuotaInsightAnalytics.analyze(qualifiedFixture.observations, now: qualifiedFixture.evaluationTime, maximumAge: qualifiedFixture.maximumEvidenceAge)
+        let unavailable = QuotaInsightAnalytics.analyze(unavailableFixture.observations, now: unavailableFixture.evaluationTime, maximumAge: unavailableFixture.maximumEvidenceAge)
+
+        XCTAssertEqual(PercentRateLimitPresentation.methodDisclosure(qualified), "Calculated pairwise_positive_slope_interquartile_v2 qualified; provider weighting is unknown.")
+        XCTAssertEqual(PercentRateLimitPresentation.methodDisclosure(unavailable), "Calculated pairwise_positive_slope_interquartile_v2 unavailable: measured observations are stale.")
+        XCTAssertEqual(PercentRateLimitPresentation.burnRange(QuotaInsightRange(lower: 0.04, upper: 0.16)), "0.04-0.16% per hour")
+        XCTAssertEqual(PercentRateLimitPresentation.burnRange(QuotaInsightRange(lower: 0.004, upper: 0.16)), "<0.01-0.16% per hour")
+
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let crossing = Date(timeIntervalSince1970: 1_798_761_000)...Date(timeIntervalSince1970: 1_798_762_200)
+        XCTAssertEqual(
+            PercentRateLimitPresentation.exhaustionRange(crossing, calendar: Calendar(identifier: .gregorian), locale: Locale(identifier: "en_US_POSIX"), timeZone: utc),
+            "2026-12-31 23:50 GMT-2027-01-01 00:10 GMT"
+        )
+    }
+
     func testAppBuilderProjectsOnlySafeLiveState() throws {
         let privatePath = "/Users/PRIVATE_USER/SECRET_PROJECT"
         let privateOrganization = "SECRET_ORGANIZATION"
@@ -51,7 +71,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             customImportFailures: 0,
             customRejectedLines: 3,
             refreshHistory: [.openAIAPI: ProviderRefreshHistorySummary(latest: history, lastFullSuccess: nil)],
-            quotaInsights: [quotaIdentity: .unavailable(.insufficientObservations, measuredObservationCount: 3, measuredSpan: 600)]
+            quotaInsights: [quotaIdentity: unavailable(.insufficientObservations, identity: quotaIdentity, count: 3, span: 600)]
         )
         let artifact = try DiagnosticExport.make(from: input)
         let preview = try artifact.preview
@@ -70,7 +90,8 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertTrue(preview.contains(#""affectedWindowKinds""#))
         XCTAssertTrue(preview.contains(#""measuredObservationCount" : 3"#))
         XCTAssertTrue(preview.contains(#""status" : "insufficient_observations""#))
-        XCTAssertFalse(preview.contains("forecastMethod"))
+        XCTAssertTrue(preview.contains(#""forecastMethod" : "pairwise_positive_slope_interquartile_v2""#))
+        XCTAssertTrue(preview.contains(#""qualification" : "unavailable""#))
         XCTAssertFalse(preview.contains(privateQuotaIdentifier))
         XCTAssertFalse(preview.contains("resetBoundary"))
     }
@@ -119,11 +140,11 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         let reset = generatedAt.addingTimeInterval(3_600)
         let insights: [QuotaWindowIdentity: QuotaInsightState] = [
             try QuotaWindowIdentity(product: .codex, identifier: "primary:100800", resetBoundary: reset):
-                .unavailable(.insufficientObservations, measuredObservationCount: 1, measuredSpan: 0),
+                unavailable(.insufficientObservations, identity: try QuotaWindowIdentity(product: .codex, identifier: "primary:100800", resetBoundary: reset), count: 1, span: 0),
             try QuotaWindowIdentity(product: .claudeCode, identifier: "other:session_weekly", resetBoundary: reset):
-                .unavailable(.insufficientObservations, measuredObservationCount: 2, measuredSpan: 60),
+                unavailable(.insufficientObservations, identity: try QuotaWindowIdentity(product: .claudeCode, identifier: "other:session_weekly", resetBoundary: reset), count: 2, span: 60),
             try QuotaWindowIdentity(product: .claudeCode, identifier: "weekly:arbitrary_session_text", resetBoundary: reset):
-                .unavailable(.insufficientObservations, measuredObservationCount: 3, measuredSpan: 120),
+                unavailable(.insufficientObservations, identity: try QuotaWindowIdentity(product: .claudeCode, identifier: "weekly:arbitrary_session_text", resetBoundary: reset), count: 3, span: 120),
         ]
         let input = try DiagnosticExportInputBuilder.make(
             generatedAt: generatedAt,
@@ -182,10 +203,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             codexRefreshed: false
         ))
 
-        XCTAssertEqual(
-            state.quotaInsights[try XCTUnwrap(identity)],
-            .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900)
-        )
+        assertUnavailable(state.quotaInsights[try XCTUnwrap(identity)], reason: .staleEvidence, count: 4, span: 900)
     }
 
     func testFailedCodexScanReplacesQualifiedRetainedInsightWithStaleFinding() async throws {
@@ -237,10 +255,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             codexRefreshed: false
         ))
 
-        XCTAssertEqual(
-            state.quotaInsights[identity],
-            .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900)
-        )
+        assertUnavailable(state.quotaInsights[identity], reason: .staleEvidence, count: 4, span: 900)
 
         await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
             sequence: 6,
@@ -250,10 +265,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             codexRefreshed: false
         ))
 
-        XCTAssertEqual(
-            state.quotaInsights[identity],
-            .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 900)
-        )
+        assertUnavailable(state.quotaInsights[identity], reason: .resetOrExpired, count: 4, span: 900)
     }
 
     private func artifact(build: Int = 1) throws -> DiagnosticExportArtifact {
@@ -267,5 +279,44 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             importCounts: DiagnosticImportCounts(accepted: 0, rejected: 0),
             resourceLimitReasons: []
         ))
+    }
+
+    private func unavailable(
+        _ reason: QuotaInsightUnavailableReason,
+        identity: QuotaWindowIdentity,
+        count: Int,
+        span: TimeInterval
+    ) -> QuotaInsightState {
+        precondition(reason == .insufficientObservations && count > 0)
+        let source: QuotaObservationSource = identity.product == .claudeCode ? .claudeProviderReport : .codexLocalReport
+        let latest = identity.resetBoundary.addingTimeInterval(-1_800)
+        let observations = (0..<count).compactMap { index -> MeasuredQuotaObservation? in
+            let fraction = count == 1 ? 0 : Double(index) / Double(count - 1)
+            return try? MeasuredQuotaObservation(
+                identity: identity,
+                percentageUsed: Double(index),
+                observedAt: latest.addingTimeInterval(-span * (1 - fraction)),
+                source: source
+            )
+        }
+        return QuotaInsightAnalytics.analyze(observations, now: latest, maximumAge: 600)
+    }
+
+    private func assertUnavailable(
+        _ state: QuotaInsightState?,
+        reason: QuotaInsightUnavailableReason,
+        count: Int,
+        span: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case let .unavailable(finding) = state else {
+            return XCTFail("Expected an unavailable finding", file: file, line: line)
+        }
+        XCTAssertEqual(finding.reason, reason, file: file, line: line)
+        XCTAssertEqual(finding.measuredObservationCount, count, file: file, line: line)
+        XCTAssertEqual(finding.measuredSpan, span, file: file, line: line)
+        XCTAssertEqual(finding.forecastMethod, .pairwisePositiveSlopeInterquartileV2, file: file, line: line)
+        XCTAssertEqual(state?.qualificationStatus, .unavailable, file: file, line: line)
     }
 }

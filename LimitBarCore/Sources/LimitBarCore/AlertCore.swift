@@ -177,7 +177,7 @@ public struct QuotaWindowIdentity: Codable, Equatable, Hashable, Sendable {
             throw AlertValidationError.invalidWindowIdentity
         }
         self.product = product
-        self.identifier = identifier
+        self.identifier = identifier.precomposedStringWithCanonicalMapping
         self.resetBoundary = resetBoundary
     }
 

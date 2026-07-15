@@ -65,8 +65,7 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(authorizationMessage.waitForExistence(timeout: 5))
         app.buttons["claude-connect"].click()
 
-        XCTAssertTrue(app.otherElements["claude-loaded-state"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Session (5 hours)"].exists)
+        XCTAssertTrue(app.staticTexts["Session (5 hours)"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["75% left"].exists)
         XCTAssertFalse(authorizationMessage.exists)
     }
@@ -95,7 +94,7 @@ final class LimitBarUITests: XCTestCase {
         launch(screen: "settings")
         XCTAssertTrue(app.staticTexts["Fixture Tool"].waitForExistence(timeout: 5))
 
-        app.buttons["custom-source-remove"].click()
+        app.buttons["custom-source-row"].click()
         XCTAssertTrue(app.staticTexts["custom-sources-empty"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Fixture Tool"].exists)
     }
@@ -111,7 +110,19 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Review Diagnostic Export"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].exists)
         XCTAssertTrue(app.buttons["diagnostic-export-save"].exists)
-        XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].label.contains("schemaVersion"))
+        let preview = app.staticTexts["diagnostic-export-json-preview"]
+        let previewText = (preview.value as? String) ?? preview.label
+        XCTAssertTrue(previewText.contains("schemaVersion"))
+    }
+
+    func testQuotaInsightFixtureShowsMethodQualificationAndLimitation() {
+        launch(screen: "quota-insight")
+
+        let disclosure = app.staticTexts["quota-insight-method"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        let text = (disclosure.value as? String) ?? disclosure.label
+        XCTAssertTrue(text.contains("pairwise_positive_slope_interquartile_v2 qualified"))
+        XCTAssertTrue(text.contains("provider weighting is unknown"))
     }
 
     private func launch(screen: String) {

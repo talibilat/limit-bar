@@ -22,6 +22,24 @@ struct QuotaInsightsTests {
         #expect(MeasuredQuotaObservationAdapter.codex(business).isEmpty)
     }
 
+    @Test("measured observations enforce provider-product source interpretation")
+    func observationProductSourceInvariant() throws {
+        let reset = base.addingTimeInterval(3_600)
+        let claude = try QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset)
+        let codex = try QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: reset)
+        let unsupported = try QuotaWindowIdentity(product: .openAIAPI, identifier: "quota", resetBoundary: reset)
+
+        #expect(throws: QuotaInsightValidationError.invalidObservation) {
+            try MeasuredQuotaObservation(identity: claude, percentageUsed: 10, observedAt: base, source: .codexLocalReport)
+        }
+        #expect(throws: QuotaInsightValidationError.invalidObservation) {
+            try MeasuredQuotaObservation(identity: codex, percentageUsed: 10, observedAt: base, source: .claudeProviderReport)
+        }
+        #expect(throws: QuotaInsightValidationError.invalidObservation) {
+            try MeasuredQuotaObservation(identity: unsupported, percentageUsed: 10, observedAt: base, source: .codexLocalReport)
+        }
+    }
+
     @Test("alert and insight adapters share canonical quota window identities")
     func canonicalAdapterIdentities() throws {
         let reset = base.addingTimeInterval(7_200)
@@ -55,8 +73,12 @@ struct QuotaInsightsTests {
             observation(identity, minutes: 40, percent: 18),
         ]
         // A decrease is never converted into negative usage or hidden by robust statistics.
-        #expect(QuotaInsightAnalytics.analyze(observations, now: base.addingTimeInterval(41 * 60), maximumAge: 600) ==
-            .unavailable(.counterDecreased, measuredObservationCount: 5, measuredSpan: 2_400))
+        expectUnavailable(
+            QuotaInsightAnalytics.analyze(observations, now: base.addingTimeInterval(41 * 60), maximumAge: 600),
+            reason: .counterDecreased,
+            count: 5,
+            span: 2_400
+        )
 
         let stable = try [0.0, 10, 20, 30].enumerated().map { index, minute in
             try observation(identity, minutes: minute, percent: 70 + Double(index) * 2)
@@ -69,7 +91,7 @@ struct QuotaInsightsTests {
         #expect(finding.calculatedBurnPercentPerHour.lower == 12)
         #expect(finding.calculatedBurnPercentPerHour.upper == 12)
         #expect(finding.calculatedExhaustionRange != nil)
-        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV1)
+        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
 
         let straddlingIdentity = try window(reset: base.addingTimeInterval(100 * 60))
         let straddling = try zip([0.0, 10, 20, 30], [70.0, 72, 75, 79]).map {
@@ -84,6 +106,108 @@ struct QuotaInsightsTests {
             return
         }
         #expect(straddlingFinding.calculatedExhaustionRange == nil)
+    }
+
+    @Test("normalized observations have stable content identities and qualified findings retain the exact input trace")
+    func observationIdentityAndQualifiedTrace() throws {
+        let identity = try window(reset: base.addingTimeInterval(4 * 3_600))
+        let observations = try zip([0.0, 10, 20, 30], [70.0, 72, 74, 76]).map {
+            try observation(identity, minutes: $0.0, percent: $0.1)
+        }
+        let duplicate = try observation(identity, minutes: 10, percent: 72)
+        let materiallyDifferent = try observation(identity, minutes: 10, percent: 73)
+        let zero = try observation(identity, minutes: 10, percent: 0)
+        let negativeZero = try observation(identity, minutes: 10, percent: -0.0)
+
+        #expect(duplicate.stableIdentity == observations[1].stableIdentity)
+        #expect(zero.stableIdentity == negativeZero.stableIdentity)
+        #expect(materiallyDifferent.stableIdentity != observations[1].stableIdentity)
+        #expect(observations[1].stableIdentity.version == .normalizedQuotaObservationV1)
+        #expect(observations[1].normalizationVersion == .quotaObservationNormalizationV1)
+        #expect(observations[1].interpretationVersion == .codexLocalReportV1)
+
+        let now = base.addingTimeInterval(31 * 60)
+        guard case let .qualified(finding) = QuotaInsightAnalytics.analyze(
+            [duplicate] + observations.reversed(),
+            now: now,
+            maximumAge: 600
+        ) else {
+            Issue.record("Expected a qualified finding")
+            return
+        }
+        #expect(finding.inputObservationIdentities == observations.map(\.stableIdentity))
+        #expect(finding.createdAt == now)
+        #expect(finding.evidenceAge == 60)
+        #expect(QuotaInsightAnalytics.analyze(observations, now: now, maximumAge: 600).qualificationStatus == .qualified)
+        #expect(finding.interpretationVersions == [.codexLocalReportV1])
+        #expect(finding.identity == identity)
+    }
+
+    @Test("stable identities canonicalize Unicode and every signed-zero component with a fixed interpretation-aware digest")
+    func canonicalStableIdentity() throws {
+        let composed = try QuotaWindowIdentity(product: .codex, identifier: "prim\u{00E1}ry:300", resetBoundary: Date(timeIntervalSince1970: 0.0))
+        let decomposed = try QuotaWindowIdentity(product: .codex, identifier: "prima\u{0301}ry:300", resetBoundary: Date(timeIntervalSince1970: -0.0))
+        let first = try MeasuredQuotaObservation(identity: composed, percentageUsed: 0.0, observedAt: Date(timeIntervalSince1970: 0.0), source: .codexLocalReport)
+        let second = try MeasuredQuotaObservation(identity: decomposed, percentageUsed: -0.0, observedAt: Date(timeIntervalSince1970: -0.0), source: .codexLocalReport)
+
+        #expect(composed == decomposed)
+        #expect(first.stableIdentity == second.stableIdentity)
+        #expect(first.stableIdentity.digest == "056e380a62918a0bfb0f16c5a843c321aa41796224045ed973c6c0cedba723b1")
+        let claudeIdentity = try QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: Date(timeIntervalSince1970: 1))
+        let claude = try MeasuredQuotaObservation(identity: claudeIdentity, percentageUsed: 1, observedAt: Date(timeIntervalSince1970: 0), source: .claudeProviderReport)
+        #expect(claude.stableIdentity.digest == "5bc01f8f2d7ec8dc5e5fccdf3688e620f0a79466589eaf183c6167c62a416f0b")
+        #expect(QuotaObservationInterpretationVersion(derivedFrom: .claudeProviderReport) == .claudeProviderReportV1)
+        #expect(QuotaObservationInterpretationVersion(derivedFrom: .codexLocalReport) == .codexLocalReportV1)
+
+        let store = try SQLiteQuotaObservationStore.inMemory()
+        _ = try store.record([first], now: Date(timeIntervalSince1970: 0))
+        #expect(try store.observations(for: decomposed, now: Date(timeIntervalSince1970: 0)).map(\.stableIdentity) == [first.stableIdentity])
+    }
+
+    @Test("unavailable analytics is versioned, traceable, and isolates exact quota windows")
+    func unavailableTraceAndWindowIsolation() throws {
+        let firstWindow = try window(reset: base.addingTimeInterval(4 * 3_600))
+        let secondWindow = try window(reset: base.addingTimeInterval(5 * 3_600))
+        let first = try observation(firstWindow, minutes: 0, percent: 10)
+        let second = try observation(secondWindow, minutes: 1, percent: 11)
+        let now = base.addingTimeInterval(2 * 60)
+
+        let state = QuotaInsightAnalytics.analyze(
+            [second, first, first],
+            now: now,
+            maximumAge: 600
+        )
+        guard case let .unavailable(finding) = state else {
+            Issue.record("Expected incompatible evidence to be unavailable")
+            return
+        }
+        #expect(finding.reason == .incompatibleEvidence)
+        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
+        #expect(finding.createdAt == now)
+        #expect(state.qualificationStatus == .unavailable)
+        #expect(finding.interpretationVersions == [.codexLocalReportV1])
+        #expect(finding.implicatedIdentities == [firstWindow, secondWindow])
+        #expect(finding.inputObservationIdentities == [first.stableIdentity, second.stableIdentity])
+        #expect(finding.measuredObservationCount == 2)
+        #expect(finding.measuredSpan == 60)
+        #expect(finding.evidenceAge == 60)
+
+        let reversed = QuotaInsightAnalytics.analyze([first, second], now: now, maximumAge: 600)
+        #expect(reversed == .unavailable(finding))
+    }
+
+    @Test("unavailable findings retain deterministic implicated exact-window context")
+    func unavailableIdentityShapes() throws {
+        let identity = try window(reset: base.addingTimeInterval(4 * 3_600))
+        let one = try observation(identity, minutes: 0, percent: 10)
+        guard case let .unavailable(single) = QuotaInsightAnalytics.analyze([one], now: base.addingTimeInterval(60), maximumAge: 600),
+              case let .unavailable(empty) = QuotaInsightAnalytics.analyze([], now: base, maximumAge: 600, expectedIdentity: identity) else {
+            Issue.record("Expected unavailable findings")
+            return
+        }
+        #expect(single.implicatedIdentities == [identity])
+        #expect(empty.implicatedIdentities == [identity])
+        #expect(empty.inputObservationIdentities.isEmpty)
     }
 
     @Test("window kind classification parses only fixed identity structures")
@@ -116,7 +240,7 @@ struct QuotaInsightsTests {
         #expect(latest[identity]?.isQualified == true)
 
         let reevaluated = try await service.reevaluateClaude(now: base.addingTimeInterval(30 * 60 + 1))
-        #expect(reevaluated[identity] == .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900))
+        expectUnavailable(reevaluated[identity], reason: .staleEvidence, count: 4, span: 900)
     }
 
     @Test("service reevaluates retained Codex evidence as stale and expired")
@@ -141,26 +265,46 @@ struct QuotaInsightsTests {
         #expect(latest[identity]?.isQualified == true)
 
         let stale = try await service.reevaluateCodex(now: base.addingTimeInterval(6 * 3_600 + 15 * 60 + 1))
-        #expect(stale[identity] == .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 900))
+        expectUnavailable(stale[identity], reason: .staleEvidence, count: 4, span: 900)
 
         let expired = try await service.reevaluateCodex(now: reset)
-        #expect(expired[identity] == .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 900))
+        expectUnavailable(expired[identity], reason: .resetOrExpired, count: 4, span: 900)
     }
 
     @Test("analytics reports insufficient, stale, reset, and flat evidence explicitly")
     func unavailableStates() throws {
         let identity = try window(reset: base.addingTimeInterval(3_600))
         let short = try [observation(identity, minutes: 0, percent: 10)]
-        #expect(QuotaInsightAnalytics.analyze(short, now: base.addingTimeInterval(60), maximumAge: 600) ==
-            .unavailable(.insufficientObservations, measuredObservationCount: 1, measuredSpan: 0))
+        expectUnavailable(
+            QuotaInsightAnalytics.analyze(short, now: base.addingTimeInterval(60), maximumAge: 600),
+            reason: .insufficientObservations,
+            count: 1,
+            span: 0
+        )
 
         let flat = try [0.0, 10, 20, 30].map { try observation(identity, minutes: $0, percent: 10) }
-        #expect(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(31 * 60), maximumAge: 600) ==
-            .unavailable(.noPositiveBurn, measuredObservationCount: 4, measuredSpan: 1_800))
-        #expect(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(50 * 60), maximumAge: 600) ==
-            .unavailable(.staleEvidence, measuredObservationCount: 4, measuredSpan: 1_800))
-        #expect(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(3_601), maximumAge: 600) ==
-            .unavailable(.resetOrExpired, measuredObservationCount: 4, measuredSpan: 1_800))
+        expectUnavailable(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(31 * 60), maximumAge: 600), reason: .noPositiveBurn, count: 4, span: 1_800)
+        expectUnavailable(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(50 * 60), maximumAge: 600), reason: .staleEvidence, count: 4, span: 1_800)
+        expectUnavailable(QuotaInsightAnalytics.analyze(flat, now: base.addingTimeInterval(3_601), maximumAge: 600), reason: .resetOrExpired, count: 4, span: 1_800)
+    }
+
+    @Test("non-finite evaluation time fails safely without non-finite analytical metadata")
+    func invalidEvaluationTime() throws {
+        let identity = try window(reset: base.addingTimeInterval(3_600))
+        let observations = try [observation(identity, minutes: 0, percent: 10)]
+
+        guard case let .unavailable(finding) = QuotaInsightAnalytics.analyze(
+            observations,
+            now: Date(timeIntervalSince1970: .infinity),
+            maximumAge: 600
+        ) else {
+            Issue.record("Expected invalid evaluation to be unavailable")
+            return
+        }
+        #expect(finding.reason == .invalidEvaluation)
+        #expect(finding.createdAt == nil)
+        #expect(finding.evidenceAge == nil)
+        #expect(finding.inputObservationIdentities == observations.map(\.stableIdentity))
     }
 
     @Test("same-time conflicting evidence is retained and unavailable")
@@ -173,8 +317,8 @@ struct QuotaInsightsTests {
         #expect(try store.record([original, original, changedPercentage], now: base) == 2)
         let retained = try store.observations(for: identity, now: base)
         #expect(retained.count == 2)
-        #expect(QuotaInsightAnalytics.analyze(retained, now: base, maximumAge: 600) ==
-            .unavailable(.conflictingObservations, measuredObservationCount: 2, measuredSpan: 0))
+        #expect(retained.map(\.stableIdentity) == [original, changedPercentage].map(\.stableIdentity))
+        expectUnavailable(QuotaInsightAnalytics.analyze(retained, now: base, maximumAge: 600), reason: .conflictingObservations, count: 2, span: 0)
     }
 
     @Test("SQLite deduplicates scans, bounds age and count, and deletes explicitly")
@@ -196,6 +340,58 @@ struct QuotaInsightsTests {
         _ = try store.record([try observation(identity, minutes: 700, percent: 80)], now: base.addingTimeInterval(700 * 60))
         try store.deleteAll()
         #expect(try store.observations(for: identity, now: base.addingTimeInterval(700 * 60)).isEmpty)
+    }
+
+    @Test("SQLite reads pre-release decomposed identifiers through canonical identity without duplicate effective observations")
+    func decomposedIdentifierReadCompatibility() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("quota.sqlite").path
+        let store = try SQLiteQuotaObservationStore(path: path)
+        let reset = base.addingTimeInterval(3_600)
+        let composed = try QuotaWindowIdentity(product: .codex, identifier: "prim\u{00E1}ry:300", resetBoundary: reset)
+        let decomposed = "prima\u{0301}ry:300"
+
+        var database: OpaquePointer?
+        #expect(sqlite3_open(path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let insert = "INSERT INTO quota_observations VALUES ('codex', '\(decomposed)', \(reset.timeIntervalSince1970), \(base.timeIntervalSince1970), 10, 'codex_local_report');"
+        #expect(sqlite3_exec(database, insert, nil, nil, nil) == SQLITE_OK)
+
+        let expected = try MeasuredQuotaObservation(identity: composed, percentageUsed: 10, observedAt: base, source: .codexLocalReport)
+        #expect(try store.observations(for: composed, now: base).map(\.stableIdentity) == [expected.stableIdentity])
+        _ = try store.record([expected], now: base)
+        #expect(try store.observations(for: composed, now: base).map(\.stableIdentity) == [expected.stableIdentity])
+        #expect(try store.observations(for: composed, now: base.addingTimeInterval(SQLiteQuotaObservationStore.retentionInterval + 1)).isEmpty)
+    }
+
+    @Test("SQLite physically caps canonically equivalent identifier forms without pruning a distinct identifier")
+    func canonicalPhysicalCap() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("quota.sqlite").path
+        let store = try SQLiteQuotaObservationStore(path: path)
+        let reset = base.addingTimeInterval(10 * 24 * 3_600)
+        let composedText = "prim\u{00E1}ry:300"
+        let decomposedText = "prima\u{0301}ry:300"
+        let identity = try QuotaWindowIdentity(product: .codex, identifier: composedText, resetBoundary: reset)
+
+        var database: OpaquePointer?
+        #expect(sqlite3_open(path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        for index in 0..<600 {
+            let identifier = index.isMultiple(of: 2) ? composedText : decomposedText
+            let sql = "INSERT INTO quota_observations VALUES ('codex', '\(identifier)', \(reset.timeIntervalSince1970), \(base.addingTimeInterval(Double(index)).timeIntervalSince1970), \(Double(index % 100)), 'codex_local_report');"
+            #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+        }
+        #expect(sqlite3_exec(database, "INSERT INTO quota_observations VALUES ('codex', 'secondary:300', \(reset.timeIntervalSince1970), \(base.timeIntervalSince1970), 1, 'codex_local_report');", nil, nil, nil) == SQLITE_OK)
+
+        let effective = try store.observations(for: identity, now: base.addingTimeInterval(600))
+        #expect(effective.count <= SQLiteQuotaObservationStore.maximumObservationsPerWindow)
+        #expect(try physicalCount(database, identifiers: [composedText, decomposedText], reset: reset) <= SQLiteQuotaObservationStore.maximumObservationsPerWindow)
+        #expect(try physicalCount(database, identifiers: ["secondary:300"], reset: reset) == 1)
     }
 
     @Test("SQLite rejects unknown and malformed schemas")
@@ -298,6 +494,35 @@ struct QuotaInsightsTests {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
             throw QuotaObservationStoreError.schemaFailed
         }
+    }
+
+    private func physicalCount(_ database: OpaquePointer?, identifiers: [String], reset: Date) throws -> Int {
+        let quoted = identifiers.map { "'\($0)'" }.joined(separator: ",")
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT COUNT(*) FROM quota_observations WHERE reset_boundary = ? AND window_identifier IN (\(quoted));", -1, &statement, nil) == SQLITE_OK else {
+            throw QuotaObservationStoreError.readFailed
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_double(statement, 1, reset.timeIntervalSince1970)
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw QuotaObservationStoreError.readFailed }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    private func expectUnavailable(
+        _ state: QuotaInsightState?,
+        reason: QuotaInsightUnavailableReason,
+        count: Int,
+        span: TimeInterval
+    ) {
+        guard case let .unavailable(finding) = state else {
+            Issue.record("Expected an unavailable finding")
+            return
+        }
+        #expect(finding.reason == reason)
+        #expect(finding.measuredObservationCount == count)
+        #expect(finding.measuredSpan == span)
+        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
+        #expect(state?.qualificationStatus == .unavailable)
     }
 }
 

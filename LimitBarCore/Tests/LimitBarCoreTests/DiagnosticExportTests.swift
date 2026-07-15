@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Diagnostic export")
 struct DiagnosticExportTests {
-    @Test("export has the complete deterministic v3 positive allow-list")
+    @Test("export has the complete deterministic v4 positive allow-list")
     func deterministicSchema() throws {
         let first = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
@@ -29,6 +29,7 @@ struct DiagnosticExportTests {
             "quotaFindings[].calculatedBurnPercentPerHour.lower", "quotaFindings[].calculatedBurnPercentPerHour.upper",
             "quotaFindings[].calculatedExhaustionMinutes", "quotaFindings[].calculatedExhaustionMinutes.lower",
             "quotaFindings[].calculatedExhaustionMinutes.upper", "quotaFindings[].forecastMethod",
+            "quotaFindings[].qualification",
             "quotaFindings[].measuredObservationCount",
             "quotaFindings[].measuredSpanMinutes", "quotaFindings[].product", "quotaFindings[].status",
             "quotaFindings[].windowKind", "resourceLimitReasons", "schemaVersion",
@@ -38,15 +39,15 @@ struct DiagnosticExportTests {
         #expect(report.providers.map(\.provider) == [.anthropic, .openAI])
         #expect(report.refreshHistory?.count == 1)
         #expect(report.quotaFindings?.count == 1)
-        #expect(report.quotaFindings?.first?.forecastMethod == .pairwisePositiveSlopeInterquartileV1)
+        #expect(report.quotaFindings?.first?.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
     }
 
     @Test("decode routes supported, unsupported, and malformed versions")
     func versionAwareDecode() throws {
         let artifact = try DiagnosticExport.make(from: input())
         #expect(try DiagnosticExport.decode(artifact.bytes).application.build == 42)
-        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(4)) {
-            try DiagnosticExport.decode(Data(#"{"schemaVersion":4,"privateFuturePayload":"SECRET"}"#.utf8))
+        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(5)) {
+            try DiagnosticExport.decode(Data(#"{"schemaVersion":5,"privateFuturePayload":"SECRET"}"#.utf8))
         }
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(Data(#"{"schemaVersion":1}"#.utf8))
@@ -130,7 +131,7 @@ struct DiagnosticExportTests {
     func legacyDecode() throws {
         let v3 = try DiagnosticExport.make(from: input())
         let legacyText = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 3"#, with: #""schemaVersion" : 1"#)
+            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 1"#)
         let legacy = try DiagnosticExport.decode(Data(legacyText.utf8))
         #expect(legacy.schemaVersion == 1)
         #expect(legacy.quotaFindings == nil)
@@ -140,42 +141,57 @@ struct DiagnosticExportTests {
     func v2ForecastMethodDecode() throws {
         let v3 = try DiagnosticExport.make(from: input(includesQuotaFinding: true))
         let v2Text = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 3"#, with: #""schemaVersion" : 2"#)
-            .replacingOccurrences(of: #"      "forecastMethod" : "pairwise_positive_slope_interquartile_v1",\n"#, with: "")
+            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 2"#)
+            .replacingOccurrences(of: #"      "qualification" : "qualified",\n"#, with: "")
+            .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
 
         let finding = try #require(DiagnosticExport.decode(Data(v2Text.utf8)).quotaFindings?.first)
         #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV1)
     }
 
-    @Test("quota finding methods are required only for qualified forecasts")
+    @Test("v3 unavailable findings decode with explicit method and qualification metadata")
+    func v3UnavailableMetadataDecode() throws {
+        let v4 = try DiagnosticExport.make(from: input(quotaFindings: [try unavailableQuotaFinding()]))
+        let v3Text = try v4.preview
+            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 3"#)
+            .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
+            .replacingOccurrences(of: #"      "qualification" : "unavailable",\n"#, with: "")
+            .replacingOccurrences(of: "incompatible_evidence", with: "stale_evidence")
+
+        let finding = try #require(DiagnosticExport.decode(Data(v3Text.utf8)).quotaFindings?.first)
+        #expect(finding.status == .staleEvidence)
+        #expect(finding.qualification == .unavailable)
+        #expect(finding.forecastMethod == .pairwisePositiveSlopeInterquartileV1)
+    }
+
+    @Test("quota finding methods and qualification are required and internally consistent")
     func forecastMethodValidation() throws {
         #expect(throws: DiagnosticExportError.invalidQuotaFindings) {
             try DiagnosticQuotaFinding(
                 product: .codex,
                 windowKind: .session,
                 status: .qualified,
+                qualification: .unavailable,
                 measuredObservationCount: 4,
                 measuredSpanMinutes: 30,
+                forecastMethod: .pairwisePositiveSlopeInterquartileV2,
                 calculatedBurnPercentPerHour: DiagnosticNumberRange(lower: 4, upper: 7)
             )
         }
-        #expect(throws: DiagnosticExportError.invalidQuotaFindings) {
-            try DiagnosticQuotaFinding(
-                product: .codex,
-                windowKind: .session,
-                status: .staleEvidence,
-                measuredObservationCount: 4,
-                measuredSpanMinutes: 30,
-                forecastMethod: .pairwisePositiveSlopeInterquartileV1
-            )
-        }
+        let unavailable = try unavailableQuotaFinding()
+        #expect(unavailable.qualification == .unavailable)
+        #expect(unavailable.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
         let artifact = try DiagnosticExport.make(from: input(includesQuotaFinding: true))
         let unknownMethod = try artifact.preview.replacingOccurrences(
-            of: "pairwise_positive_slope_interquartile_v1",
+            of: "pairwise_positive_slope_interquartile_v2",
             with: "unapproved_private_method_v99"
         )
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(Data(unknownMethod.utf8))
+        }
+        let unknownQualification = try artifact.preview.replacingOccurrences(of: #""qualification" : "qualified""#, with: #""qualification" : "private_unknown""#)
+        #expect(throws: DiagnosticExportError.malformedArtifact) {
+            try DiagnosticExport.decode(Data(unknownQualification.utf8))
         }
     }
 
@@ -239,7 +255,8 @@ struct DiagnosticExportTests {
         ],
         includesHistory: Bool = false,
         includesQuotaFinding: Bool = false,
-        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil
+        refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil,
+        quotaFindings: [DiagnosticQuotaFinding]? = nil
     ) throws -> DiagnosticExportInput {
         try DiagnosticExportInput(
             generatedAt: generatedAt,
@@ -251,7 +268,7 @@ struct DiagnosticExportTests {
             importCounts: DiagnosticImportCounts(accepted: 12, rejected: 2),
             resourceLimitReasons: [.rateLimited, .responseTooLarge],
             refreshHistory: refreshHistory ?? (includesHistory ? [try historyRecord()] : nil),
-            quotaFindings: includesQuotaFinding ? [try quotaFinding()] : nil
+            quotaFindings: quotaFindings ?? (includesQuotaFinding ? [try quotaFinding()] : nil)
         )
     }
 
@@ -260,11 +277,24 @@ struct DiagnosticExportTests {
             product: .codex,
             windowKind: .session,
             status: .qualified,
+            qualification: .qualified,
             measuredObservationCount: 6,
             measuredSpanMinutes: 45,
-            forecastMethod: .pairwisePositiveSlopeInterquartileV1,
+            forecastMethod: .pairwisePositiveSlopeInterquartileV2,
             calculatedBurnPercentPerHour: DiagnosticNumberRange(lower: 4, upper: 7),
             calculatedExhaustionMinutes: DiagnosticNumberRange(lower: 90, upper: 150)
+        )
+    }
+
+    private func unavailableQuotaFinding() throws -> DiagnosticQuotaFinding {
+        try DiagnosticQuotaFinding(
+            product: .codex,
+            windowKind: .session,
+            status: .incompatibleEvidence,
+            qualification: .unavailable,
+            measuredObservationCount: 4,
+            measuredSpanMinutes: 30,
+            forecastMethod: .pairwisePositiveSlopeInterquartileV2
         )
     }
 
