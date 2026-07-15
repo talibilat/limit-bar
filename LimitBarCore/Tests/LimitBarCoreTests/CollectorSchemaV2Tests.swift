@@ -52,7 +52,13 @@ struct CollectorSchemaV2Tests {
         ("projectLabel", "Bearer secret"),
         ("projectLabel", String(repeating: "a", count: 65)),
         ("agentID", "agent:value"),
-        ("agentLabel", "agent=value")
+        ("agentLabel", "agent=value"),
+        ("projectID", "api-key"),
+        ("projectLabel", "API Key"),
+        ("agentID", "session-token"),
+        ("agentLabel", "Build Password"),
+        ("agentLabel", "Client Secret"),
+        ("agentID", "service-credential")
     ])
     func rejectsUnsafeAttribution(field: String, value: String) {
         let escaped = value

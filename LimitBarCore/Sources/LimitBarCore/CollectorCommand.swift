@@ -50,9 +50,14 @@ public enum CollectorCommand {
         }
         let attributionOptions = ["--project-id", "--project-label", "--agent-id", "--agent-label"]
         let hasAttribution = attributionOptions.contains { values[$0] != nil }
-        let schemaVersion = values["--schema-version"].flatMap(Int.init) ?? CollectorEventV1.schemaVersion
-        guard schemaVersion == CollectorEventV1.schemaVersion || schemaVersion == CollectorEventV2.schemaVersion else {
-            throw CollectorCommandError.usage("Unsupported --schema-version")
+        let schemaVersion: Int
+        if let explicitVersion = values["--schema-version"] {
+            guard explicitVersion == "1" || explicitVersion == "2", let parsed = Int(explicitVersion) else {
+                throw CollectorCommandError.usage("Unsupported --schema-version")
+            }
+            schemaVersion = parsed
+        } else {
+            schemaVersion = CollectorEventV1.schemaVersion
         }
         guard !hasAttribution || schemaVersion == CollectorEventV2.schemaVersion else {
             throw CollectorCommandError.usage("Attribution options require --schema-version 2")

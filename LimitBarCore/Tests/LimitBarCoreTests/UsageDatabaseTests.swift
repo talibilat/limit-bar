@@ -589,6 +589,64 @@ struct UsageDatabaseTests {
         #expect(Set(nextDayLocal.map(\.modelLabel)) == ["second"])
     }
 
+    @Test("built-in attribution persists, deletes independently, and stays deleted across refresh and restart")
+    func builtInAttributionDeletionAndRestart() async throws {
+        let path = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let event = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"reviewer"}"#
+        try event.write(to: fileURL, atomically: true, encoding: .utf8)
+        let sourceBytes = try Data(contentsOf: fileURL)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+
+        let populated = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(populated.attributionBreakdowns.count == 2)
+        let parentMetrics = populated.metrics
+        await database.deleteAllAttributionEvidence(now: now)
+        let deleted = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(deleted.attributionBreakdowns.isEmpty)
+        #expect(deleted.metrics == parentMetrics)
+        #expect(try Data(contentsOf: fileURL) == sourceBytes)
+
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let afterRestart = await restarted.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(afterRestart.attributionBreakdowns.isEmpty)
+        #expect(afterRestart.metrics == parentMetrics)
+
+        let changed = event + "\n" + #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T11:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1,"projectID":"beta","agentID":"builder"}"#
+        try changed.write(to: fileURL, atomically: true, encoding: .utf8)
+        let changedSourceProcess = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let afterChange = await changedSourceProcess.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(afterChange.localImport.validEventCount == 2)
+        #expect(afterChange.localImport.malformedEventCount == 0)
+        #expect(Set(afterChange.attributionBreakdowns.compactMap(\.project?.id)) == ["alpha", "beta"])
+    }
+
+    @Test("custom attribution reaches snapshots and deletion suppression survives restart")
+    func customAttributionDeletionAndRestart() async throws {
+        let path = temporaryDatabasePath()
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        _ = await database.refreshCustomSources([source], now: now, calendar: utcCalendar())
+        let populated = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(populated.attributionBreakdowns.count == 2)
+        #expect(populated.attributionBreakdowns.allSatisfy { $0.source == .custom(sourceID) })
+        await database.deleteAllAttributionEvidence(now: now)
+        _ = await database.refreshCustomSources([source], now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar()).attributionBreakdowns.isEmpty)
+
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        _ = await restarted.refreshCustomSources([source], now: now.addingTimeInterval(2), calendar: utcCalendar())
+        let afterRestart = await restarted.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(afterRestart.attributionBreakdowns.isEmpty)
+        #expect(afterRestart.metrics.contains { $0.provenance.source == .custom(sourceID) })
+    }
+
     @Test("built-in local log with a future rejection bypasses the unchanged-file cache")
     func futureRejectedBuiltInLogIsReloaded() async throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

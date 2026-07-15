@@ -16,6 +16,7 @@ public struct ObservedLocalAttributionBreakdown: Equatable, Sendable {
     public let agent: CollectorAttribution?
     public let tokenUsage: TokenUsage
     public let eventIDs: [UUID]
+    public let observedAt: Date
 
     public init(
         source: UsageMetricSource,
@@ -26,7 +27,8 @@ public struct ObservedLocalAttributionBreakdown: Equatable, Sendable {
         project: CollectorAttribution?,
         agent: CollectorAttribution?,
         tokenUsage: TokenUsage,
-        eventIDs: [UUID]
+        eventIDs: [UUID],
+        observedAt: Date
     ) {
         evidenceKind = .observedLocalBreakdown
         self.source = source
@@ -38,5 +40,6 @@ public struct ObservedLocalAttributionBreakdown: Equatable, Sendable {
         self.agent = agent
         self.tokenUsage = tokenUsage
         self.eventIDs = eventIDs
+        self.observedAt = observedAt
     }
 }

@@ -91,6 +91,7 @@ enum CollectorSchema {
 
     private static func integer(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         return Int(exactly: number)
     }
 }
@@ -194,8 +195,20 @@ public enum CollectorSchemaV2 {
 
     private static func credentialLike(_ value: String) -> Bool {
         let lower = value.lowercased()
-        return lower.hasPrefix("sk-") || lower.hasPrefix("ghp_") || lower.hasPrefix("github_pat_")
-            || lower.hasPrefix("bearer ") || lower.hasPrefix("akia")
+        if lower.hasPrefix("sk-") || lower.hasPrefix("ghp_") || lower.hasPrefix("github_pat_")
+            || lower.hasPrefix("bearer ") || lower.hasPrefix("akia") || lower.hasPrefix("xox") {
+            return true
+        }
+        let components = lower.split { " ._()-".contains($0) }.map(String.init)
+        let prohibited = Set(["password", "passwd", "secret", "token", "apikey", "credential", "credentials", "privatekey", "accesskey"])
+        return components.contains(where: prohibited.contains)
+            || zip(components, components.dropFirst()).contains { $0 == "api" && $1 == "key" }
+    }
+
+    static func validAttribution(_ value: CollectorAttribution?) -> Bool {
+        guard let value else { return true }
+        return validIdentifier(value.id) && !credentialLike(value.id)
+            && (value.label.map { validLabel($0) && !credentialLike($0) } ?? true)
     }
 
     private static func add(_ attribution: CollectorAttribution?, prefix: String, to object: inout [String: Any]) {
@@ -212,6 +225,7 @@ public enum CollectorSchemaV2 {
 
     private static func integer(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         let decimal = number.decimalValue
         var source = decimal
         var rounded = Decimal()

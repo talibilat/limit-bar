@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SQLite3
 
@@ -13,6 +14,8 @@ public actor UsageDatabase {
     private let customUsageLoader: CustomUsageLoader
     private var store: SQLiteUsageMetricStore?
     private var historicalStore: HistoricalUsageTrendStore?
+    private var attributionStore: SQLiteUsageAttributionStore?
+    private var resolvedCurrentPath: String?
     private var lastValidSnapshot: StoredUsageMetricsSnapshot?
     private var lastValidHistory: HistoricalUsageSnapshot?
     private var localImportCache: LocalImportCacheEntry?
@@ -78,6 +81,7 @@ public actor UsageDatabase {
     public func createCleanDatabaseRecovery(at date: Date = Date()) throws -> URL {
         let databaseURL = URL(fileURLWithPath: try pathFactory())
         store = nil
+        attributionStore = nil
 
         let archive = try archiveDatabaseFiles(at: databaseURL, date: date)
         lastValidSnapshot = nil
@@ -124,10 +128,20 @@ public actor UsageDatabase {
                 importResult = .failed(fileURL: eventsURL, message: "Local usage import failed")
             }
 
+            if let revision = try? attributionSourceRevision(for: eventsURL) {
+                try? openAttributionStore().replace(
+                    importResult.attributionBreakdowns,
+                    source: .builtInLocalLog,
+                    sourceRevision: revision,
+                    now: now
+                )
+            }
+            let persistedAttribution = (try? openAttributionStore().all(now: now)) ?? lastValidSnapshot?.attributionBreakdowns ?? []
             let snapshot = filterConfiguredCustomSources(StoredUsageMetricsSnapshot(
                 metrics: try store.currentMetrics(at: now, calendar: calendar),
                 health: store.health(),
-                localImport: importResult
+                localImport: importResult,
+                attributionBreakdowns: persistedAttribution
             ))
             lastValidSnapshot = snapshot
             return snapshot
@@ -316,6 +330,7 @@ public actor UsageDatabase {
             let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
             try openHistoricalStore().deleteCustomSources(excluding: sourceIDs)
             try store.deleteCustomMetrics(excluding: sourceIDs)
+            try? openAttributionStore().deleteCustomSources(excluding: sourceIDs, now: now)
             lastValidHistory = nil
             customSourceCache = customSourceCache.filter { sourceIDs.contains($0.key) }
             var diagnostics: [CustomUsageRefreshDiagnostic] = []
@@ -334,6 +349,14 @@ public actor UsageDatabase {
                         in: UsageReplacementScope(provider: .custom, source: .custom(source.id), windows: [windows.today, windows.currentWeek]),
                         with: result.metrics
                     )
+                    if let revision = try? attributionSourceRevision(for: fileURL) {
+                        try? openAttributionStore().replace(
+                            result.attributionBreakdowns,
+                            source: .custom(source.id),
+                            sourceRevision: revision,
+                            now: now
+                        )
+                    }
                     let diagnostic = CustomUsageRefreshDiagnostic(
                         sourceID: source.id,
                         failureMessage: nil,
@@ -371,8 +394,24 @@ public actor UsageDatabase {
                 return configuredCustomSourceIDs.contains(id)
             },
             health: snapshot.health,
-            localImport: snapshot.localImport
+            localImport: snapshot.localImport,
+            attributionBreakdowns: snapshot.attributionBreakdowns.filter { breakdown in
+                guard case let .custom(id) = breakdown.source else { return true }
+                return configuredCustomSourceIDs.contains(id)
+            }
         )
+    }
+
+    public func deleteAllAttributionEvidence(now: Date = Date()) {
+        try? openAttributionStore().deleteAll(now: now)
+        if let lastValidSnapshot {
+            self.lastValidSnapshot = StoredUsageMetricsSnapshot(
+                metrics: lastValidSnapshot.metrics,
+                health: lastValidSnapshot.health,
+                localImport: lastValidSnapshot.localImport,
+                attributionBreakdowns: []
+            )
+        }
     }
 
     private func filterConfiguredCustomSources(_ snapshot: HistoricalUsageSnapshot) -> HistoricalUsageSnapshot {
@@ -472,7 +511,7 @@ public actor UsageDatabase {
 
     private func openStore() throws -> SQLiteUsageMetricStore {
         if let store { return store }
-        let opened = try SQLiteUsageMetricStore(path: pathFactory(), busyTimeoutMilliseconds: busyTimeoutMilliseconds)
+        let opened = try SQLiteUsageMetricStore(path: resolvedDatabasePath(), busyTimeoutMilliseconds: busyTimeoutMilliseconds)
         store = opened
         return opened
     }
@@ -485,6 +524,23 @@ public actor UsageDatabase {
         )
         historicalStore = opened
         return opened
+    }
+
+    private func openAttributionStore() throws -> SQLiteUsageAttributionStore {
+        if let attributionStore { return attributionStore }
+        let opened = try SQLiteUsageAttributionStore(
+            path: attributionDatabasePath(from: resolvedDatabasePath()),
+            busyTimeoutMilliseconds: busyTimeoutMilliseconds
+        )
+        attributionStore = opened
+        return opened
+    }
+
+    private func resolvedDatabasePath() throws -> String {
+        if let resolvedCurrentPath { return resolvedCurrentPath }
+        let path = try pathFactory()
+        resolvedCurrentPath = path
+        return path
     }
 
     private func loadHistory(
@@ -582,7 +638,8 @@ public actor UsageDatabase {
             return filterConfiguredCustomSources(StoredUsageMetricsSnapshot(
                 metrics: lastValidSnapshot.metrics,
                 health: UsageStoreHealth(isOpen: false, message: "SQLite store unavailable"),
-                localImport: lastValidSnapshot.localImport
+                localImport: lastValidSnapshot.localImport,
+                attributionBreakdowns: lastValidSnapshot.attributionBreakdowns
             ))
         }
         return StoredUsageMetricsSnapshot(
@@ -724,6 +781,17 @@ private func customSourceFingerprint(
     )
 }
 
+private func attributionSourceRevision(for fileURL: URL) throws -> String {
+    guard FileManager.default.fileExists(atPath: fileURL.path) else { return "missing" }
+    let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+    guard values.isRegularFile == true, values.isSymbolicLink != true,
+          let fileSize = values.fileSize, fileSize <= 100 * 1_024 * 1_024 else {
+        throw LocalUsageEventError.unreadableFile
+    }
+    let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
 private let defaultCustomUsageLoader: CustomUsageLoader = { fileURL, source, now, calendar in
     try await CustomUsageAggregator.loadMetrics(
         from: fileURL,
@@ -763,6 +831,12 @@ private func applicationSupportHistoricalDatabasePath(fileManager: FileManager) 
 private func historicalDatabasePath(from currentPath: String) throws -> String {
     if currentPath == ":memory:" { return ":memory:" }
     return currentPath + ".history.sqlite"
+}
+
+private func attributionDatabasePath(from currentPath: String) throws -> String {
+    let currentURL = URL(fileURLWithPath: currentPath)
+    let stem = currentURL.deletingPathExtension().lastPathComponent
+    return currentURL.deletingLastPathComponent().appendingPathComponent("\(stem)-attribution.sqlite").path
 }
 
 private func historicalPeriods(

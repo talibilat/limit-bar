@@ -41,6 +41,13 @@ struct CollectorCommandTests {
         }
     }
 
+    @Test("explicit malformed schema versions never default to v1", arguments: ["", "v2", "2.5", "true", "3"])
+    func malformedSchemaVersion(value: String) {
+        #expect(throws: CollectorCommandError.usage("Unsupported --schema-version")) {
+            try CollectorCommand.run(providerArguments(output: temporaryOutput()) + ["--schema-version", value])
+        }
+    }
+
     @Test("rejects unknown, duplicate, and incomplete options")
     func rejectsInvalidArguments() {
         #expect(throws: CollectorCommandError.self) { try CollectorCommand.run(["--private", "value"]) }

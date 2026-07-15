@@ -57,17 +57,14 @@ public enum LocalUsageEventParser {
         let inputTokens: Int?
         let outputTokens: Int?
         let deployment: String?
-        let schemaVersion: Int?
-        let eventID: UUID?
     }
 
     public static func parseLine(_ line: String) throws -> LocalUsageEvent {
-        guard let data = line.data(using: .utf8),
-              let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
+        guard let data = line.data(using: .utf8) else {
             throw LocalUsageEventError.malformedJSON
         }
 
-        if raw.schemaVersion == CollectorEventV2.schemaVersion {
+        if hasStrictV2Schema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .provider(provider) = event.identity,
                   let normalizedProvider = ProviderKind(rawValue: provider.rawValue) else {
                 throw LocalUsageEventError.malformedJSON
@@ -84,7 +81,7 @@ public enum LocalUsageEventParser {
                 agent: event.agent
             )
         }
-        guard raw.schemaVersion == nil || raw.schemaVersion == CollectorEventV1.schemaVersion else {
+        guard let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
             throw LocalUsageEventError.malformedJSON
         }
 
@@ -130,7 +127,7 @@ public enum LocalUsageEventParser {
         }
 
         return LocalUsageEvent(
-            eventID: raw.schemaVersion == CollectorEventV1.schemaVersion ? raw.eventID : nil,
+            eventID: nil,
             provider: provider,
             timestamp: timestamp,
             model: model,
@@ -151,6 +148,13 @@ public enum LocalUsageEventParser {
         let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractionalFormatter.date(from: timestampText)
+    }
+
+    private static func hasStrictV2Schema(in data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let number = object["schemaVersion"] as? NSNumber else { return false }
+        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
+            && number.intValue == CollectorEventV2.schemaVersion
     }
 }
 
@@ -181,6 +185,7 @@ public enum LocalUsageEventImporter {
         var inputTokens: Int
         var outputTokens: Int
         var eventIDs: [UUID]
+        var latestTimestamp: Date
     }
 
     // This importer only ever handles the shared usage-events.jsonl file and
@@ -404,7 +409,21 @@ public enum LocalUsageEventImporter {
                 continue
             }
             let key = AggregateKey(provider: event.provider, window: window, model: event.model, deployment: event.deployment)
-            if aggregates[key] == nil, aggregates.count >= maximumAggregateKeys {
+            let attributionKey: AttributionKey? = if event.project != nil || event.agent != nil, event.eventID != nil {
+                AttributionKey(
+                    provider: event.provider,
+                    window: window,
+                    model: event.model,
+                    deployment: event.deployment,
+                    project: event.project,
+                    agent: event.agent
+                )
+            } else {
+                nil
+            }
+            let addedKeyCount = (aggregates[key] == nil ? 1 : 0)
+                + (attributionKey.map { attributionAggregates[$0] == nil ? 1 : 0 } ?? 0)
+            if aggregates.count + attributionAggregates.count + addedKeyCount > maximumAggregateKeys {
                 throw LocalUsageEventError.tooManyAggregates
             }
             var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
@@ -414,23 +433,13 @@ public enum LocalUsageEventImporter {
             value.latestTimestamp = max(value.latestTimestamp, event.timestamp)
             aggregates[key] = value
 
-            guard event.project != nil || event.agent != nil, let eventID = event.eventID else { continue }
-            let attributionKey = AttributionKey(
-                provider: event.provider,
-                window: window,
-                model: event.model,
-                deployment: event.deployment,
-                project: event.project,
-                agent: event.agent
-            )
-            if attributionAggregates[attributionKey] == nil, aggregates.count + attributionAggregates.count >= maximumAggregateKeys {
-                throw LocalUsageEventError.tooManyAggregates
-            }
-            var attribution = attributionAggregates[attributionKey] ?? AttributionValue(inputTokens: 0, outputTokens: 0, eventIDs: [])
+            guard let attributionKey, let eventID = event.eventID else { continue }
+            var attribution = attributionAggregates[attributionKey] ?? AttributionValue(inputTokens: 0, outputTokens: 0, eventIDs: [], latestTimestamp: event.timestamp)
             attribution.inputTokens = try checkedSum(attribution.inputTokens, event.inputTokens)
             attribution.outputTokens = try checkedSum(attribution.outputTokens, event.outputTokens)
             _ = try checkedSum(attribution.inputTokens, attribution.outputTokens)
             attribution.eventIDs.append(eventID)
+            attribution.latestTimestamp = max(attribution.latestTimestamp, event.timestamp)
             attributionAggregates[attributionKey] = attribution
         }
     }
@@ -446,7 +455,8 @@ public enum LocalUsageEventImporter {
                 project: key.project,
                 agent: key.agent,
                 tokenUsage: TokenUsage(inputTokens: value.inputTokens, outputTokens: value.outputTokens),
-                eventIDs: value.eventIDs.sorted { $0.uuidString < $1.uuidString }
+                eventIDs: value.eventIDs.sorted { $0.uuidString < $1.uuidString },
+                observedAt: value.latestTimestamp
             )
         }.sorted {
             ($0.window.start, $0.provider.rawValue, $0.model, $0.project?.id ?? "", $0.agent?.id ?? "")

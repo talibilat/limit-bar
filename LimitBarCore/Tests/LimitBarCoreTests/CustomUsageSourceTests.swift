@@ -67,6 +67,20 @@ struct CustomUsageSourceTests {
         #expect(event.outputTokens == 20)
     }
 
+    @Test("legacy custom parser ignores arbitrary schemaVersion and unknown field types")
+    func legacyCustomParserRemainsPermissive() throws {
+        for fields in [
+            #""schemaVersion":"2","unknown":{"private":"sentinel"},"#,
+            #""schemaVersion":true,"unknown":[1,2,3],"#,
+            #""schemaVersion":{"future":2},"unknown":null,"#,
+            #""schemaVersion":2.5,"unknown":false,"#
+        ] {
+            let event = try CustomUsageEventParser.parseLine("{\(fields)\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"local\",\"inputTokens\":1,\"outputTokens\":2}")
+            #expect(event.model == "local")
+            #expect(event.project == nil && event.agent == nil)
+        }
+    }
+
     @Test("rejects missing fields and negative tokens")
     func rejectsInvalidEvents() {
         #expect(throws: CustomUsageEventError.self) {
@@ -77,9 +91,6 @@ struct CustomUsageSourceTests {
         }
         #expect(throws: CustomUsageEventError.self) {
             try CustomUsageEventParser.parseLine(#"{"timestamp":"2026-07-12T10:00:00Z","model":"x","inputTokens":-1,"outputTokens":2}"#)
-        }
-        #expect(throws: CustomUsageEventError.self) {
-            try CustomUsageEventParser.parseLine(#"{"schemaVersion":3,"timestamp":"2026-07-12T10:00:00Z","model":"x","inputTokens":1,"outputTokens":1}"#)
         }
     }
 
@@ -264,6 +275,20 @@ struct CustomUsageSourceTests {
                 now: try date("2026-07-12T18:00:00Z"),
                 calendar: utcCalendar()
             )
+        }
+    }
+
+    @Test("custom parent and attribution aggregates share one ten-thousand-key bound")
+    func customCombinedAggregateLimit() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let jsonl = (0...2_500).map { index in
+            "{\"schemaVersion\":2,\"eventID\":\"\(String(format: "00000000-0000-0000-0000-%012d", index + 1))\",\"customSourceID\":\"\(sourceID.uuidString)\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1,\"agentID\":\"agent-\(index)\"}"
+        }.joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+
+        await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
+            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
         }
     }
 
