@@ -155,11 +155,15 @@ public enum CodexRateLimitMapper {
               (1...525_600).contains(minutes) else {
             return nil
         }
+        let reset = raw.resets_at.flatMap { value -> Date? in
+            guard value.isFinite else { return nil }
+            return Date(timeIntervalSince1970: value)
+        }
         return CodexRateLimitWindow(
             limitID: normalizedLimitID(limitID),
             percentUsed: percent,
             windowMinutes: minutes,
-            resetsAt: raw.resets_at.map { Date(timeIntervalSince1970: $0) }
+            resetsAt: reset
         )
     }
 

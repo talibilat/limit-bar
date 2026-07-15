@@ -70,6 +70,21 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(generic.evidence.isEmpty)
     }
 
+    @Test("mixed supported and unsupported points produce no normalized evidence")
+    func mixedVersionRequestFailsClosed() throws {
+        var mixed = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))
+        let supportedVersion = #"{"key": "app.version", "value": {"stringValue": "2.1.207"}}"#
+        let lastVersion = try #require(mixed.range(of: supportedVersion, options: .backwards))
+        mixed.replaceSubrange(lastVersion, with: #"{"key": "app.version", "value": {"stringValue": "future"}}"#)
+        let result = ClaudeCodeOTLPEvidenceAdapter.scan(
+            data: try #require(mixed.data(using: .utf8)),
+            identityKey: Data("key".utf8)
+        )
+
+        #expect(result.sourceStatus == .unsupportedVersion)
+        #expect(result.evidence.isEmpty)
+    }
+
     @Test("prohibited payload content never enters normalized evidence")
     func omitsProhibitedContent() throws {
         let sentinel = "PRIVATE-PROMPT-/Users/alice/work-secret-BEARER-secret"

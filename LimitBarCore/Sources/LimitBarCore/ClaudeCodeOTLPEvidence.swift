@@ -208,8 +208,11 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
         }
 
         let status: ClaudeCodeOTLPSourceStatus
-        if !evidence.isEmpty {
-            status = foundUnsupported ? .unsupportedMetric : .supported
+        if !evidence.isEmpty, foundUnsupported {
+            // A partly recognized request cannot establish one supported source contract.
+            return result(.unsupportedVersion)
+        } else if !evidence.isEmpty {
+            status = .supported
         } else if foundUnsupported {
             status = .unsupportedVersion
         } else if foundClaudeMetric {
