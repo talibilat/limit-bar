@@ -4,6 +4,7 @@ import LimitBarCore
 struct ClaudeRateLimitsView: View {
     @Bindable var model: ClaudeRateLimitsModel
     let insights: [QuotaWindowIdentity: QuotaInsightState]
+    let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
     let insightsStorageAvailable: Bool
     let onActionCompleted: () -> Void
 
@@ -80,6 +81,7 @@ struct ClaudeRateLimitsView: View {
                             resetsAt: limit.resetsAt,
                             isActive: limit.isActive,
                             insight: insight(for: limit),
+                            anomaly: anomaly(for: limit),
                             insightsStorageAvailable: insightsStorageAvailable
                         )
                     }
@@ -107,6 +109,11 @@ struct ClaudeRateLimitsView: View {
         guard let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
         return insights[identity]
     }
+
+    private func anomaly(for limit: ClaudeRateLimit) -> QuotaAnomalyState? {
+        guard let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
+        return anomalies[identity]
+    }
 }
 
 enum ClaudeLoginHelp {
@@ -120,6 +127,7 @@ enum ClaudeLoginHelp {
             client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
         ),
         insights: [:],
+        anomalies: [:],
         insightsStorageAvailable: true,
         onActionCompleted: {}
     )

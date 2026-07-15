@@ -241,33 +241,101 @@ public struct QuotaObservation: Equatable, Sendable {
     }
 }
 
-public enum QuotaFindingAlertKind: String, Equatable, Sendable {
+public enum QuotaFindingAlertCategory: String, Equatable, Sendable {
     case forecast
     case anomaly
+    case forecastAndAnomaly
+}
+
+public enum QuotaFindingAlertTrace: Equatable, Sendable {
+    case forecast(
+        method: QuotaForecastMethod,
+        qualification: QuotaInsightQualificationStatus,
+        inputObservationIdentities: [QuotaObservationIdentity],
+        evidenceRange: ClosedRange<Date>,
+        valueClassification: QuotaAnomalyEvidenceClassification
+    )
+    case anomaly(
+        method: QuotaAnomalyMethod,
+        qualification: QuotaAnomalyQualification,
+        inputObservationIdentities: [QuotaObservationIdentity],
+        evidenceRange: ClosedRange<Date>,
+        valueClassification: QuotaAnomalyEvidenceClassification,
+        limitations: [QuotaAnomalyLimitation]
+    )
+
+    fileprivate var category: QuotaFindingAlertCategory {
+        switch self {
+        case .forecast: .forecast
+        case .anomaly: .anomaly
+        }
+    }
+
+    fileprivate var isQualified: Bool {
+        switch self {
+        case let .forecast(_, qualification, inputs, range, _):
+            qualification == .qualified && !inputs.isEmpty && range.lowerBound <= range.upperBound
+        case let .anomaly(_, qualification, inputs, range, _, limitations):
+            qualification == .qualified
+                && !inputs.isEmpty
+                && range.lowerBound <= range.upperBound
+                && !limitations.contains(where: \.blocksQuotaFindingAlert)
+        }
+    }
+
+    fileprivate var valueClassification: QuotaAnomalyEvidenceClassification {
+        switch self {
+        case let .forecast(_, _, _, _, classification), let .anomaly(_, _, _, _, classification, _): classification
+        }
+    }
+
+    fileprivate var sortKey: String {
+        switch self {
+        case let .forecast(method, qualification, inputs, range, classification):
+            "forecast|\(method.rawValue)|\(qualification.rawValue)|\(classification.rawValue)|\(range.lowerBound.timeIntervalSince1970)|\(range.upperBound.timeIntervalSince1970)|\(inputs.map(\.digest).joined(separator: ","))"
+        case let .anomaly(method, qualification, inputs, range, classification, limitations):
+            "anomaly|\(method.rawValue)|\(qualification.rawValue)|\(classification.rawValue)|\(range.lowerBound.timeIntervalSince1970)|\(range.upperBound.timeIntervalSince1970)|\(inputs.map(\.digest).joined(separator: ","))|\(limitations.map(\.rawValue).sorted().joined(separator: ","))"
+        }
+    }
+}
+
+private extension QuotaAnomalyLimitation {
+    /// Version incompatibilities make a finding unsafe. The remaining limitations qualify
+    /// interpretation but are informational, including synthetic-corpus-only method validation,
+    /// which issue #29 intentionally retains on otherwise qualified production findings.
+    var blocksQuotaFindingAlert: Bool {
+        switch self {
+        case .incompatibleAdapterVersion, .incompatibleClientVersion, .incompatibleProviderFormatVersion:
+            true
+        case .providerWeightingUnknown, .noCausalAttribution, .syntheticFixtureValidationOnly, .supersededEvidenceExcluded:
+            false
+        }
+    }
 }
 
 public struct QuotaFindingAlertObservation: Equatable, Sendable {
     public let identity: QuotaWindowIdentity
     public let percentageUsed: Double
-    public let kind: QuotaFindingAlertKind
-    public let methodVersion: String
-    public let qualification: String
-    public let valueClassification: QuotaAnomalyEvidenceClassification
+    public let traces: [QuotaFindingAlertTrace]
+
+    public var category: QuotaFindingAlertCategory {
+        let categories = Set(traces.map(\.category))
+        if categories.contains(.forecast), categories.contains(.anomaly) { return .forecastAndAnomaly }
+        return categories.first ?? .forecast
+    }
 
     init(
         identity: QuotaWindowIdentity,
         percentageUsed: Double,
-        kind: QuotaFindingAlertKind,
-        methodVersion: String,
-        qualification: String,
-        valueClassification: QuotaAnomalyEvidenceClassification
+        traces: [QuotaFindingAlertTrace]
     ) {
         self.identity = identity
         self.percentageUsed = percentageUsed
-        self.kind = kind
-        self.methodVersion = methodVersion
-        self.qualification = qualification
-        self.valueClassification = valueClassification
+        var tracesByKey: [String: QuotaFindingAlertTrace] = [:]
+        for trace in traces {
+            tracesByKey[trace.sortKey] = trace
+        }
+        self.traces = tracesByKey.values.sorted { $0.sortKey < $1.sortKey }
     }
 }
 
@@ -297,16 +365,20 @@ public enum QuotaFindingAlertAdapter {
                     product: finding.identity.product,
                     now: now
                   ),
+                  !finding.inputObservationIdentities.isEmpty,
                   let exhaustion = finding.calculatedExhaustionRange,
                   exhaustion.lowerBound >= finding.createdAt.addingTimeInterval(-finding.evidenceAge),
                   exhaustion.upperBound < finding.identity.resetBoundary else { return nil }
             return QuotaFindingAlertObservation(
                 identity: finding.identity,
                 percentageUsed: observation.percentageUsed,
-                kind: .forecast,
-                methodVersion: finding.forecastMethod.rawValue,
-                qualification: QuotaInsightQualificationStatus.qualified.rawValue,
-                valueClassification: .calculated
+                traces: [.forecast(
+                    method: finding.forecastMethod,
+                    qualification: .qualified,
+                    inputObservationIdentities: finding.inputObservationIdentities,
+                    evidenceRange: finding.createdAt.addingTimeInterval(-finding.evidenceAge - finding.measuredSpan)...finding.createdAt.addingTimeInterval(-finding.evidenceAge),
+                    valueClassification: .calculated
+                )]
             )
         }
         let anomalyCandidates = anomalies.compactMap { state -> QuotaFindingAlertObservation? in
@@ -317,16 +389,23 @@ public enum QuotaFindingAlertAdapter {
                   createdAt.timeIntervalSince1970.isFinite,
                   createdAt <= now,
                   let currentPeriod = finding.metadata.currentPeriod,
+                  let baselinePeriod = finding.metadata.baselinePeriod,
+                  !finding.metadata.inputObservationIdentities.isEmpty,
                   currentPeriod.end <= createdAt,
                   isFresh(currentPeriod.end, product: finding.identity.product, now: now),
+                  !finding.metadata.limitations.contains(where: \.blocksQuotaFindingAlert),
                   let observation = eligibleQuota[finding.identity] else { return nil }
             return QuotaFindingAlertObservation(
                 identity: finding.identity,
                 percentageUsed: observation.percentageUsed,
-                kind: .anomaly,
-                methodVersion: finding.metadata.method.rawValue,
-                qualification: finding.metadata.qualification.rawValue,
-                valueClassification: finding.valueClassification
+                traces: [.anomaly(
+                    method: finding.metadata.method,
+                    qualification: finding.metadata.qualification,
+                    inputObservationIdentities: finding.metadata.inputObservationIdentities,
+                    evidenceRange: baselinePeriod.start...currentPeriod.end,
+                    valueClassification: finding.valueClassification,
+                    limitations: finding.metadata.limitations
+                )]
             )
         }
         return forecastCandidates + anomalyCandidates
@@ -641,6 +720,10 @@ public struct AlertNotification: Equatable, Sendable {
 public struct AlertEvaluation: Equatable, Sendable {
     public let occurrence: AlertOccurrence
     public let notification: AlertNotification
+    /// In-memory trace for explaining why this evaluation qualified. It is intentionally absent
+    /// from the Delivery Ledger, which persists only rule, exact window, threshold, and delivery
+    /// state so deduplication remains independent from detailed forensic evidence and its deletion.
+    public let findingTraces: [QuotaFindingAlertTrace]
 }
 
 public enum AlertEvaluator {
@@ -659,15 +742,13 @@ public enum AlertEvaluator {
                     && $0.identity.resetBoundary > now
                     && $0.percentageUsed.isFinite
                     && (0...100).contains($0.percentageUsed)
-                    && !$0.methodVersion.isEmpty
-                    && $0.qualification == "qualified"
+                    && !$0.traces.isEmpty
+                    && $0.traces.allSatisfy(\.isQualified)
             }
-            let findingObservations = Dictionary(grouping: eligibleFindings, by: \.identity).compactMap { _, values in
-                values.max { lhs, rhs in
-                    if lhs.percentageUsed != rhs.percentageUsed { return lhs.percentageUsed < rhs.percentageUsed }
-                    // One rule threshold has one delivery opportunity per exact window.
-                    return notificationPriority(lhs.kind) < notificationPriority(rhs.kind)
-                }
+            let findingObservations: [QuotaFindingAlertObservation] = Dictionary(grouping: eligibleFindings, by: \.identity).compactMap { identity, values in
+                guard let percentage = values.map(\.percentageUsed).max() else { return nil }
+                let traces = values.flatMap(\.traces).sorted { $0.sortKey < $1.sortKey }
+                return QuotaFindingAlertObservation(identity: identity, percentageUsed: percentage, traces: traces)
             }
             let findingIdentities = Set(findingObservations.map(\.identity))
             let eligibleObservations = quota.filter {
@@ -686,7 +767,8 @@ public enum AlertEvaluator {
                             title: "Usage alert",
                             body: "\(rule.product.displayName) quota usage reached \(highest)%.",
                             threshold: highest
-                        )
+                        ),
+                        findingTraces: []
                     ))
                 }
             }
@@ -696,7 +778,8 @@ public enum AlertEvaluator {
                     let highest = thresholds.last!
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
-                        notification: findingNotification(finding, product: rule.product, threshold: highest)
+                        notification: findingNotification(finding, product: rule.product, threshold: highest),
+                        findingTraces: finding.traces
                     ))
                 }
             }
@@ -718,7 +801,8 @@ public enum AlertEvaluator {
                             title: "Budget alert",
                             body: "\(prefix) cost reached \(highest)% of the \(rule.currencyCode) budget.",
                             threshold: highest
-                        )
+                        ),
+                        findingTraces: []
                     ))
                 }
             }
@@ -775,13 +859,19 @@ public enum AlertEvaluator {
         product: ProviderProduct,
         threshold: Int
     ) -> AlertNotification {
-        let classification = switch finding.valueClassification {
-        case .reported: "Provider-reported"
-        case .measured: "Measured"
-        case .calculated: "Calculated"
-        case .inferred: "Inferred"
+        let classifications = Set(finding.traces.map(\.valueClassification))
+        let classification: String
+        if classifications.count == 1 {
+            classification = switch classifications.first! {
+            case .reported: "Provider-reported"
+            case .measured: "Measured"
+            case .calculated: "Calculated"
+            case .inferred: "Inferred"
+            }
+        } else {
+            classification = "Qualified"
         }
-        return switch finding.kind {
+        return switch finding.category {
         case .forecast:
             AlertNotification(
                 title: "Quota forecast",
@@ -794,13 +884,12 @@ public enum AlertEvaluator {
                 body: "\(classification) \(product.displayName) analysis found unusual quota consumption. Open LimitBar for details.",
                 threshold: threshold
             )
-        }
-    }
-
-    private static func notificationPriority(_ kind: QuotaFindingAlertKind) -> Int {
-        switch kind {
-        case .forecast: 1
-        case .anomaly: 0
+        case .forecastAndAnomaly:
+            AlertNotification(
+                title: "Quota forecast and anomaly",
+                body: "\(classification) \(product.displayName) analysis found a possible exhaustion before reset and unusual quota consumption. Open LimitBar for details.",
+                threshold: threshold
+            )
         }
     }
 }

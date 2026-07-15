@@ -25,7 +25,7 @@ struct QuotaFindingAlertTests {
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
             createdAt: now,
             evidenceAge: 60,
-            inputObservationIdentities: [],
+            inputObservationIdentities: try traceInputs(identity: identity, percentage: 10),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
             calculatedExhaustionRange: now.addingTimeInterval(1_200)...now.addingTimeInterval(1_800)
@@ -57,6 +57,16 @@ struct QuotaFindingAlertTests {
         #expect(evaluation.occurrence.ruleID == rule.id)
         #expect(evaluation.occurrence.window == .quota(identity))
         #expect(evaluation.occurrence.thresholds == [70, 90])
+        #expect(evaluation.findingTraces == candidates.flatMap(\.traces))
+        guard case let .forecast(method, qualification, inputs, evidenceRange, classification) = try #require(evaluation.findingTraces.first) else {
+            Issue.record("Expected typed forecast trace")
+            return
+        }
+        #expect(method == .pairwisePositiveSlopeInterquartileV2)
+        #expect(qualification == .qualified)
+        #expect(!inputs.isEmpty)
+        #expect(evidenceRange.lowerBound < evidenceRange.upperBound)
+        #expect(classification == .calculated)
         #expect(evaluation.notification.title == "Quota forecast")
         #expect(evaluation.notification.body == "Calculated Codex forecast indicates quota may exhaust before reset. Open LimitBar for details.")
         for prohibited in ["account", "project", "session", "model", "token", "123", "92", "90%"] {
@@ -86,9 +96,17 @@ struct QuotaFindingAlertTests {
 
         let evaluation = try #require(evaluations.first)
         #expect(evaluations.count == 1)
-        #expect(candidate.methodVersion == QuotaAnomalyMethod.trailingMedianRatioV1.rawValue)
-        #expect(candidate.qualification == QuotaAnomalyQualification.qualified.rawValue)
-        #expect(candidate.valueClassification == .calculated)
+        guard case let .anomaly(method, qualification, inputs, evidenceRange, classification, limitations) = try #require(candidate.traces.first) else {
+            Issue.record("Expected typed anomaly trace")
+            return
+        }
+        #expect(method == .trailingMedianRatioV1)
+        #expect(qualification == .qualified)
+        #expect(!inputs.isEmpty)
+        #expect(evidenceRange.lowerBound < evidenceRange.upperBound)
+        #expect(classification == .calculated)
+        #expect(limitations == [.noCausalAttribution, .syntheticFixtureValidationOnly])
+        #expect(evaluation.findingTraces == candidate.traces)
         #expect(evaluation.notification.title == "Quota anomaly")
         #expect(evaluation.notification.body == "Calculated Codex analysis found unusual quota consumption. Open LimitBar for details.")
         for prohibited in ["account", "project", "session", "model", "token", "456", "75", "70%"] {
@@ -96,8 +114,8 @@ struct QuotaFindingAlertTests {
         }
     }
 
-    @Test("one threshold opportunity prefers the more urgent exhaustion forecast")
-    func simultaneousFindingPriority() throws {
+    @Test("one threshold opportunity represents forecast and anomaly together")
+    func simultaneousFindingCategory() throws {
         let identity = try window()
         let quota = observation(identity: identity, percentage: 75)
         let findings = QuotaFindingAlertAdapter.candidates(
@@ -118,7 +136,9 @@ struct QuotaFindingAlertTests {
         )
 
         #expect(evaluations.count == 1)
-        #expect(evaluations.first?.notification.title == "Quota forecast")
+        #expect(evaluations.first?.notification.title == "Quota forecast and anomaly")
+        #expect(evaluations.first?.notification.body == "Calculated Codex analysis found a possible exhaustion before reset and unusual quota consumption. Open LimitBar for details.")
+        #expect(evaluations.first?.findingTraces.count == 2)
     }
 
     @Test("unsafe findings cannot become candidates")
@@ -151,6 +171,49 @@ struct QuotaFindingAlertTests {
             anomalies: [try anomaly(identity: active)],
             quota: [],
             now: now
+        ).isEmpty)
+    }
+
+    @Test("exact boundary mismatch and provider reports without a boundary fail closed")
+    func exactBoundaryRequired() throws {
+        let findingIdentity = try window()
+        let otherBoundary = try window(reset: now.addingTimeInterval(7_200))
+        #expect(QuotaFindingAlertAdapter.candidates(
+            forecasts: [forecast(identity: findingIdentity)],
+            anomalies: [try anomaly(identity: findingIdentity)],
+            quota: [observation(identity: otherBoundary, percentage: 95)],
+            now: now
+        ).isEmpty)
+
+        let boundaryless = CodexRateLimitWindow(percentUsed: 95, windowMinutes: 300, resetsAt: nil)
+        #expect(QuotaWindowIdentity.codex(slot: "primary", window: boundaryless) == nil)
+        let snapshot = CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: boundaryless,
+            secondary: nil,
+            credits: nil,
+            reportedAt: now
+        )
+        #expect(QuotaObservationAdapter.codex(snapshot, now: now).isEmpty)
+    }
+
+    @Test("anomaly limitations distinguish informational qualification from blocking incompatibility")
+    func anomalyLimitationPolicy() throws {
+        let identity = try window()
+        let quota = observation(identity: identity, percentage: 75)
+        let informational = try anomaly(identity: identity, limitations: [
+            .providerWeightingUnknown,
+            .noCausalAttribution,
+            .syntheticFixtureValidationOnly,
+            .supersededEvidenceExcluded,
+        ])
+        let blocking = try anomaly(identity: identity, limitations: [.incompatibleAdapterVersion])
+
+        #expect(QuotaFindingAlertAdapter.candidates(
+            forecasts: [], anomalies: [informational], quota: [quota], now: now
+        ).count == 1)
+        #expect(QuotaFindingAlertAdapter.candidates(
+            forecasts: [], anomalies: [blocking], quota: [quota], now: now
         ).isEmpty)
     }
 
@@ -194,7 +257,7 @@ struct QuotaFindingAlertTests {
             thresholds: try PercentageThresholds([70])
         )
         let firstIdentity = try window()
-        let firstFinding = try candidate(identity: firstIdentity, percentage: 75)
+        let firstFinding = try candidate(identity: firstIdentity, percentage: 75, inputPercentage: 10)
         let firstEvaluation = try #require(evaluate(rule: rule, finding: firstFinding).first)
         do {
             let store = try SQLiteAlertDeliveryStore(path: path)
@@ -205,11 +268,13 @@ struct QuotaFindingAlertTests {
 
         let reopened = try SQLiteAlertDeliveryStore(path: path)
         let satisfied = Set(try reopened.satisfactions(for: rule.id, window: .quota(firstIdentity)))
+        let supersedingFinding = try candidate(identity: firstIdentity, percentage: 99, inputPercentage: 11)
+        #expect(firstFinding.traces != supersedingFinding.traces)
         #expect(AlertEvaluator.evaluate(
             preferences: try AlertPreferences(quotaRules: [rule], costBudgetRules: []),
             quota: [],
             costs: [],
-            findings: [try candidate(identity: firstIdentity, percentage: 99)],
+            findings: [supersedingFinding],
             satisfied: satisfied,
             now: now
         ).isEmpty)
@@ -293,7 +358,8 @@ struct QuotaFindingAlertTests {
         identity: QuotaWindowIdentity,
         createdAt: Date? = nil,
         evidenceAge: TimeInterval = 60,
-        hasExhaustion: Bool = true
+        hasExhaustion: Bool = true,
+        inputPercentage: Double = 10
     ) -> QuotaInsightState {
         let createdAt = createdAt ?? now
         let exhaustion: ClosedRange<Date>? = hasExhaustion
@@ -306,7 +372,7 @@ struct QuotaFindingAlertTests {
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
             createdAt: createdAt,
             evidenceAge: evidenceAge,
-            inputObservationIdentities: [],
+            inputObservationIdentities: try! traceInputs(identity: identity, percentage: inputPercentage),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
             calculatedExhaustionRange: exhaustion
@@ -315,7 +381,8 @@ struct QuotaFindingAlertTests {
 
     private func anomaly(
         identity: QuotaWindowIdentity,
-        qualification: QuotaAnomalyQualification = .qualified
+        qualification: QuotaAnomalyQualification = .qualified,
+        limitations: [QuotaAnomalyLimitation] = [.noCausalAttribution, .syntheticFixtureValidationOnly]
     ) throws -> QuotaAnomalyState {
         let current = try QuotaAnomalyPeriod(start: now.addingTimeInterval(-660), end: now.addingTimeInterval(-60))
         let baseline = try QuotaAnomalyPeriod(start: now.addingTimeInterval(-3_660), end: now.addingTimeInterval(-660))
@@ -326,12 +393,12 @@ struct QuotaFindingAlertTests {
             implicatedIdentities: [identity],
             currentPeriod: current,
             baselinePeriod: baseline,
-            inputObservationIdentities: [],
+            inputObservationIdentities: try traceInputs(identity: identity, percentage: 20),
             interpretationVersions: [.codexLocalReportV1],
             evidenceVersions: [],
             inputClassifications: [.measured],
             denominatorInputs: [],
-            limitations: [.noCausalAttribution]
+            limitations: limitations
         )
         return .finding(QuotaConsumptionAnomalyFinding(
             metadata: metadata,
@@ -349,13 +416,28 @@ struct QuotaFindingAlertTests {
         ))
     }
 
-    private func candidate(identity: QuotaWindowIdentity, percentage: Double) throws -> QuotaFindingAlertObservation {
+    private func candidate(
+        identity: QuotaWindowIdentity,
+        percentage: Double,
+        inputPercentage: Double = 10
+    ) throws -> QuotaFindingAlertObservation {
         try #require(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: identity)],
+            forecasts: [forecast(identity: identity, inputPercentage: inputPercentage)],
             anomalies: [],
             quota: [observation(identity: identity, percentage: percentage)],
             now: now
         ).first)
+    }
+
+    private func traceInputs(identity: QuotaWindowIdentity, percentage: Double) throws -> [QuotaObservationIdentity] {
+        try [-1_800.0, -60].map { offset in
+            try MeasuredQuotaObservation(
+                identity: identity,
+                percentageUsed: percentage,
+                observedAt: now.addingTimeInterval(offset),
+                source: .codexLocalReport
+            ).stableIdentity
+        }
     }
 
     private func evaluate(rule: QuotaAlertRule, finding: QuotaFindingAlertObservation) -> [AlertEvaluation] {
