@@ -222,6 +222,68 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         XCTAssertFalse(clearedRetained)
         XCTAssertNil(try store.latest(now: now))
     }
+
+    @MainActor
+    func testProjectAgentAttributionDeletionReportsCommittedSuccessAndFailure() async throws {
+        let successfulStore = AttributionDeletionStub(shouldFail: false)
+        let successfulState = makeState(attributionStore: successfulStore)
+
+        let succeeded = await successfulState.deleteProjectAgentAttribution()
+        let successfulCalls = await successfulStore.callCount()
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(successfulCalls, 1)
+        XCTAssertEqual(
+            AttributionEvidenceDeletionPresentation.message(succeeded: true),
+            "Project and agent attribution deleted. Parent usage, source files, settings, credentials, alert rules, and delivery history were not changed."
+        )
+
+        let failingStore = AttributionDeletionStub(shouldFail: true)
+        let failingState = makeState(attributionStore: failingStore)
+        let failed = await failingState.deleteProjectAgentAttribution()
+        let failingCalls = await failingStore.callCount()
+        XCTAssertFalse(failed)
+        XCTAssertEqual(failingCalls, 1)
+        XCTAssertEqual(
+            AttributionEvidenceDeletionPresentation.message(succeeded: false),
+            "Could not delete project and agent attribution. Existing attribution was left available."
+        )
+    }
+
+    @MainActor
+    private func makeState(attributionStore: any AttributionEvidenceDeleting) -> LimitBarState {
+        LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in nil }
+            )),
+            attributionEvidenceStore: attributionStore
+        )
+    }
+}
+
+private actor AttributionDeletionStub: AttributionEvidenceDeleting {
+    private let shouldFail: Bool
+    private var calls = 0
+
+    init(shouldFail: Bool) {
+        self.shouldFail = shouldFail
+    }
+
+    func deleteAllAttributionEvidence(now: Date) async throws {
+        calls += 1
+        if shouldFail { throw AttributionDeletionTestError.failed }
+    }
+
+    func callCount() -> Int { calls }
+}
+
+private enum AttributionDeletionTestError: Error {
+    case failed
 }
 
 private final class QuotaDeletionCredentialStore: CredentialStore, @unchecked Sendable {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct LocalUsageEvent: Equatable, Sendable {
@@ -24,6 +25,7 @@ public enum LocalUsageEventError: Error, Equatable {
     case futureTimestamp
     case unreadableFile
     case notRegularFile
+    case noValidEvents(diagnostics: [MalformedLocalUsageEvent], rejectedLineCount: Int, hasFutureTimestampRejection: Bool)
 }
 
 public struct MalformedLocalUsageEvent: Equatable, Sendable {
@@ -39,13 +41,18 @@ public struct LocalUsageImportResult: Equatable, Sendable {
     public let failureMessage: String?
     public let hasFutureTimestampRejection: Bool
     public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
+    public let sourceRevision: String?
 
     public static func empty(fileURL: URL) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [])
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: sha256(Data()))
     }
 
     public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [])
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: nil)
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -230,19 +237,30 @@ public enum LocalUsageEventImporter {
         now: Date,
         calendar: Calendar
     ) throws -> LocalUsageImportResult {
+        try importEvents(from: fileURL, to: store, now: now, calendar: calendar, onChunkRead: nil)
+    }
+
+    static func importEvents(
+        from fileURL: URL,
+        to store: SQLiteUsageMetricStore,
+        now: Date,
+        calendar: Calendar,
+        onChunkRead: ((Int) throws -> Void)?
+    ) throws -> LocalUsageImportResult {
         try Task.checkCancellation()
         let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
         let importedWindows = [windows.today, windows.currentWeek]
         let fileHandle: FileHandle
         do {
-            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            let currentFileURL = URL(fileURLWithPath: fileURL.path)
+            let values = try currentFileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
             guard values.isRegularFile == true else {
                 throw LocalUsageEventError.notRegularFile
             }
             guard let fileSize = values.fileSize, fileSize <= maximumFileByteCount else {
                 throw LocalUsageEventError.fileTooLarge
             }
-            fileHandle = try FileHandle(forReadingFrom: fileURL)
+            fileHandle = try FileHandle(forReadingFrom: currentFileURL)
         } catch {
             guard isFileNotFound(error) else {
                 if let typedError = error as? LocalUsageEventError {
@@ -265,6 +283,7 @@ public enum LocalUsageEventImporter {
         var discardingOverlongLine = false
         var bytesRead = 0
         var hasFutureTimestampRejection = false
+        var hasher = SHA256()
 
         while let chunk = try readChunk(from: fileHandle), !chunk.isEmpty {
             try Task.checkCancellation()
@@ -272,6 +291,8 @@ public enum LocalUsageEventImporter {
             guard bytesRead <= maximumFileByteCount else {
                 throw LocalUsageEventError.fileTooLarge
             }
+            hasher.update(data: chunk)
+            try onChunkRead?(bytesRead)
             for byte in chunk {
                 if discardingOverlongLine {
                     if byte == 0x0A {
@@ -319,6 +340,14 @@ public enum LocalUsageEventImporter {
             )
         }
 
+        if bytesRead > 0, validEventCount == 0, malformedEventCount > 0 {
+            throw LocalUsageEventError.noValidEvents(
+                diagnostics: malformed,
+                rejectedLineCount: malformedEventCount,
+                hasFutureTimestampRejection: hasFutureTimestampRejection
+            )
+        }
+
         try Task.checkCancellation()
         try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: aggregates)
 
@@ -329,7 +358,8 @@ public enum LocalUsageEventImporter {
             malformedEvents: malformed,
             failureMessage: nil,
             hasFutureTimestampRejection: hasFutureTimestampRejection,
-            attributionBreakdowns: breakdowns(from: attributionAggregates)
+            attributionBreakdowns: breakdowns(from: attributionAggregates),
+            sourceRevision: hasher.finalize().map { String(format: "%02x", $0) }.joined()
         )
     }
 

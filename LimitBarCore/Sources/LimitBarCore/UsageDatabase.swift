@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import SQLite3
 
@@ -16,6 +15,7 @@ public actor UsageDatabase {
     private var historicalStore: HistoricalUsageTrendStore?
     private var attributionStore: SQLiteUsageAttributionStore?
     private var resolvedCurrentPath: String?
+    private var attributionStorageFailures: Set<UsageMetricSource> = []
     private var lastValidSnapshot: StoredUsageMetricsSnapshot?
     private var lastValidHistory: HistoricalUsageSnapshot?
     private var localImportCache: LocalImportCacheEntry?
@@ -79,15 +79,25 @@ public actor UsageDatabase {
     }
 
     public func createCleanDatabaseRecovery(at date: Date = Date()) throws -> URL {
-        let databaseURL = URL(fileURLWithPath: try pathFactory())
+        let databaseURL = URL(fileURLWithPath: try resolvedDatabasePath())
         store = nil
         attributionStore = nil
 
         let archive = try archiveDatabaseFiles(at: databaseURL, date: date)
+        do {
+            _ = try openStore()
+            _ = try openAttributionStore()
+        } catch {
+            store = nil
+            attributionStore = nil
+            try? removeDatabaseSet(at: databaseURL)
+            try restoreArchivedDatabaseSet(from: archive, to: databaseURL.deletingLastPathComponent())
+            throw error
+        }
         lastValidSnapshot = nil
         localImportCache = nil
         customSourceCache = [:]
-        _ = try openStore()
+        attributionStorageFailures = []
         return archive
     }
 
@@ -124,22 +134,45 @@ public actor UsageDatabase {
                 }
             } catch is CancellationError {
                 return cancellationSnapshot()
+            } catch let LocalUsageEventError.noValidEvents(diagnostics, rejectedLineCount, hasFutureTimestampRejection) {
+                importResult = LocalUsageImportResult(
+                    fileURL: eventsURL,
+                    validEventCount: 0,
+                    malformedEventCount: rejectedLineCount,
+                    malformedEvents: diagnostics,
+                    failureMessage: "Local usage import failed",
+                    hasFutureTimestampRejection: hasFutureTimestampRejection,
+                    attributionBreakdowns: [],
+                    sourceRevision: nil
+                )
             } catch {
                 importResult = .failed(fileURL: eventsURL, message: "Local usage import failed")
             }
 
-            if let revision = try? attributionSourceRevision(for: eventsURL) {
-                try? openAttributionStore().replace(
-                    importResult.attributionBreakdowns,
-                    source: .builtInLocalLog,
-                    sourceRevision: revision,
-                    now: now
-                )
+            var snapshotHealth = store.health()
+            var persistedAttribution = lastValidSnapshot?.attributionBreakdowns ?? []
+            do {
+                let attributionStore = try openAttributionStore()
+                if let revision = importResult.sourceRevision {
+                    try attributionStore.replace(
+                        importResult.attributionBreakdowns,
+                        source: .builtInLocalLog,
+                        sourceRevision: revision,
+                        now: now
+                    )
+                    attributionStorageFailures.remove(.builtInLocalLog)
+                }
+                persistedAttribution = try attributionStore.all(now: now)
+                if !attributionStorageFailures.isEmpty {
+                    snapshotHealth = UsageStoreHealth(isOpen: false, message: "Attribution storage unavailable")
+                }
+            } catch {
+                attributionStorageFailures.insert(.builtInLocalLog)
+                snapshotHealth = UsageStoreHealth(isOpen: false, message: "Attribution storage unavailable")
             }
-            let persistedAttribution = (try? openAttributionStore().all(now: now)) ?? lastValidSnapshot?.attributionBreakdowns ?? []
             let snapshot = filterConfiguredCustomSources(StoredUsageMetricsSnapshot(
                 metrics: try store.currentMetrics(at: now, calendar: calendar),
-                health: store.health(),
+                health: snapshotHealth,
                 localImport: importResult,
                 attributionBreakdowns: persistedAttribution
             ))
@@ -349,13 +382,19 @@ public actor UsageDatabase {
                         in: UsageReplacementScope(provider: .custom, source: .custom(source.id), windows: [windows.today, windows.currentWeek]),
                         with: result.metrics
                     )
-                    if let revision = try? attributionSourceRevision(for: fileURL) {
-                        try? openAttributionStore().replace(
-                            result.attributionBreakdowns,
-                            source: .custom(source.id),
-                            sourceRevision: revision,
-                            now: now
-                        )
+                    if let revision = result.sourceRevision {
+                        do {
+                            try openAttributionStore().replace(
+                                result.attributionBreakdowns,
+                                source: .custom(source.id),
+                                sourceRevision: revision,
+                                now: now
+                            )
+                            attributionStorageFailures.remove(.custom(source.id))
+                        } catch {
+                            attributionStorageFailures.insert(.custom(source.id))
+                            throw error
+                        }
                     }
                     let diagnostic = CustomUsageRefreshDiagnostic(
                         sourceID: source.id,
@@ -402,8 +441,8 @@ public actor UsageDatabase {
         )
     }
 
-    public func deleteAllAttributionEvidence(now: Date = Date()) {
-        try? openAttributionStore().deleteAll(now: now)
+    public func deleteAllAttributionEvidence(now: Date = Date()) throws {
+        try openAttributionStore().deleteAll(now: now)
         if let lastValidSnapshot {
             self.lastValidSnapshot = StoredUsageMetricsSnapshot(
                 metrics: lastValidSnapshot.metrics,
@@ -668,59 +707,125 @@ public actor UsageDatabase {
             )
         try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
-        var lockDatabase: OpaquePointer?
-        let openResult = sqlite3_open_v2(
-            databaseURL.path,
-            &lockDatabase,
-            SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
-            nil
-        )
-        var holdsExclusiveLock = false
-        if openResult == SQLITE_OK {
-            sqlite3_busy_timeout(lockDatabase, 1_000)
-            let lockResult = sqlite3_exec(lockDatabase, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil)
-            if lockResult == SQLITE_OK {
-                holdsExclusiveLock = true
-            } else if lockResult == SQLITE_BUSY || lockResult == SQLITE_LOCKED {
-                sqlite3_close(lockDatabase)
-                try? fileManager.removeItem(at: archiveURL)
-                throw UsageDatabaseRecoveryError.databaseBusy
-            } else if fileManager.isWritableFile(atPath: databaseURL.path),
-                      ![SQLITE_NOTADB, SQLITE_CORRUPT].contains(sqlite3_extended_errcode(lockDatabase)) {
-                sqlite3_close(lockDatabase)
-                try? fileManager.removeItem(at: archiveURL)
-                throw UsageDatabaseRecoveryError.databaseBusy
+        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        let originalSourceURLs = [databaseURL, attributionURL].flatMap { url in
+            [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
+        }.filter { fileManager.fileExists(atPath: $0.path) }
+        do {
+            for source in originalSourceURLs {
+                try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
             }
-        } else if fileManager.isWritableFile(atPath: databaseURL.path) {
-            sqlite3_close(lockDatabase)
+        } catch {
             try? fileManager.removeItem(at: archiveURL)
-            throw UsageDatabaseRecoveryError.databaseBusy
+            throw error
+        }
+        var locks: [OpaquePointer] = []
+        do {
+            for url in [databaseURL, attributionURL] where fileManager.fileExists(atPath: url.path) {
+                if let lock = try recoveryLock(at: url) { locks.append(lock) }
+            }
+        } catch {
+            for lock in locks {
+                sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil)
+                sqlite3_close(lock)
+            }
+            try? fileManager.removeItem(at: archiveURL)
+            throw error
         }
         defer {
-            if holdsExclusiveLock {
-                sqlite3_exec(lockDatabase, "ROLLBACK;", nil, nil, nil)
+            for lock in locks {
+                sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil)
+                sqlite3_close(lock)
             }
-            sqlite3_close(lockDatabase)
+        }
+
+        // Lock acquisition can update SHM bookkeeping, but database and WAL bytes
+        // must still match the pre-lock archive or a writer raced the recovery.
+        for source in originalSourceURLs where !source.path.hasSuffix("-shm") {
+            let archived = archiveURL.appendingPathComponent(source.lastPathComponent)
+            guard fileManager.fileExists(atPath: source.path), try filesMatch(source, archived) else {
+                try? fileManager.removeItem(at: archiveURL)
+                throw UsageDatabaseRecoveryError.databaseBusy
+            }
         }
 
         // Inventory sidecars only after excluding writers so a newly committed WAL cannot be omitted.
-        let sourceURLs = [
-            databaseURL,
-            URL(fileURLWithPath: databaseURL.path + "-wal"),
-            URL(fileURLWithPath: databaseURL.path + "-shm")
-        ].filter { fileManager.fileExists(atPath: $0.path) }
+        let sourceURLs = [databaseURL, attributionURL].flatMap { url in
+            [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
+        }.filter { fileManager.fileExists(atPath: $0.path) }
         do {
+            var removed: [URL] = []
             for source in sourceURLs {
-                let destination = archiveURL.appendingPathComponent(source.lastPathComponent)
-                try fileManager.copyItem(at: source, to: destination)
-            }
-            for source in sourceURLs {
-                try fileManager.removeItem(at: source)
+                do {
+                    try fileManager.removeItem(at: source)
+                    removed.append(source)
+                } catch {
+                    for removedURL in removed {
+                        let archived = archiveURL.appendingPathComponent(removedURL.lastPathComponent)
+                        try? fileManager.copyItem(at: archived, to: removedURL)
+                    }
+                    throw error
+                }
             }
         } catch {
             throw error
         }
         return archiveURL
+    }
+
+    private func recoveryLock(at url: URL) throws -> OpaquePointer? {
+        var database: OpaquePointer?
+        let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+        guard openResult == SQLITE_OK else {
+            sqlite3_close(database)
+            if FileManager.default.isWritableFile(atPath: url.path) { throw UsageDatabaseRecoveryError.databaseBusy }
+            return nil
+        }
+        sqlite3_busy_timeout(database, 1_000)
+        let lockResult = sqlite3_exec(database, "BEGIN EXCLUSIVE TRANSACTION;", nil, nil, nil)
+        if lockResult == SQLITE_OK { return database }
+        let extendedError = sqlite3_extended_errcode(database)
+        sqlite3_close(database)
+        if [SQLITE_NOTADB, SQLITE_CORRUPT].contains(extendedError) { return nil }
+        throw UsageDatabaseRecoveryError.databaseBusy
+    }
+
+    private func removeDatabaseSet(at databaseURL: URL) throws {
+        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        for url in [databaseURL, attributionURL] {
+            for candidate in [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
+                where FileManager.default.fileExists(atPath: candidate.path) {
+                try FileManager.default.removeItem(at: candidate)
+            }
+        }
+    }
+
+    private func restoreArchivedDatabaseSet(from archive: URL, to directory: URL) throws {
+        for source in try FileManager.default.contentsOfDirectory(at: archive, includingPropertiesForKeys: nil) {
+            let destination = directory.appendingPathComponent(source.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+    }
+
+    private func filesMatch(_ lhs: URL, _ rhs: URL) throws -> Bool {
+        let lhsValues = try lhs.resourceValues(forKeys: [.fileSizeKey])
+        let rhsValues = try rhs.resourceValues(forKeys: [.fileSizeKey])
+        guard lhsValues.fileSize == rhsValues.fileSize else { return false }
+        let lhsHandle = try FileHandle(forReadingFrom: lhs)
+        let rhsHandle = try FileHandle(forReadingFrom: rhs)
+        defer {
+            try? lhsHandle.close()
+            try? rhsHandle.close()
+        }
+        while true {
+            let lhsChunk = try lhsHandle.read(upToCount: 64 * 1_024) ?? Data()
+            let rhsChunk = try rhsHandle.read(upToCount: 64 * 1_024) ?? Data()
+            guard lhsChunk == rhsChunk else { return false }
+            if lhsChunk.isEmpty { return true }
+        }
     }
 }
 
@@ -779,17 +884,6 @@ private func customSourceFingerprint(
         todayStart: windows.today.start,
         weekStart: windows.currentWeek.start
     )
-}
-
-private func attributionSourceRevision(for fileURL: URL) throws -> String {
-    guard FileManager.default.fileExists(atPath: fileURL.path) else { return "missing" }
-    let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-    guard values.isRegularFile == true, values.isSymbolicLink != true,
-          let fileSize = values.fileSize, fileSize <= 100 * 1_024 * 1_024 else {
-        throw LocalUsageEventError.unreadableFile
-    }
-    let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
-    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 private let defaultCustomUsageLoader: CustomUsageLoader = { fileURL, source, now, calendar in

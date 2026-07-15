@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public struct CustomUsageSource: Codable, Equatable, Identifiable, Sendable {
@@ -82,19 +83,22 @@ public struct CustomUsageLoadResult: Equatable, Sendable {
     public let diagnostics: [CustomUsageLoadDiagnostic]
     public let rejectedLineCount: Int
     public let hasFutureTimestampRejection: Bool
+    public let sourceRevision: String?
 
     public init(
         metrics: [UsageMetric],
         attributionBreakdowns: [ObservedLocalAttributionBreakdown] = [],
         diagnostics: [CustomUsageLoadDiagnostic],
         rejectedLineCount: Int,
-        hasFutureTimestampRejection: Bool = false
+        hasFutureTimestampRejection: Bool = false,
+        sourceRevision: String? = nil
     ) {
         self.metrics = metrics
         self.attributionBreakdowns = attributionBreakdowns
         self.diagnostics = diagnostics
         self.rejectedLineCount = rejectedLineCount
         self.hasFutureTimestampRejection = hasFutureTimestampRejection
+        self.sourceRevision = sourceRevision
     }
 }
 
@@ -217,6 +221,17 @@ public enum CustomUsageAggregator {
         calendar: Calendar,
         fileManager: FileManager = .default
     ) async throws -> CustomUsageLoadResult {
+        try await loadMetrics(from: fileURL, source: source, now: now, calendar: calendar, fileManager: fileManager, onChunkRead: nil)
+    }
+
+    static func loadMetrics(
+        from fileURL: URL,
+        source: CustomUsageSource,
+        now: Date,
+        calendar: Calendar,
+        fileManager: FileManager = .default,
+        onChunkRead: ((Int) throws -> Void)?
+    ) async throws -> CustomUsageLoadResult {
         guard !Task.isCancelled else { throw CustomUsageLoadError.cancelled }
         guard let windows = try? CurrentUsageWindows.resolve(at: now, calendar: calendar) else {
             throw CustomUsageLoadError.unresolvedWindows
@@ -258,6 +273,7 @@ public enum CustomUsageAggregator {
         var line = Data()
         var discardingOverlongLine = false
         var bytesRead = 0
+        var hasher = SHA256()
 
         func reject(_ reason: CustomUsageLoadDiagnostic.Reason) {
             rejectedLineCount += 1
@@ -335,6 +351,8 @@ public enum CustomUsageAggregator {
                 if chunk.isEmpty { break }
                 bytesRead = try checkedSum(bytesRead, chunk.count)
                 guard bytesRead <= maximumFileBytes else { throw CustomUsageLoadError.fileTooLarge }
+                hasher.update(data: chunk)
+                try onChunkRead?(bytesRead)
                 for byte in chunk {
                     if byte == 0x0A {
                         if discardingOverlongLine {
@@ -405,7 +423,8 @@ public enum CustomUsageAggregator {
             },
             diagnostics: diagnostics,
             rejectedLineCount: rejectedLineCount,
-            hasFutureTimestampRejection: hasFutureTimestampRejection
+            hasFutureTimestampRejection: hasFutureTimestampRejection,
+            sourceRevision: hasher.finalize().map { String(format: "%02x", $0) }.joined()
         )
     }
 }

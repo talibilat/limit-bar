@@ -58,7 +58,7 @@ struct CollectorCLIIntegrationTests {
         let reservation = try #require(try deliveryStore.reserve(occurrence, now: now))
         try deliveryStore.markDelivered(reservation, at: now)
 
-        await database.deleteAllAttributionEvidence(now: now)
+        try await database.deleteAllAttributionEvidence(now: now)
         let deleted = await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
         #expect(deleted.attributionBreakdowns.isEmpty)
         #expect(deleted.metrics == parentMetrics)

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import LimitBarCore
@@ -290,6 +291,35 @@ struct CustomUsageSourceTests {
         await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
             try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
         }
+    }
+
+    @Test("custom source revision hashes the exact bytes read across atomic path replacement")
+    func customRevisionMatchesImportedBytesDuringReplacement() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-a","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-b","inputTokens":2,"outputTokens":2,"projectID":"beta"}"#
+        let bytesA = Data((eventA + String(repeating: "\n", count: 70_000)).utf8)
+        let bytesB = Data(eventB.utf8)
+        let fileURL = try temporaryFile(contents: "")
+        try bytesA.write(to: fileURL)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        var replaced = false
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL,
+            source: source,
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar(),
+            onChunkRead: { _ in
+                guard !replaced else { return }
+                replaced = true
+                try bytesB.write(to: fileURL, options: .atomic)
+            }
+        )
+
+        #expect(result.sourceRevision == SHA256.hash(data: bytesA).map { String(format: "%02x", $0) }.joined())
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
     private func temporaryFile(contents: String) throws -> URL {

@@ -94,7 +94,12 @@ Its existing age and byte bounds apply equally to v1 and v2, and rotation remove
 Normalized attribution breakdowns are durably retained in the separate `usage-metrics-attribution.sqlite` store rather than changing the distributed Usage Aggregate schema.
 The attribution store retains at most 10,000 rows and removes rows whose latest measured event is older than 30 days.
 It stores only source identity, a bounded SHA-256 source revision, exact calendar scope, model and deployment, validated attribution, token deltas, exact Event IDs, and timestamps.
+The importer computes that revision incrementally from the exact file-descriptor bytes it parses; it never rereads the path after import, so atomic path replacement cannot pair one file's breakdown with another file's revision.
 It never stores a raw JSONL line, unknown field, prompt, response, command, path, credential, or provider payload.
+
+A failed built-in or custom import has no source revision and never replaces durable attribution.
+The last valid parent Usage Aggregates and attribution breakdowns remain available together.
+Attribution store open, schema, read, or write failures mark snapshot health unavailable with fixed safe copy while preserving main metrics and the last valid in-memory attribution snapshot.
 
 Deleting attribution evidence deletes only that separate normalized store.
 It does not delete parent Usage Aggregates, current usage, Active Usage Files, provider settings, credentials, alert rules, or Delivery Ledger state.
@@ -103,6 +108,10 @@ A changed Active Usage File has a different SHA-256 revision and can produce new
 Deletion suppressions use the same 30-day and 10,000-record bounds, so they do not become unbounded lifetime state.
 Importing a removed or empty file clears the corresponding current breakdowns.
 Archives remain outside ingestion.
+
+Settings provides a destructive **Delete Project And Agent Attribution** action with confirmation and explicit success or failure state.
+Failure leaves durable and in-memory attribution available.
+Clean database recovery archives `usage-metrics.sqlite`, `usage-metrics-attribution.sqlite`, and each database's WAL and SHM files as one recovery set before creating clean stores.
 
 ## Producer Support And Verification
 

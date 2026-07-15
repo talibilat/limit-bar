@@ -150,9 +150,14 @@ struct UsageDatabaseTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let attributionPath = attributionDatabasePath(for: path)
         _ = try SQLiteUsageMetricStore(path: path)
+        _ = try SQLiteUsageAttributionStore(path: attributionPath)
+        let attributionBytes = try Data(contentsOf: URL(fileURLWithPath: attributionPath))
         try Data("synthetic wal".utf8).write(to: URL(fileURLWithPath: path + "-wal"))
         try Data("synthetic shm".utf8).write(to: URL(fileURLWithPath: path + "-shm"))
+        try Data("attribution wal".utf8).write(to: URL(fileURLWithPath: attributionPath + "-wal"))
+        try Data("attribution shm".utf8).write(to: URL(fileURLWithPath: attributionPath + "-shm"))
         let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
 
         let archive = try await database.createCleanDatabaseRecovery(
@@ -163,6 +168,11 @@ struct UsageDatabaseTests {
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-wal").path))
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-shm").path))
+        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite")) == attributionBytes)
+        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite-wal")) == Data("attribution wal".utf8))
+        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite-shm")) == Data("attribution shm".utf8))
+        #expect(FileManager.default.fileExists(atPath: attributionPath))
+        #expect(try SQLiteUsageAttributionStore(path: attributionPath).all(now: Date(timeIntervalSince1970: 1_783_716_000)).isEmpty)
         let snapshot = await database.snapshot(now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
         #expect(snapshot.health.isOpen)
         #expect(snapshot.metrics.isEmpty)
@@ -196,6 +206,33 @@ struct UsageDatabaseTests {
         let fallback = await database.snapshot(now: now, calendar: utcCalendar())
         #expect(fallback.metrics == [retained])
         #expect(!fallback.health.isOpen)
+    }
+
+    @Test("clean recovery refuses a locked attribution database without partial file loss")
+    func cleanRecoveryRefusesLockedAttributionDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let attributionPath = attributionDatabasePath(for: path)
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        _ = try SQLiteUsageMetricStore(path: path)
+        _ = try SQLiteUsageAttributionStore(path: attributionPath)
+        let mainBytes = try Data(contentsOf: URL(fileURLWithPath: path))
+        let attributionBytes = try Data(contentsOf: URL(fileURLWithPath: attributionPath))
+        var lock: OpaquePointer?
+        #expect(sqlite3_open(attributionPath, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        #expect(sqlite3_exec(lock, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        await #expect(throws: UsageDatabaseRecoveryError.databaseBusy) {
+            try await database.createCleanDatabaseRecovery(at: now)
+        }
+
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == mainBytes)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: attributionPath)) == attributionBytes)
+        #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
     }
 
     @Test("clean database recovery retains a corrupt database before replacement")
@@ -592,7 +629,10 @@ struct UsageDatabaseTests {
     @Test("built-in attribution persists, deletes independently, and stays deleted across refresh and restart")
     func builtInAttributionDeletionAndRestart() async throws {
         let path = temporaryDatabasePath()
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let protectedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
+        let fileURL = protectedDirectory.appendingPathComponent("usage-events.jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         let event = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"reviewer"}"#
         try event.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -602,7 +642,7 @@ struct UsageDatabaseTests {
         let populated = await database.snapshot(now: now, calendar: utcCalendar())
         #expect(populated.attributionBreakdowns.count == 2)
         let parentMetrics = populated.metrics
-        await database.deleteAllAttributionEvidence(now: now)
+        try await database.deleteAllAttributionEvidence(now: now)
         let deleted = await database.snapshot(now: now, calendar: utcCalendar())
         #expect(deleted.attributionBreakdowns.isEmpty)
         #expect(deleted.metrics == parentMetrics)
@@ -636,7 +676,7 @@ struct UsageDatabaseTests {
         let populated = await database.snapshot(now: now, calendar: utcCalendar())
         #expect(populated.attributionBreakdowns.count == 2)
         #expect(populated.attributionBreakdowns.allSatisfy { $0.source == .custom(sourceID) })
-        await database.deleteAllAttributionEvidence(now: now)
+        try await database.deleteAllAttributionEvidence(now: now)
         _ = await database.refreshCustomSources([source], now: now.addingTimeInterval(1), calendar: utcCalendar())
         #expect(await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar()).attributionBreakdowns.isEmpty)
 
@@ -645,6 +685,169 @@ struct UsageDatabaseTests {
         let afterRestart = await restarted.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
         #expect(afterRestart.attributionBreakdowns.isEmpty)
         #expect(afterRestart.metrics.contains { $0.provenance.source == .custom(sourceID) })
+    }
+
+    @Test("failed built-in imports preserve last valid durable attribution")
+    func failedBuiltInImportPreservesAttribution() async throws {
+        let path = temporaryDatabasePath()
+        let protectedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
+        let fileURL = protectedDirectory.appendingPathComponent("usage-events.jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let initialDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let initial = await initialDatabase.snapshot(now: now, calendar: utcCalendar())
+        #expect(initial.attributionBreakdowns.count == 2)
+
+        try "malformed-private-content".write(to: fileURL, atomically: true, encoding: .utf8)
+        let malformedDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let malformed = await malformedDatabase.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(malformed.localImport.failureMessage != nil)
+        #expect(malformed.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(malformed.metrics == initial.metrics)
+
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: protectedDirectory.path)
+        let unreadableDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let unreadable = await unreadableDatabase.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(unreadable.localImport.failureMessage != nil)
+        #expect(unreadable.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(unreadable.metrics == initial.metrics)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path)
+
+        try FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.createDirectory(at: fileURL, withIntermediateDirectories: true)
+        let resourceDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let resourceFailure = await resourceDatabase.snapshot(now: now.addingTimeInterval(3), calendar: utcCalendar())
+        #expect(resourceFailure.localImport.failureMessage != nil)
+        #expect(resourceFailure.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(resourceFailure.metrics == initial.metrics)
+    }
+
+    @Test("failed custom imports preserve last valid durable attribution")
+    func failedCustomImportPreservesAttribution() async throws {
+        let path = temporaryDatabasePath()
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let protectedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
+        let fileURL = protectedDirectory.appendingPathComponent("custom.jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        let initialDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        _ = await initialDatabase.refreshCustomSources([source], now: now, calendar: utcCalendar())
+        let initial = await initialDatabase.snapshot(now: now, calendar: utcCalendar())
+        #expect(initial.attributionBreakdowns.count == 2)
+
+        try "malformed-private-content".write(to: fileURL, atomically: true, encoding: .utf8)
+        let malformedDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        let malformedDiagnostics = await malformedDatabase.refreshCustomSources([source], now: now.addingTimeInterval(1), calendar: utcCalendar())
+        let malformed = await malformedDatabase.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(malformedDiagnostics.first?.failureMessage != nil)
+        #expect(malformed.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(malformed.metrics == initial.metrics)
+
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: protectedDirectory.path)
+        let unreadableDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        let unreadableDiagnostics = await unreadableDatabase.refreshCustomSources([source], now: now.addingTimeInterval(2), calendar: utcCalendar())
+        let unreadable = await unreadableDatabase.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(unreadableDiagnostics.first?.failureMessage != nil)
+        #expect(unreadable.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(unreadable.metrics == initial.metrics)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path)
+
+        try FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.createDirectory(at: fileURL, withIntermediateDirectories: true)
+        let resourceDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        let resourceDiagnostics = await resourceDatabase.refreshCustomSources([source], now: now.addingTimeInterval(3), calendar: utcCalendar())
+        let resource = await resourceDatabase.snapshot(now: now.addingTimeInterval(3), calendar: utcCalendar())
+        #expect(resourceDiagnostics.first?.failureMessage != nil)
+        #expect(resource.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(resource.metrics == initial.metrics)
+    }
+
+    @Test("attribution lock failures preserve durable and in-memory evidence and surface health")
+    func attributionLockFailureIsExplicit() async throws {
+        let path = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL, busyTimeoutMilliseconds: 1)
+        let initial = await database.snapshot(now: now, calendar: utcCalendar())
+        let attributionPath = attributionDatabasePath(for: path)
+        var lock: OpaquePointer?
+        #expect(sqlite3_open(attributionPath, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        #expect(sqlite3_exec(lock, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+
+        await #expect(throws: Error.self) {
+            try await database.deleteAllAttributionEvidence(now: now)
+        }
+        let locked = await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(!locked.health.isOpen)
+        #expect(locked.health.message == "Attribution storage unavailable")
+        #expect(locked.metrics == initial.metrics)
+        #expect(locked.attributionBreakdowns == initial.attributionBreakdowns)
+        #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let retained = await restarted.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(retained.attributionBreakdowns == initial.attributionBreakdowns)
+    }
+
+    @Test("corrupt attribution storage fails safely without deleting main usage")
+    func corruptAttributionStoreIsExplicit() async throws {
+        let path = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        var initial: StoredUsageMetricsSnapshot!
+        do {
+            let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+            initial = await database.snapshot(now: now, calendar: utcCalendar())
+        }
+        let attributionURL = URL(fileURLWithPath: attributionDatabasePath(for: path))
+        let originalBytes = try Data(contentsOf: attributionURL)
+        try Data("corrupt-attribution-store".utf8).write(to: attributionURL)
+        let corruptDatabase = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+
+        let snapshot = await corruptDatabase.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(!snapshot.health.isOpen)
+        #expect(snapshot.health.message == "Attribution storage unavailable")
+        #expect(snapshot.metrics == initial.metrics)
+        await #expect(throws: Error.self) {
+            try await corruptDatabase.deleteAllAttributionEvidence(now: now)
+        }
+        #expect(try Data(contentsOf: attributionURL) == Data("corrupt-attribution-store".utf8))
+
+        try originalBytes.write(to: attributionURL)
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        #expect(await restarted.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar()).attributionBreakdowns == initial.attributionBreakdowns)
+    }
+
+    @Test("attribution open failure reports unhealthy while preserving main metrics")
+    func attributionOpenFailurePreservesMainMetrics() async throws {
+        let path = temporaryDatabasePath()
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let window = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar()).today
+        let retained = metric(model: "retained", window: window, refreshedAt: now)
+        let mainStore = try SQLiteUsageMetricStore(path: path)
+        try mainStore.save([retained])
+        let attributionPath = attributionDatabasePath(for: path)
+        try FileManager.default.createDirectory(atPath: attributionPath, withIntermediateDirectories: true)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        let snapshot = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(!snapshot.health.isOpen)
+        #expect(snapshot.health.message == "Attribution storage unavailable")
+        #expect(snapshot.metrics == [retained])
+        await #expect(throws: Error.self) {
+            try await database.deleteAllAttributionEvidence(now: now)
+        }
+        #expect(FileManager.default.fileExists(atPath: attributionPath))
     }
 
     @Test("built-in local log with a future rejection bypasses the unchanged-file cache")
@@ -738,6 +941,12 @@ struct UsageDatabaseTests {
 
     private func temporaryDatabasePath() -> String {
         FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
+    }
+
+    private func attributionDatabasePath(for currentPath: String) -> String {
+        let currentURL = URL(fileURLWithPath: currentPath)
+        let stem = currentURL.deletingPathExtension().lastPathComponent
+        return currentURL.deletingLastPathComponent().appendingPathComponent("\(stem)-attribution.sqlite").path
     }
 
     private func utcCalendar() -> Calendar {

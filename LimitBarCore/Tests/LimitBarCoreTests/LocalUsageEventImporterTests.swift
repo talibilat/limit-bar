@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SQLite3
 import Testing
@@ -213,16 +214,19 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let fileURL = try temporaryFile(contents: Array(repeating: "bad-json", count: 25).joined(separator: "\n"))
 
-        let result = try LocalUsageEventImporter.importEvents(
-            from: fileURL,
-            to: store,
-            now: try date("2026-07-10T18:00:00Z"),
-            calendar: try utcCalendar()
-        )
-
-        #expect(result.malformedEventCount == 25)
-        #expect(result.malformedEvents.count == 20)
-        #expect(result.malformedEvents.map(\.lineNumber) == Array(1...20))
+        do {
+            _ = try LocalUsageEventImporter.importEvents(
+                from: fileURL,
+                to: store,
+                now: try date("2026-07-10T18:00:00Z"),
+                calendar: try utcCalendar()
+            )
+            Issue.record("Expected no-valid-events failure")
+        } catch let LocalUsageEventError.noValidEvents(diagnostics, rejectedLineCount, _) {
+            #expect(rejectedLineCount == 25)
+            #expect(diagnostics.count == 20)
+            #expect(diagnostics.map(\.lineNumber) == Array(1...20))
+        }
     }
 
     @Test("overlong line is discarded without preventing the next event")
@@ -734,6 +738,34 @@ struct LocalUsageEventImporterTests {
                 #expect(!output.contains(rejectedSentinel))
             }
         }
+    }
+
+    @Test("source revision hashes the exact bytes read across atomic path replacement")
+    func revisionMatchesImportedBytesDuringReplacement() throws {
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"model-b","inputTokens":2,"outputTokens":2,"projectID":"beta"}"#
+        let bytesA = Data((eventA + String(repeating: "\n", count: 70_000)).utf8)
+        let bytesB = Data(eventB.utf8)
+        let fileURL = try temporaryFile(contents: "")
+        try bytesA.write(to: fileURL)
+        let store = try SQLiteUsageMetricStore.inMemory()
+        var replaced = false
+
+        let result = try LocalUsageEventImporter.importEvents(
+            from: fileURL,
+            to: store,
+            now: try date("2026-07-10T18:00:00Z"),
+            calendar: try utcCalendar(),
+            onChunkRead: { _ in
+                guard !replaced else { return }
+                replaced = true
+                try bytesB.write(to: fileURL, options: .atomic)
+            }
+        )
+
+        #expect(result.sourceRevision == SHA256.hash(data: bytesA).map { String(format: "%02x", $0) }.joined())
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
     private func temporaryFile(contents: String) throws -> URL {
