@@ -3,6 +3,7 @@ import Foundation
 public enum QuotaAnomalyValidationError: Error, Equatable {
     case invalidPeriod
     case invalidDenominator
+    case invalidEvidenceVersion
 }
 
 public enum QuotaAnomalyPeriodInclusionRule: String, Codable, Equatable, Sendable {
@@ -66,13 +67,34 @@ public enum QuotaAnomalyProviderFormatVersion: String, Codable, Equatable, Hasha
     case codexLocalReportV2 = "codex_local_report_v2"
 }
 
-public struct QuotaAnomalyEvidenceVersion: Codable, Equatable, Hashable, Sendable {
+public struct QuotaAnomalyEvidenceVersion: Equatable, Hashable, Sendable {
     public let adapter: QuotaAnomalyAdapterVersion
     public let client: QuotaAnomalyClientVersion
     public let providerFormat: QuotaAnomalyProviderFormatVersion
 
     public init(
         adapter: QuotaAnomalyAdapterVersion,
+        client: QuotaAnomalyClientVersion,
+        providerFormat: QuotaAnomalyProviderFormatVersion
+    ) throws {
+        let isSupported = switch (adapter, client, providerFormat) {
+        case (.quotaObservationV1, .notReported, .claudeProviderReportV1),
+             (.quotaObservationV1, .claudeSupportedV1, .claudeProviderReportV1),
+             (.quotaObservationV1, .notReported, .codexLocalReportV1),
+             (.quotaObservationV1, .codex0144, .codexLocalReportV1),
+             (.quotaObservationV2, .codex0145, .codexLocalReportV2):
+            true
+        default:
+            false
+        }
+        guard isSupported else { throw QuotaAnomalyValidationError.invalidEvidenceVersion }
+        self.adapter = adapter
+        self.client = client
+        self.providerFormat = providerFormat
+    }
+
+    fileprivate init(
+        validatedAdapter adapter: QuotaAnomalyAdapterVersion,
         client: QuotaAnomalyClientVersion,
         providerFormat: QuotaAnomalyProviderFormatVersion
     ) {
@@ -161,7 +183,7 @@ public struct QuotaAnomalyDenominatorInput: Equatable, Sendable {
         self.value = value
         self.observedAt = observedAt
         self.coverage = coverage
-        self.classification = .measured
+        self.classification = coverage == .gap ? nil : .measured
     }
 
     fileprivate init(
@@ -334,7 +356,7 @@ enum QuotaAnomalyScoring {
         method: QuotaAnomalyScoreMethod,
         threshold: Double
     ) -> QuotaAnomalyScoreEvaluation {
-        guard baseline.count == QuotaAnomalyAnalytics.minimumBaselineSampleCount,
+        guard baseline.count >= 3, baseline.count.isMultiple(of: 2) == false,
               baseline.allSatisfy({ $0.isFinite && $0 >= 0 }),
               current.isFinite, current >= 0,
               threshold.isFinite, threshold > 0 else {
@@ -392,6 +414,8 @@ public enum QuotaAnomalyAnalytics {
         evidenceVersions suppliedEvidenceVersions: [QuotaObservationIdentity: QuotaAnomalyEvidenceVersion] = [:],
         normalization: QuotaAnomalyNormalization = .directQuotaMovement
     ) -> QuotaAnomalyState {
+        let removedSupersededIdentities = Set(observations.lazy.map(\.stableIdentity))
+            .intersection(supersededObservationIdentities)
         let ordered = observations
             .filter { !supersededObservationIdentities.contains($0.stableIdentity) }
             .sorted { ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest) }
@@ -406,7 +430,7 @@ public enum QuotaAnomalyAnalytics {
         case let .measuredDenominator(request): request.inputs.sorted { ($0.period.start, $0.period.end) < ($1.period.start, $1.period.end) }
         }
         var limitations: [QuotaAnomalyLimitation] = [.providerWeightingUnknown, .noCausalAttribution, .syntheticFixtureValidationOnly]
-        if !supersededObservationIdentities.isEmpty { limitations.append(.supersededEvidenceExcluded) }
+        if !removedSupersededIdentities.isEmpty { limitations.append(.supersededEvidenceExcluded) }
 
         func metadata(
             qualification: QuotaAnomalyQualification,
@@ -477,6 +501,7 @@ public enum QuotaAnomalyAnalytics {
         let selected = Array(distinct.suffix(minimumBaselineSampleCount + 2))
         let selectedEvidenceVersions = orderedEvidenceVersions(selected, supplied: suppliedEvidenceVersions)
         let versionLimitations = incompatibleVersionLimitations(selectedEvidenceVersions)
+            + incompatibleObservationVersionLimitations(selected, supplied: suppliedEvidenceVersions)
         guard versionLimitations.isEmpty else {
             return unavailable(.incompatibleEvidence, extraLimitations: versionLimitations)
         }
@@ -661,12 +686,58 @@ public enum QuotaAnomalyAnalytics {
         }
     }
 
-    private static func defaultEvidenceVersion(for observation: MeasuredQuotaObservation) -> QuotaAnomalyEvidenceVersion {
+    static func defaultEvidenceVersion(for observation: MeasuredQuotaObservation) -> QuotaAnomalyEvidenceVersion {
         QuotaAnomalyEvidenceVersion(
-            adapter: .quotaObservationV1,
+            validatedAdapter: .quotaObservationV1,
             client: .notReported,
             providerFormat: observation.source == .claudeProviderReport ? .claudeProviderReportV1 : .codexLocalReportV1
         )
+    }
+
+    static func isCompatible(
+        _ version: QuotaAnomalyEvidenceVersion,
+        with observation: MeasuredQuotaObservation
+    ) -> Bool {
+        observationVersionLimitations(version, observation: observation).isEmpty
+    }
+
+    private static func incompatibleObservationVersionLimitations(
+        _ observations: [MeasuredQuotaObservation],
+        supplied: [QuotaObservationIdentity: QuotaAnomalyEvidenceVersion]
+    ) -> [QuotaAnomalyLimitation] {
+        var result = Set<QuotaAnomalyLimitation>()
+        for observation in observations {
+            guard let version = supplied[observation.stableIdentity] else { continue }
+            result.formUnion(observationVersionLimitations(version, observation: observation))
+        }
+        return result.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private static func observationVersionLimitations(
+        _ version: QuotaAnomalyEvidenceVersion,
+        observation: MeasuredQuotaObservation
+    ) -> [QuotaAnomalyLimitation] {
+        var result: [QuotaAnomalyLimitation] = []
+        if version.adapter != .quotaObservationV1 {
+            result.append(.incompatibleAdapterVersion)
+        }
+        let expectedFormat: QuotaAnomalyProviderFormatVersion = observation.source == .claudeProviderReport
+            ? .claudeProviderReportV1
+            : .codexLocalReportV1
+        if version.providerFormat != expectedFormat {
+            result.append(.incompatibleProviderFormatVersion)
+        }
+        let clientIsCompatible = switch (observation.identity.product, observation.source, version.client) {
+        case (.claudeCode, .claudeProviderReport, .notReported),
+             (.claudeCode, .claudeProviderReport, .claudeSupportedV1),
+             (.codex, .codexLocalReport, .notReported),
+             (.codex, .codexLocalReport, .codex0144):
+            true
+        default:
+            false
+        }
+        if !clientIsCompatible { result.append(.incompatibleClientVersion) }
+        return result
     }
 
     private static func incompatibleVersionLimitations(

@@ -9,6 +9,7 @@ public enum QuotaAnomalyReplayError: Error, Equatable {
 }
 
 public enum QuotaAnomalyFixtureCondition: String, Codable, CaseIterable, Equatable, Sendable {
+    case baselineShape = "baseline_shape"
     case bursty
     case changingVersion = "changing_version"
     case flat
@@ -100,15 +101,42 @@ public struct QuotaAnomalyCandidateResult: Equatable, Sendable {
     public let metrics: QuotaAnomalyCandidateMetrics
 }
 
+public struct QuotaAnomalyBaselineShape: Codable, Equatable, Hashable, Sendable {
+    public let comparisonDuration: TimeInterval
+    public let baselineSampleCount: Int
+    public let baselineDuration: TimeInterval
+    public let minimumObservationSpan: TimeInterval
+
+    public init(
+        comparisonDuration: TimeInterval,
+        baselineSampleCount: Int,
+        baselineDuration: TimeInterval,
+        minimumObservationSpan: TimeInterval
+    ) {
+        self.comparisonDuration = comparisonDuration
+        self.baselineSampleCount = baselineSampleCount
+        self.baselineDuration = baselineDuration
+        self.minimumObservationSpan = minimumObservationSpan
+    }
+}
+
+public struct QuotaAnomalyBaselineShapeCandidateResult: Equatable, Sendable {
+    public let shape: QuotaAnomalyBaselineShape
+    public let metrics: QuotaAnomalyCandidateMetrics
+}
+
 public struct QuotaAnomalyCandidateReport: Equatable, Sendable {
     public let selectedProductionMethod: QuotaAnomalyMethod
     public let selectedCandidate: QuotaAnomalyCandidateMethod
     public let selectedThreshold: Double
+    public let selectedBaselineShape: QuotaAnomalyBaselineShape
     public let baselineDuration: TimeInterval
     public let comparisonDuration: TimeInterval
     public let minimumBaselineSampleCount: Int
+    public let minimumObservationSpan: TimeInterval
     public let selectedMetrics: QuotaAnomalyCandidateMetrics
     public let candidates: [QuotaAnomalyCandidateResult]
+    public let baselineShapeCandidates: [QuotaAnomalyBaselineShapeCandidateResult]
     public let limitations: [QuotaAnomalyLimitation]
 }
 
@@ -136,20 +164,52 @@ public enum QuotaAnomalyCandidateEvaluator {
                 && $0.metrics.falseNegativeCount == 0
                 && $0.metrics.unsafeAvailabilityMismatchCount == 0
         }
-        guard acceptable.count == 1,
-              acceptable[0].method == .trailingMedianRatio,
-              acceptable[0].threshold == QuotaAnomalyAnalytics.ratioThreshold else {
+        guard acceptable.count == 1, acceptable[0].method == .trailingMedianRatio else {
             throw QuotaAnomalyReplayError.noUniqueAcceptableCandidate
         }
+        let shapes = [
+            QuotaAnomalyBaselineShape(comparisonDuration: 5 * 60, baselineSampleCount: 5, baselineDuration: 25 * 60, minimumObservationSpan: 30 * 60),
+            QuotaAnomalyBaselineShape(comparisonDuration: 10 * 60, baselineSampleCount: 3, baselineDuration: 30 * 60, minimumObservationSpan: 40 * 60),
+            QuotaAnomalyBaselineShape(comparisonDuration: 10 * 60, baselineSampleCount: 5, baselineDuration: 50 * 60, minimumObservationSpan: 60 * 60),
+            QuotaAnomalyBaselineShape(comparisonDuration: 15 * 60, baselineSampleCount: 5, baselineDuration: 75 * 60, minimumObservationSpan: 90 * 60),
+        ]
+        let shapeCandidates = shapes.map { shape in
+            QuotaAnomalyBaselineShapeCandidateResult(
+                shape: shape,
+                metrics: shapeMetrics(
+                    fixtures: ordered,
+                    shape: shape,
+                    method: acceptable[0].method,
+                    threshold: acceptable[0].threshold
+                )
+            )
+        }
+        let acceptableShapes = shapeCandidates.filter {
+            $0.metrics.correctCount == ordered.count
+                && $0.metrics.falsePositiveCount == 0
+                && $0.metrics.falseNegativeCount == 0
+                && $0.metrics.unsafeAvailabilityMismatchCount == 0
+        }
+        guard acceptableShapes.count == 1,
+              acceptable[0].threshold == QuotaAnomalyAnalytics.ratioThreshold,
+              acceptableShapes[0].shape.comparisonDuration == QuotaAnomalyAnalytics.comparisonDuration,
+              acceptableShapes[0].shape.baselineSampleCount == QuotaAnomalyAnalytics.minimumBaselineSampleCount,
+              acceptableShapes[0].shape.baselineDuration == QuotaAnomalyAnalytics.baselineDuration else {
+            throw QuotaAnomalyReplayError.noUniqueAcceptableCandidate
+        }
+        let selectedShape = acceptableShapes[0].shape
         return QuotaAnomalyCandidateReport(
             selectedProductionMethod: .trailingMedianRatioV1,
             selectedCandidate: acceptable[0].method,
             selectedThreshold: acceptable[0].threshold,
-            baselineDuration: QuotaAnomalyAnalytics.baselineDuration,
-            comparisonDuration: QuotaAnomalyAnalytics.comparisonDuration,
-            minimumBaselineSampleCount: QuotaAnomalyAnalytics.minimumBaselineSampleCount,
+            selectedBaselineShape: selectedShape,
+            baselineDuration: selectedShape.baselineDuration,
+            comparisonDuration: selectedShape.comparisonDuration,
+            minimumBaselineSampleCount: selectedShape.baselineSampleCount,
+            minimumObservationSpan: selectedShape.minimumObservationSpan,
             selectedMetrics: acceptable[0].metrics,
             candidates: candidates,
+            baselineShapeCandidates: shapeCandidates,
             limitations: [.syntheticFixtureValidationOnly, .providerWeightingUnknown, .noCausalAttribution]
         )
     }
@@ -223,11 +283,104 @@ public enum QuotaAnomalyCandidateEvaluator {
         case .unavailable: .unavailable
         }
     }
+
+    private static func shapeMetrics(
+        fixtures: [QuotaAnomalyReplayFixture],
+        shape: QuotaAnomalyBaselineShape,
+        method: QuotaAnomalyCandidateMethod,
+        threshold: Double
+    ) -> QuotaAnomalyCandidateMetrics {
+        var correct = 0
+        var falsePositive = 0
+        var falseNegative = 0
+        var availabilityMismatch = 0
+        for fixture in fixtures {
+            let actual = shapeOutcome(fixture, shape: shape, method: method, threshold: threshold)
+            if actual == fixture.expected {
+                correct += 1
+            } else if fixture.expected == .unavailable || actual == .unavailable {
+                availabilityMismatch += 1
+            } else if actual == .higherFinding {
+                falsePositive += 1
+            } else if fixture.expected == .higherFinding {
+                falseNegative += 1
+            } else {
+                availabilityMismatch += 1
+            }
+        }
+        return QuotaAnomalyCandidateMetrics(
+            fixtureCount: fixtures.count,
+            correctCount: correct,
+            falsePositiveCount: falsePositive,
+            falseNegativeCount: falseNegative,
+            unsafeAvailabilityMismatchCount: availabilityMismatch
+        )
+    }
+
+    private static func shapeOutcome(
+        _ fixture: QuotaAnomalyReplayFixture,
+        shape: QuotaAnomalyBaselineShape,
+        method: QuotaAnomalyCandidateMethod,
+        threshold: Double
+    ) -> QuotaAnomalyExpectedOutcome {
+        guard shape.comparisonDuration.isFinite, shape.comparisonDuration > 0,
+              shape.baselineSampleCount >= 3, !shape.baselineSampleCount.isMultiple(of: 2),
+              shape.baselineDuration == shape.comparisonDuration * Double(shape.baselineSampleCount),
+              shape.minimumObservationSpan == shape.baselineDuration + shape.comparisonDuration,
+              fixture.expectedIdentity.resetBoundary > fixture.evaluationTime else { return .unavailable }
+        let ordered = fixture.observations.sorted {
+            ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
+        }
+        var seen = Set<QuotaObservationIdentity>()
+        let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
+        let grouped = Dictionary(grouping: unique, by: \.observedAt)
+        guard !grouped.values.contains(where: { Set($0.map(\.percentageUsed)).count > 1 }) else { return .unavailable }
+        let distinct = grouped.values.compactMap(\.first).sorted { $0.observedAt < $1.observedAt }
+        guard let latest = distinct.last,
+              fixture.evaluationTime.timeIntervalSince(latest.observedAt) >= 0,
+              fixture.evaluationTime.timeIntervalSince(latest.observedAt) <= fixture.maximumEvidenceAge,
+              distinct.count >= shape.baselineSampleCount + 2 else { return .unavailable }
+        for pair in zip(distinct, distinct.dropFirst()) where pair.1.percentageUsed < pair.0.percentageUsed {
+            return .unavailable
+        }
+        let selected = Array(distinct.suffix(shape.baselineSampleCount + 2))
+        let versions = selected.map { observation in
+            fixture.evidenceVersions[observation.stableIdentity] ?? QuotaAnomalyAnalytics.defaultEvidenceVersion(for: observation)
+        }
+        guard zip(selected, versions).allSatisfy({ QuotaAnomalyAnalytics.isCompatible($1, with: $0) }),
+              Set(versions.map(\.adapter)).count == 1,
+              Set(versions.map(\.client)).count == 1,
+              Set(versions.map(\.providerFormat)).count == 1 else { return .unavailable }
+        let intervals = zip(selected, selected.dropFirst()).map { lower, upper in
+            (duration: upper.observedAt.timeIntervalSince(lower.observedAt), value: upper.percentageUsed - lower.percentageUsed)
+        }
+        guard intervals.allSatisfy({ abs($0.duration - shape.comparisonDuration) < 0.000_001 }),
+              let first = selected.first,
+              latest.observedAt.timeIntervalSince(first.observedAt) >= shape.minimumObservationSpan else {
+            return .unavailable
+        }
+        if selected.allSatisfy({ $0.percentageUsed == 0 }) { return .observedZero }
+        let baseline = Array(intervals.prefix(shape.baselineSampleCount).map(\.value))
+        let current = intervals.last!.value
+        let scoreMethod: QuotaAnomalyScoreMethod = method == .trailingMedianRatio
+            ? .trailingMedianRatio
+            : .medianAbsoluteDeviation
+        return switch QuotaAnomalyScoring.evaluate(
+            baseline: baseline,
+            current: current,
+            method: scoreMethod,
+            threshold: threshold
+        ).outcome {
+        case .finding: .higherFinding
+        case .noFinding: .noFinding
+        case .unavailable: .unavailable
+        }
+    }
 }
 
 public enum QuotaAnomalyFrozenCorpus {
-    public static let version = "quota_anomaly_corpus_v2"
-    public static let freezeDigest = "c2c4f66f44f8ebc4f38dc4239359d456fc68b1da4939a906f7d904b2bd1870ed"
+    public static let version = "quota_anomaly_corpus_v3"
+    public static let freezeDigest = "4628d5ed511f7c4ed7ab85542ac0c03664df919e3023d6a0b9cfc4ed0d3c6b60"
 
     public static func validatedFixtures() throws -> [QuotaAnomalyReplayFixture] {
         let fixtures = try makeFixtures().sorted { $0.id < $1.id }
@@ -243,6 +396,7 @@ public enum QuotaAnomalyFrozenCorpus {
 
     private static func makeFixtures() throws -> [QuotaAnomalyReplayFixture] {
         try [
+            fixture(id: "baseline-shape-01", index: 9, condition: .baselineShape, initial: 10, movements: [1, 1, 1, 5, 5, 4], expected: .higherFinding),
             fixture(id: "bursty-01", index: 0, condition: .bursty, initial: 10, movements: [2, 2, 2, 2, 2, 6.4], expected: .higherFinding),
             fixture(id: "changing-version-01", index: 1, condition: .changingVersion, initial: 10, movements: [2, 2, 2, 2, 2, 6.4], expected: .unavailable, changingVersion: true),
             fixture(id: "flat-01", index: 2, condition: .flat, initial: 10, movements: [0, 0, 0, 0, 0, 0], expected: .noFinding),
@@ -289,13 +443,13 @@ public enum QuotaAnomalyFrozenCorpus {
         }
         var versions: [QuotaObservationIdentity: QuotaAnomalyEvidenceVersion] = [:]
         if changingVersion, let latest = observations.last {
-            versions[latest.stableIdentity] = QuotaAnomalyEvidenceVersion(
+            versions[latest.stableIdentity] = try QuotaAnomalyEvidenceVersion(
                 adapter: .quotaObservationV2,
                 client: .codex0145,
                 providerFormat: .codexLocalReportV2
             )
             for observation in observations.dropLast() {
-                versions[observation.stableIdentity] = QuotaAnomalyEvidenceVersion(
+                versions[observation.stableIdentity] = try QuotaAnomalyEvidenceVersion(
                     adapter: .quotaObservationV1,
                     client: .codex0144,
                     providerFormat: .codexLocalReportV1

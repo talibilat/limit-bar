@@ -113,6 +113,17 @@ struct QuotaAnomalyTests {
         #expect(result.metadata.inputObservationIdentities.last == correction.stableIdentity)
         #expect(result.metadata.limitations.contains(.supersededEvidenceExcluded))
         #expect(analyze(original) != corrected)
+
+        let unmatched = try observation(identity: original[0].identity, minute: 70, percent: 30)
+        let unmatchedState = QuotaAnomalyAnalytics.analyze(
+            original,
+            now: base.addingTimeInterval(61 * 60),
+            maximumAge: 5 * 60,
+            supersededObservationIdentities: [unmatched.stableIdentity]
+        )
+        #expect(unmatchedState == analyze(original))
+        guard case let .finding(unmatchedResult) = unmatchedState else { return }
+        #expect(!unmatchedResult.metadata.limitations.contains(.supersededEvidenceExcluded))
     }
 
     @Test("typed measured denominators retain source, coverage, missingness, and exact periods")
@@ -165,6 +176,16 @@ struct QuotaAnomalyTests {
         #expect(missingResult.metadata.denominatorInputs.last?.source == .localUsageEvents)
         #expect(missingResult.metadata.denominatorInputs.last?.classification == nil)
 
+        let publicGap = try QuotaAnomalyDenominatorInput(
+            period: period(50, 60),
+            kind: .inputTokens,
+            source: .localUsageEvents,
+            value: nil,
+            observedAt: nil,
+            coverage: .gap
+        )
+        #expect(publicGap.classification == nil)
+
         let incompatibleRequest = QuotaAnomalyDenominatorRequest(
             kind: .requests,
             source: .localUsageEvents,
@@ -191,8 +212,8 @@ struct QuotaAnomalyTests {
     @Test("typed adapter, client, and provider-format changes identify exact incompatibilities")
     func evidenceVersionCompatibility() throws {
         let observations = try series(initial: 10, movements: [2, 2, 2, 2, 2, 8])
-        let v1 = QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV1, client: .codex0144, providerFormat: .codexLocalReportV1)
-        let v2 = QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV2, client: .codex0145, providerFormat: .codexLocalReportV2)
+        let v1 = try QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV1, client: .codex0144, providerFormat: .codexLocalReportV1)
+        let v2 = try QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV2, client: .codex0145, providerFormat: .codexLocalReportV2)
         var versions = Dictionary(uniqueKeysWithValues: observations.map { ($0.stableIdentity, v1) })
         versions[observations.last!.stableIdentity] = v2
 
@@ -208,6 +229,31 @@ struct QuotaAnomalyTests {
         #expect(result.metadata.limitations.contains(.incompatibleAdapterVersion))
         #expect(result.metadata.limitations.contains(.incompatibleClientVersion))
         #expect(result.metadata.limitations.contains(.incompatibleProviderFormatVersion))
+
+        #expect(throws: QuotaAnomalyValidationError.invalidEvidenceVersion) {
+            try QuotaAnomalyEvidenceVersion(
+                adapter: .quotaObservationV1,
+                client: .claudeSupportedV1,
+                providerFormat: .codexLocalReportV1
+            )
+        }
+
+        let claudeVersion = try QuotaAnomalyEvidenceVersion(
+            adapter: .quotaObservationV1,
+            client: .claudeSupportedV1,
+            providerFormat: .claudeProviderReportV1
+        )
+        let wrongSourceVersions = Dictionary(uniqueKeysWithValues: observations.map { ($0.stableIdentity, claudeVersion) })
+        let wrongSourceState = QuotaAnomalyAnalytics.analyze(
+            observations,
+            now: base.addingTimeInterval(61 * 60),
+            maximumAge: 5 * 60,
+            evidenceVersions: wrongSourceVersions
+        )
+        expectUnavailable(wrongSourceState, .incompatibleEvidence)
+        guard case let .unavailable(wrongSource) = wrongSourceState else { return }
+        #expect(wrongSource.metadata.limitations.contains(.incompatibleProviderFormatVersion))
+        #expect(wrongSource.metadata.limitations.contains(.incompatibleClientVersion))
     }
 
     @Test("different Quota windows and unsupported contexts never form a baseline")

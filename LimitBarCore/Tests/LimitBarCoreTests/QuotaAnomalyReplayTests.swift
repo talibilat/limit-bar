@@ -10,19 +10,20 @@ struct QuotaAnomalyReplayTests {
         let reversed = try QuotaAnomalyCandidateEvaluator.evaluate(fixtures.reversed())
 
         #expect(report == reversed)
-        #expect(QuotaAnomalyFrozenCorpus.version == "quota_anomaly_corpus_v2")
+        #expect(QuotaAnomalyFrozenCorpus.version == "quota_anomaly_corpus_v3")
         let computedDigest = try QuotaAnomalyFrozenCorpus.computedFreezeDigest()
         #expect(computedDigest == QuotaAnomalyFrozenCorpus.freezeDigest)
-        #expect(fixtures.map(\.condition) == [.bursty, .changingVersion, .flat, .gradual, .mixedIntensity, .observedZero, .reset, .sparse, .stable])
+        #expect(fixtures.map(\.condition) == [.baselineShape, .bursty, .changingVersion, .flat, .gradual, .mixedIntensity, .observedZero, .reset, .sparse, .stable])
         #expect(report.selectedProductionMethod == .trailingMedianRatioV1)
         #expect(report.selectedCandidate == .trailingMedianRatio)
         #expect(report.selectedThreshold == 3)
         #expect(report.baselineDuration == 50 * 60)
         #expect(report.comparisonDuration == 10 * 60)
         #expect(report.minimumBaselineSampleCount == 5)
+        #expect(report.minimumObservationSpan == 60 * 60)
         #expect(report.selectedMetrics == QuotaAnomalyCandidateMetrics(
-            fixtureCount: 9,
-            correctCount: 9,
+            fixtureCount: 10,
+            correctCount: 10,
             falsePositiveCount: 0,
             falseNegativeCount: 0,
             unsafeAvailabilityMismatchCount: 0
@@ -35,6 +36,21 @@ struct QuotaAnomalyReplayTests {
         #expect(report.candidates.filter { $0.method == .medianAbsoluteDeviation }.allSatisfy {
             $0.metrics.unsafeAvailabilityMismatchCount >= 2
         })
+        #expect(report.selectedBaselineShape == QuotaAnomalyBaselineShape(
+            comparisonDuration: 10 * 60,
+            baselineSampleCount: 5,
+            baselineDuration: 50 * 60,
+            minimumObservationSpan: 60 * 60
+        ))
+        #expect(report.baselineShapeCandidates.count == 4)
+        #expect(report.baselineShapeCandidates.filter { $0.shape != report.selectedBaselineShape }.allSatisfy {
+            $0.metrics.correctCount < 10
+        })
+        let threeSample = try #require(report.baselineShapeCandidates.first {
+            $0.shape.comparisonDuration == 10 * 60 && $0.shape.baselineSampleCount == 3
+        })
+        #expect(threeSample.metrics.falseNegativeCount >= 1)
+        #expect(threeSample.metrics.unsafeAvailabilityMismatchCount >= 1)
     }
 
     @Test("sparse, reset, and changing-version fixtures execute production qualification")
