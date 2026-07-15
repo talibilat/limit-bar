@@ -143,6 +143,36 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         XCTAssertFalse(state.quotaInsightsStorageAvailable)
     }
 
+    func testInvestigationPublicationCommitsOneGenerationAndPreservesItOnFailure() async throws {
+        let initial = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 0)
+        let service = FailingQuotaInsightsService(initial: initial, attempted: initial)
+        let state = LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(credentials: ClaudeCredentialBroker.shared, client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(refreshUsage: { _, _ in throw CancellationError() }, scanCodex: { _ in nil })),
+            quotaInsightsService: service
+        )
+        let codex = CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: CodexRateLimitWindow(percentUsed: 75, windowMinutes: 300, resetsAt: now.addingTimeInterval(3_600)),
+            secondary: nil,
+            credits: nil,
+            reportedAt: now
+        )
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 1, usage: nil, codex: codex, refreshedAt: now))
+        let coherent = state.investigationPublication
+        XCTAssertEqual(coherent.generation, 1)
+        XCTAssertFalse(coherent.products.isEmpty)
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 2, usage: nil, codex: codex, refreshedAt: now.addingTimeInterval(60)))
+
+        XCTAssertEqual(state.investigationPublication.publicationState, .error)
+        XCTAssertEqual(state.investigationPublication.generation, 1)
+        XCTAssertEqual(state.investigationPublication.products, coherent.products)
+        XCTAssertEqual(state.investigationPublication.pendingGeneration, 2)
+    }
+
     func testRateLimitSurfaceExplainsQualifiedAnomalyMethodAndLimitations() throws {
         let identity = try QuotaWindowIdentity(
             product: .codex,

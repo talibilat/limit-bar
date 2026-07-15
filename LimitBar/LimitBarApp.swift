@@ -72,6 +72,13 @@ final class LimitBarState {
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
     private(set) var quotaInsightsStorageAvailable: Bool
     private(set) var claudeExplanationCatalog: ClaudeQuotaExplanationCatalog = .empty
+    private(set) var investigationPublication = ForensicInvestigationSnapshot(
+        publicationState: .loading,
+        publishedAt: Date(),
+        products: [],
+        apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
+        message: "Waiting for the first coherent publication."
+    )
     var claudeExplanation: ClaudeQuotaExplanationState {
         claudeExplanationCatalog.defaultSelection?.state ?? .unavailable(.insufficientObservations)
     }
@@ -115,6 +122,7 @@ final class LimitBarState {
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
         claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
+        publishInvestigation(generation: nil, at: Date())
     }
 
     init(
@@ -124,7 +132,8 @@ final class LimitBarState {
         quotaInsightsService: (any QuotaInsightsServing)? = nil,
         codexExplanationStore: SQLiteCodexExplanationStore? = nil,
         claudeExplanationStore: SQLiteClaudeExplanationStore? = nil,
-        attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared
+        attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared,
+        investigationPublication: ForensicInvestigationSnapshot? = nil
     ) {
         self.providerSettings = providerSettings
         self.claudeModel = claudeModel
@@ -140,16 +149,21 @@ final class LimitBarState {
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
         claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
+        if let investigationPublication {
+            self.investigationPublication = investigationPublication
+        } else {
+            publishInvestigation(generation: nil, at: Date())
+        }
     }
 
     func start() {
         guard usesLiveRefresh else { return }
         guard observationTask == nil else { return }
+        investigationPublication = investigationPublication.loading(pendingGeneration: nil)
         observationTask = Task { [weak self, coordinator] in
             await coordinator.start()
             for await snapshot in coordinator.snapshots {
                 guard let self else { return }
-                local.apply(snapshot)
                 latestUsageRefreshed = snapshot.usageRefreshed
                 latestCodexRefreshed = snapshot.codexRefreshed
                 await refreshQuotaInsights(for: snapshot)
@@ -161,6 +175,7 @@ final class LimitBarState {
     func requestLocalRefresh() {
         guard usesLiveRefresh else { return }
         providerSettings = ProviderSettingsStore().settings
+        investigationPublication = investigationPublication.loading(pendingGeneration: nil)
         Task { [coordinator] in await coordinator.requestRefresh() }
     }
 
@@ -196,9 +211,11 @@ final class LimitBarState {
             try await quotaInsightsService.deleteAll()
             quotaAnalysis = .empty
             quotaInsightsStorageAvailable = true
+            publishInvestigation(generation: investigationPublication.generation, at: Date())
             return true
         } catch {
             quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
             return false
         }
     }
@@ -208,6 +225,7 @@ final class LimitBarState {
         do {
             try codexExplanationStore.deleteAll()
             local.clearCodexExplanation()
+            publishInvestigation(generation: investigationPublication.generation, at: Date())
             return true
         } catch {
             return false
@@ -219,6 +237,7 @@ final class LimitBarState {
         do {
             try claudeExplanationStore.deleteAll()
             claudeExplanationCatalog = .empty
+            publishInvestigation(generation: investigationPublication.generation, at: Date())
             return true
         } catch {
             return false
@@ -236,10 +255,31 @@ final class LimitBarState {
     }
 
     func refreshQuotaInsights(for snapshot: LocalRefreshSnapshot) async {
-        await reevaluateClaudeInsights(now: snapshot.refreshedAt)
-        await reevaluateCodexInsights(now: snapshot.refreshedAt)
-        if snapshot.codexRefreshed, let codex = snapshot.codex {
-            await recordCodexInsights(codex, now: snapshot.refreshedAt)
+        investigationPublication = investigationPublication.loading(pendingGeneration: snapshot.sequence)
+        local.apply(snapshot)
+        guard let quotaInsightsService else {
+            investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
+            return
+        }
+        do {
+            var staged = quotaAnalysis
+            let claude = try await quotaInsightsService.reevaluateClaudeAnalysis(now: snapshot.refreshedAt)
+            staged = Self.merging(staged, with: claude, for: .claudeCode)
+            let codex: QuotaFindingAnalysisSnapshot
+            if snapshot.codexRefreshed, let codexSnapshot = snapshot.codex {
+                codex = try await quotaInsightsService.recordCodexAnalysis(codexSnapshot, now: snapshot.refreshedAt)
+            } else {
+                codex = try await quotaInsightsService.reevaluateCodexAnalysis(now: snapshot.refreshedAt)
+            }
+            staged = Self.merging(staged, with: codex, for: .codex)
+
+            quotaAnalysis = staged
+            claudeExplanationCatalog = staged.claudeExplanations
+            quotaInsightsStorageAvailable = true
+            publishInvestigation(generation: snapshot.sequence, at: snapshot.refreshedAt)
+        } catch {
+            quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
         }
     }
 
@@ -293,6 +333,7 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
         }
     }
 
@@ -304,6 +345,7 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
         }
     }
 
@@ -315,6 +357,7 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
         }
     }
 
@@ -326,17 +369,42 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
+            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
         }
     }
 
     private func publish(_ analysis: QuotaFindingAnalysisSnapshot, for product: ProviderProduct) {
-        var forecasts = quotaAnalysis.forecasts.filter { $0.key.product != product }
-        var anomalies = quotaAnalysis.anomalies.filter { $0.key.product != product }
+        quotaAnalysis = Self.merging(quotaAnalysis, with: analysis, for: product)
+        claudeExplanationCatalog = quotaAnalysis.claudeExplanations
+        publishInvestigation(generation: investigationPublication.generation, at: Date())
+    }
+
+    private static func merging(
+        _ current: QuotaFindingAnalysisSnapshot,
+        with analysis: QuotaFindingAnalysisSnapshot,
+        for product: ProviderProduct
+    ) -> QuotaFindingAnalysisSnapshot {
+        var forecasts = current.forecasts.filter { $0.key.product != product }
+        var anomalies = current.anomalies.filter { $0.key.product != product }
         forecasts.merge(analysis.forecasts) { _, new in new }
         anomalies.merge(analysis.anomalies) { _, new in new }
-        let explanations = product == .claudeCode ? analysis.claudeExplanations : quotaAnalysis.claudeExplanations
-        quotaAnalysis = QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies, claudeExplanations: explanations)
-        claudeExplanationCatalog = explanations
+        let explanations = product == .claudeCode ? analysis.claudeExplanations : current.claudeExplanations
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies, claudeExplanations: explanations)
+    }
+
+    private func publishInvestigation(generation: UInt64?, at date: Date) {
+        investigationPublication = ForensicInvestigationAssembler.make(ForensicInvestigationInput(
+            generation: generation,
+            publishedAt: date,
+            codexSnapshot: local.codexSnapshot,
+            codexExplanation: local.codexExplanation,
+            codexExplanationRetained: local.codexExplanationRetained,
+            claudeExplanationCatalog: claudeExplanationCatalog,
+            forecasts: quotaAnalysis.forecasts,
+            anomalies: quotaAnalysis.anomalies,
+            storageAvailable: quotaInsightsStorageAvailable,
+            storeOpen: local.storeHealth.isOpen
+        ))
     }
 
     private static func catalog(restoring state: ClaudeQuotaExplanationState?) -> ClaudeQuotaExplanationCatalog {

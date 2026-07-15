@@ -123,7 +123,16 @@ struct CodexExplanationStoreTests {
 
         try store.record(.unavailable(.gap), now: now.addingTimeInterval(-200))
         try store.record(.unavailable(.insufficientObservations), now: now.addingTimeInterval(-20))
-        try store.record(.observedZero(reportedQuotaMovementPercent: 1, quotaResetBoundary: now.addingTimeInterval(600), observationIdentityCount: 2, evidenceIdentityCount: 1), now: now.addingTimeInterval(-10))
+        try store.record(.observedZero(CodexQuotaObservedZero(
+            intervalStart: now.addingTimeInterval(-120),
+            intervalEnd: now.addingTimeInterval(-60),
+            calculatedQuotaMovementPercent: 1,
+            quotaResetBoundary: now.addingTimeInterval(600),
+            observationIdentities: [],
+            evidenceIdentities: [],
+            observationIdentityCount: 2,
+            evidenceIdentityCount: 1
+        )), now: now.addingTimeInterval(-10))
         try store.record(.unavailable(.unsupportedEvidence), now: now)
 
         #expect(try store.recordCount(now: now) == 2)

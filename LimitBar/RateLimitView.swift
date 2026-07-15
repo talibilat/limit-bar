@@ -23,10 +23,11 @@ struct RateLimitView: View {
                 HStack {
                     Spacer()
                     Button("Investigate quota evidence") {
-                        investigationSnapshot = ForensicInvestigationAssembler.make(state: state)
+                        investigationSnapshot = state.investigationPublication
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
                     .accessibilityHint("Opens detailed normalized evidence, methods, and limitations")
                     .accessibilityIdentifier("open-forensic-investigation")
                 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import LimitBarCore
+import CryptoKit
 
 enum InvestigationPublicationState: Equatable {
     case available
@@ -13,7 +14,7 @@ enum InvestigationPublicationState: Equatable {
         switch self {
         case .available: "Available"
         case .partial: "Partial evidence"
-        case .loading: "Loading - no coherent investigation published yet"
+        case .loading: "Loading - prior coherent publication retained when available"
         case .empty: "Empty range - no normalized quota evidence"
         case .unavailable: "Unavailable - normalized quota evidence is not available"
         case .error: "Error - the last coherent investigation remains unchanged"
@@ -29,7 +30,8 @@ struct InvestigationFindingPresentation: Equatable {
 
 struct InvestigationRecord: Identifiable, Equatable {
     let id: String
-    let identity: QuotaWindowIdentity
+    let identity: QuotaWindowIdentity?
+    let resetBoundary: Date?
     let start: Date
     let end: Date
     let authoritativeTotal: String
@@ -39,40 +41,83 @@ struct InvestigationRecord: Identifiable, Equatable {
     let anomaly: InvestigationFindingPresentation
     let version: String
     let limitations: String
+    let traces: String
+    let freshness: String
     let isGap: Bool
     let isObservedZero: Bool
-}
-
-struct InvestigationAttribution: Identifiable, Equatable {
-    let id: String
-    let start: Date
-    let end: Date
-    let summary: String
 }
 
 struct InvestigationProductEvidence: Identifiable, Equatable {
     var id: ProviderProduct { product }
     let product: ProviderProduct
     let records: [InvestigationRecord]
-    let attributions: [InvestigationAttribution]
 }
 
 struct ForensicInvestigationSnapshot: Equatable {
+    let generation: UInt64?
+    let pendingGeneration: UInt64?
     let publicationState: InvestigationPublicationState
     let publishedAt: Date
     let products: [InvestigationProductEvidence]
     let apiEvidenceNotice: String
     let message: String?
 
+    init(
+        generation: UInt64? = nil,
+        pendingGeneration: UInt64? = nil,
+        publicationState: InvestigationPublicationState,
+        publishedAt: Date,
+        products: [InvestigationProductEvidence],
+        apiEvidenceNotice: String,
+        message: String?
+    ) {
+        self.generation = generation
+        self.pendingGeneration = pendingGeneration
+        self.publicationState = publicationState
+        self.publishedAt = publishedAt
+        self.products = products
+        self.apiEvidenceNotice = apiEvidenceNotice
+        self.message = message
+    }
+
     var supportedProducts: [ProviderProduct] { products.map(\.product) }
 
-    static func empty(publishedAt: Date) -> Self {
+    static func empty(publishedAt: Date, generation: UInt64? = nil) -> Self {
         Self(
+            generation: generation,
             publicationState: .empty,
             publishedAt: publishedAt,
             products: [],
             apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
             message: "Select a later range after LimitBar has collected normalized quota observations."
+        )
+    }
+
+    func loading(pendingGeneration: UInt64?) -> Self {
+        Self(
+            generation: generation,
+            pendingGeneration: pendingGeneration,
+            publicationState: .loading,
+            publishedAt: publishedAt,
+            products: products,
+            apiEvidenceNotice: apiEvidenceNotice,
+            message: products.isEmpty
+                ? "Waiting for the first coherent publication. Partial refresh results are not shown."
+                : "Loading a newer generation. The prior coherent generation remains visible and is marked retained."
+        )
+    }
+
+    func failed(pendingGeneration: UInt64?) -> Self {
+        Self(
+            generation: generation,
+            pendingGeneration: pendingGeneration,
+            publicationState: .error,
+            publishedAt: publishedAt,
+            products: products,
+            apiEvidenceNotice: apiEvidenceNotice,
+            message: products.isEmpty
+                ? "No coherent investigation has been published. Missing values are not treated as zero."
+                : "The newer generation failed. The prior coherent generation remains visible and is marked retained."
         )
     }
 }
@@ -90,13 +135,13 @@ enum ForensicInvestigationPresentation {
             return InvestigationFindingPresentation(
                 status: "Qualified",
                 summary: "Calculated burn \(PercentRateLimitPresentation.burnRange(value.calculatedBurnPercentPerHour)). \(exhaustion).",
-                details: "\(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(duration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; \(value.inputObservationIdentities.count) bounded observation traces; interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
+                details: "\(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(duration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
             )
         case let .unavailable(value):
             return InvestigationFindingPresentation(
                 status: "Unavailable",
                 summary: "Unavailable - no point estimate is shown.",
-                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(value.evidenceAge.map(duration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; \(value.inputObservationIdentities.count) bounded observation traces; interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
+                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(value.evidenceAge.map(duration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
             )
         }
     }
@@ -143,7 +188,7 @@ enum ForensicInvestigationPresentation {
         return InvestigationFindingPresentation(
             status: status,
             summary: summary,
-            details: "Current \(current); trailing baseline \(baseline); method \(metadata.method.rawValue); qualification \(metadata.qualification.rawValue); \(metadata.inputObservationIdentities.count) bounded Measured inputs; evidence versions \(versions.isEmpty ? "unavailable" : versions); limitations \(metadata.limitations.map(\.rawValue).joined(separator: ", "))."
+            details: "Current \(current); trailing baseline \(baseline); method \(metadata.method.rawValue); qualification \(metadata.qualification.rawValue); traces \(traceList(metadata.inputObservationIdentities)); evidence versions \(versions.isEmpty ? "unavailable" : versions); limitations \(metadata.limitations.map(\.rawValue).joined(separator: ", "))."
         )
     }
 
@@ -153,6 +198,18 @@ enum ForensicInvestigationPresentation {
 
     static func exact(_ date: Date) -> String {
         date.formatted(.iso8601.year().month().day().dateSeparator(.dash).time(includingFractionalSeconds: true).timeZone(separator: .colon))
+    }
+
+    static func intersects(start: Date, end: Date, rangeStart: Date, rangeEnd: Date) -> Bool {
+        end > rangeStart && start < rangeEnd
+    }
+
+    static func privacyTrace(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func traceList(_ values: [QuotaObservationIdentity]) -> String {
+        values.isEmpty ? "unavailable" : values.map { String($0.digest.prefix(12)) }.joined(separator: ", ")
     }
 
     static func duration(_ interval: TimeInterval) -> String {
@@ -165,71 +222,75 @@ enum ForensicInvestigationPresentation {
     private static func decimal(_ value: Double) -> String { String(format: "%.2f", value) }
 }
 
-@MainActor
+struct ForensicInvestigationInput {
+    let generation: UInt64?
+    let publishedAt: Date
+    let codexSnapshot: CodexRateLimitSnapshot?
+    let codexExplanation: CodexQuotaExplanationState
+    let codexExplanationRetained: Bool
+    let claudeExplanationCatalog: ClaudeQuotaExplanationCatalog
+    let forecasts: [QuotaWindowIdentity: QuotaInsightState]
+    let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+    let storageAvailable: Bool
+    let storeOpen: Bool
+}
+
 enum ForensicInvestigationAssembler {
-    static func make(state: LimitBarState, now: Date = Date()) -> ForensicInvestigationSnapshot {
+    static func make(_ input: ForensicInvestigationInput) -> ForensicInvestigationSnapshot {
         var products: [InvestigationProductEvidence] = []
-        var claudeRecords = state.claudeExplanationCatalog.selections.map {
-            claudeRecord($0, forecasts: state.quotaInsights, anomalies: state.quotaAnomalies)
+        var claudeRecords = input.claudeExplanationCatalog.selections.map {
+            claudeRecord($0, forecasts: input.forecasts, anomalies: input.anomalies)
         }
         claudeRecords += analyticsOnlyRecords(
             product: .claudeCode,
-            excluding: Set(claudeRecords.map(\.identity)),
-            forecasts: state.quotaInsights,
-            anomalies: state.quotaAnomalies
+            excluding: Set(claudeRecords.compactMap(\.identity)),
+            forecasts: input.forecasts,
+            anomalies: input.anomalies
         )
         if !claudeRecords.isEmpty {
             products.append(InvestigationProductEvidence(
                 product: .claudeCode,
-                records: claudeRecords.sorted { ($0.start, $0.end) < ($1.start, $1.end) },
-                attributions: attributions(state.local.attributionBreakdowns, provider: .anthropic)
+                records: claudeRecords.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
             ))
         }
         var codexRecords: [InvestigationRecord] = []
         if let record = codexRecord(
-            state.local.codexExplanation,
-            snapshot: state.local.codexSnapshot,
-            forecasts: state.quotaInsights,
-            anomalies: state.quotaAnomalies
+            input.codexExplanation,
+            retained: input.codexExplanationRetained,
+            snapshot: input.codexSnapshot,
+            forecasts: input.forecasts,
+            anomalies: input.anomalies
         ) { codexRecords.append(record) }
         codexRecords += analyticsOnlyRecords(
             product: .codex,
-            excluding: Set(codexRecords.map(\.identity)),
-            forecasts: state.quotaInsights,
-            anomalies: state.quotaAnomalies
+            excluding: Set(codexRecords.compactMap(\.identity)),
+            forecasts: input.forecasts,
+            anomalies: input.anomalies
         )
         if !codexRecords.isEmpty {
             products.append(InvestigationProductEvidence(
                 product: .codex,
-                records: codexRecords.sorted { ($0.start, $0.end) < ($1.start, $1.end) },
-                attributions: attributions(state.local.attributionBreakdowns, provider: .openAI)
+                records: codexRecords.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
             ))
         }
         guard !products.isEmpty else {
-            if case .loading = state.claudeModel.state {
+            if !input.storageAvailable || !input.storeOpen {
                 return ForensicInvestigationSnapshot(
-                    publicationState: .loading,
-                    publishedAt: now,
-                    products: [],
-                    apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
-                    message: "Waiting for the first coherent quota publication. Partial refresh results are not shown."
-                )
-            }
-            if !state.quotaInsightsStorageAvailable || !state.local.storeHealth.isOpen {
-                return ForensicInvestigationSnapshot(
+                    generation: input.generation,
                     publicationState: .error,
-                    publishedAt: now,
+                    publishedAt: input.publishedAt,
                     products: [],
                     apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
                     message: "Normalized quota evidence could not be loaded. Existing concise status rows remain independent and no missing value is treated as zero."
                 )
             }
-            return .empty(publishedAt: now)
+            return .empty(publishedAt: input.publishedAt, generation: input.generation)
         }
         let partial = products.flatMap(\.records).contains { $0.isGap || $0.forecast.status == "Unavailable" || $0.anomaly.status.hasPrefix("Unavailable") }
         return ForensicInvestigationSnapshot(
+            generation: input.generation,
             publicationState: partial ? .partial : .available,
-            publishedAt: now,
+            publishedAt: input.publishedAt,
             products: products,
             apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
             message: partial ? "Independent qualified sections remain available; unavailable sections are not presented as zero." : nil
@@ -248,6 +309,7 @@ enum ForensicInvestigationAssembler {
             return InvestigationRecord(
                 id: "analytics-\(identity.product.rawValue)-\(identity.identifier)-\(identity.resetBoundary.timeIntervalSince1970)",
                 identity: identity,
+                resetBoundary: identity.resetBoundary,
                 start: interval.start,
                 end: interval.end,
                 authoritativeTotal: "Authoritative quota observations exist, but a comparable movement total is unavailable for this exact range.",
@@ -257,6 +319,8 @@ enum ForensicInvestigationAssembler {
                 anomaly: ForensicInvestigationPresentation.anomaly(anomalies[identity]),
                 version: "Explanation adapter/client version unavailable - no explanation interval was published. Analytics versions remain in their finding details.",
                 limitations: "Movement cannot be calculated safely from this published finding alone. No interpolation, allocation, or exact movement is inferred.",
+                traces: "Bounded analytics traces are listed in the forecast and anomaly findings.",
+                freshness: "Current generation analytics; source freshness follows the displayed evidence age.",
                 isGap: true,
                 isObservedZero: false
             )
@@ -320,12 +384,13 @@ enum ForensicInvestigationAssembler {
             local = "Observed Local Breakdown unavailable because the interval cannot be compared safely. This is a Gap, not zero usage."
             observedZero = false
         }
-        let movement = value.map { "Reported provider total: \($0.reportedQuotaMovementPercent.formatted()) percentage-point movement between two Reported observations." }
-            ?? "Reported provider total unavailable: \(selection.state.displayText)"
+        let movement = value.map { "Reported percentage observations; Calculated movement: \($0.reportedQuotaMovementPercent.formatted()) percentage points." }
+            ?? "Reported percentage observations unavailable: \(selection.state.displayText)"
         let limitations = selection.limitations.map(\.rawValue).joined(separator: ", ")
         return InvestigationRecord(
             id: selection.interval.id,
             identity: selection.interval.identity,
+            resetBoundary: selection.interval.identity.resetBoundary,
             start: selection.interval.intervalStart,
             end: selection.interval.intervalEnd,
             authoritativeTotal: movement,
@@ -335,6 +400,8 @@ enum ForensicInvestigationAssembler {
             anomaly: ForensicInvestigationPresentation.anomaly(anomalies[selection.interval.identity]),
             version: "Explanation method \(value?.methodVersion ?? ClaudeQuotaExplanationEngine.methodVersion); source adapter \(value?.sourceAdapterVersion ?? ClaudeCodeOTLPEvidenceAdapter.adapterVersion); source/client version \(value?.sourceVersion ?? "unavailable - not captured").",
             limitations: "Limitations: \(limitations.isEmpty ? "none recorded" : limitations). Exact source traces: \(value?.observationIdentityCount ?? 0) Reported observations and \(value?.evidenceIdentityCount ?? 0) Measured evidence items; observation span \(value.map { ForensicInvestigationPresentation.duration($0.observationSpan) } ?? "unavailable"); evidence age \(value.map { ForensicInvestigationPresentation.duration($0.evidenceAge) } ?? "unavailable").",
+            traces: explanationTraces(observations: value?.observationIdentities ?? [], evidence: value?.evidenceIdentities ?? []),
+            freshness: value.map { "Source evidence age \(ForensicInvestigationPresentation.duration($0.evidenceAge)); \($0.lifecycle.rawValue) exact window." } ?? "Source freshness unavailable.",
             isGap: value == nil || value.map { if case .unavailable = $0.attribution { true } else { false } } == true,
             isObservedZero: observedZero
         )
@@ -342,22 +409,30 @@ enum ForensicInvestigationAssembler {
 
     private static func codexRecord(
         _ explanation: CodexQuotaExplanationState,
+        retained: Bool,
         snapshot: CodexRateLimitSnapshot?,
         forecasts: [QuotaWindowIdentity: QuotaInsightState],
         anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
     ) -> InvestigationRecord? {
         let value: CodexQuotaExplanation?
+        let zero: CodexQuotaObservedZero?
         switch explanation {
-        case let .available(item), let .partial(item): value = item
-        case .observedZero, .unavailable: value = nil
+        case let .available(item), let .partial(item): value = item; zero = nil
+        case let .observedZero(item): value = nil; zero = item
+        case .unavailable: value = nil; zero = nil
         }
-        let identity = value.flatMap { try? QuotaWindowIdentity(product: .codex, identifier: "primary:\(snapshot?.primary?.windowMinutes ?? 300)", resetBoundary: $0.quotaResetBoundary) }
-            ?? snapshot.flatMap { MeasuredQuotaObservationAdapter.codex($0).first?.identity }
-        guard let identity else { return nil }
-        let start = value?.intervalStart ?? snapshot?.reportedAt ?? identity.resetBoundary
-        let end = value?.intervalEnd ?? snapshot?.reportedAt ?? identity.resetBoundary
-        let observedZero: Bool
-        if case .observedZero = explanation { observedZero = true } else { observedZero = false }
+        let reset = value?.quotaResetBoundary ?? zero?.quotaResetBoundary
+        let candidates = snapshot.map(MeasuredQuotaObservationAdapter.codex) ?? []
+        let identity = reset.flatMap { boundary in
+            value?.quotaWindowIdentity.flatMap { expected in candidates.first { $0.identity == expected }?.identity }
+                ?? candidates.first { $0.identity.resetBoundary == boundary }?.identity
+                ?? forecasts.keys.filter { $0.product == .codex && $0.resetBoundary == boundary }.sorted { $0.identifier < $1.identifier }.first
+                ?? anomalies.keys.filter { $0.product == .codex && $0.resetBoundary == boundary }.sorted { $0.identifier < $1.identifier }.first
+        }
+        let start = value?.intervalStart ?? zero?.intervalStart
+        let end = value?.intervalEnd ?? zero?.intervalEnd
+        guard let start, let end, start < end else { return nil }
+        let observedZero = zero != nil
         let local = value.map {
             let tokens = $0.observedLocalBreakdown.tokens
             return "Measured Observed Local Breakdown: \(tokens.total) tokens across \($0.observedLocalBreakdown.sessionCount) privacy-safe sessions; input \(tokens.input), cached input \(tokens.cachedInput), output \(tokens.output), reasoning output \(tokens.reasoningOutput). Not added to the provider total."
@@ -367,45 +442,44 @@ enum ForensicInvestigationAssembler {
         return InvestigationRecord(
             id: "codex-\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)",
             identity: identity,
+            resetBoundary: reset,
             start: start,
             end: end,
-            authoritativeTotal: value.map { "Reported provider total: \($0.reportedQuotaMovementPercent.formatted()) percentage-point movement between two Reported observations." } ?? "Reported provider total unavailable: \(explanation.displayText)",
+            authoritativeTotal: value.map { "Measured local quota observations; Calculated movement: \($0.reportedQuotaMovementPercent.formatted()) percentage points." }
+                ?? zero.map { "Measured local quota observations; Calculated movement: \($0.calculatedQuotaMovementPercent.formatted()) percentage points." }
+                ?? "Measured local quota observations unavailable: \(explanation.displayText)",
             localBreakdown: local,
             unattributed: value?.allocationPercent.map { "Inferred allocation: \($0.formatted())%. Local activity does not establish cause; remaining movement is Unattributed." } ?? "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
-            forecast: ForensicInvestigationPresentation.forecast(forecasts[identity]),
-            anomaly: ForensicInvestigationPresentation.anomaly(anomalies[identity]),
+            forecast: ForensicInvestigationPresentation.forecast(identity.flatMap { forecasts[$0] }),
+            anomaly: ForensicInvestigationPresentation.anomaly(identity.flatMap { anomalies[$0] }),
             version: "Explanation method \(CodexQuotaExplanationEngine.methodVersion); adapter \(value?.adapterVersion ?? CodexRolloutEvidenceAdapter.adapterVersion); client version unavailable - not captured.",
             limitations: value.map { "Exact source traces: \($0.observationIdentityCount) Reported observations and \($0.evidenceIdentityCount) Measured evidence items; barriers \($0.barriers.map(\.rawValue).joined(separator: ", ")). Local token activity cannot be converted to provider quota percentage." } ?? "No comparable explanation interval. Local token activity cannot be converted to provider quota percentage.",
-            isGap: value == nil,
+            traces: explanationTraces(observations: value?.observationIdentities ?? zero?.observationIdentities ?? [], evidence: value?.evidenceIdentities ?? zero?.evidenceIdentities ?? []),
+            freshness: retained ? "Retained/stale explanation from an earlier publication; not fresh evidence for this generation." : "Fresh explanation from this coherent generation.",
+            isGap: value == nil && zero == nil,
             isObservedZero: observedZero
         )
     }
 
-    private static func attributions(_ breakdowns: [ObservedLocalAttributionBreakdown], provider: ProviderKind) -> [InvestigationAttribution] {
-        breakdowns.filter { $0.provider == provider }.map { value in
-            let project = value.project.map { "project \($0.label ?? $0.id)" }
-            let agent = value.agent.map { "agent \($0.label ?? $0.id)" }
-            let dimensions = ([project, agent, "model \(value.model)"] as [String?]).compactMap { $0 }.joined(separator: ", ")
-            return InvestigationAttribution(
-                id: value.eventIDs.map(\.uuidString).sorted().joined(separator: ":"),
-                start: value.window.start,
-                end: value.window.end,
-                summary: "Measured local attribution: \(dimensions); \(value.tokenUsage.totalTokens) tokens. Temporal evidence only - not a causal allocation of provider quota."
-            )
-        }.sorted { ($0.start, $0.id) < ($1.start, $1.id) }
+    private static func explanationTraces(observations: [QuotaObservationIdentity], evidence: [String]) -> String {
+        let observationTraces = observations.map { String($0.digest.prefix(12)) }
+        let evidenceTraces = evidence.map(ForensicInvestigationPresentation.privacyTrace)
+        return "Privacy-safe bounded traces - observations: \(observationTraces.isEmpty ? "unavailable" : observationTraces.joined(separator: ", ")); local evidence: \(evidenceTraces.isEmpty ? "unavailable" : evidenceTraces.joined(separator: ", "))."
     }
 }
 
 struct ForensicInvestigationView: View {
     let snapshot: ForensicInvestigationSnapshot
+    let reduceMotionOverride: Bool?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedProduct: ProviderProduct?
     @State private var rangeStart: Date
     @State private var rangeEnd: Date
 
-    init(snapshot: ForensicInvestigationSnapshot) {
+    init(snapshot: ForensicInvestigationSnapshot, reduceMotionOverride: Bool? = nil) {
         self.snapshot = snapshot
+        self.reduceMotionOverride = reduceMotionOverride
         let records = snapshot.products.flatMap(\.records)
         _selectedProduct = State(initialValue: snapshot.supportedProducts.first)
         _rangeStart = State(initialValue: records.map(\.start).min() ?? snapshot.publishedAt.addingTimeInterval(-3_600))
@@ -417,7 +491,9 @@ struct ForensicInvestigationView: View {
     }
 
     private var records: [InvestigationRecord] {
-        evidence?.records.filter { $0.end >= rangeStart && $0.start <= rangeEnd }.sorted { ($0.start, $0.end) < ($1.start, $1.end) } ?? []
+        evidence?.records.filter {
+            ForensicInvestigationPresentation.intersects(start: $0.start, end: $0.end, rangeStart: rangeStart, rangeEnd: rangeEnd)
+        }.sorted { ($0.start, $0.end) < ($1.start, $1.end) } ?? []
     }
 
     var body: some View {
@@ -428,6 +504,10 @@ struct ForensicInvestigationView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     publicationState
                     controls
+                    Text("Selected exact range: \(ForensicInvestigationPresentation.exact(rangeStart)) to \(ForensicInvestigationPresentation.exact(rangeEnd)); half-open [start, end); Gregorian calendar; UTC basis.")
+                        .font(.caption)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("investigation-selected-range")
                     if snapshot.supportedProducts.isEmpty {
                         emptyState
                     } else if rangeStart >= rangeEnd {
@@ -439,7 +519,7 @@ struct ForensicInvestigationView: View {
                         attribution
                     }
                     stateCard("API product evidence", detail: snapshot.apiEvidenceNotice, detailIdentifier: "investigation-api-unavailable")
-                    Text("Published atomically \(ForensicInvestigationPresentation.exact(snapshot.publishedAt)). Refreshing concise provider rows does not mutate this open investigation.")
+                    Text("Coherent publication generation \(snapshot.generation.map(String.init) ?? "retained"); published \(ForensicInvestigationPresentation.exact(snapshot.publishedAt)).")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -450,7 +530,7 @@ struct ForensicInvestigationView: View {
         }
         .frame(minWidth: 420, idealWidth: 760, minHeight: 520, idealHeight: 760)
         .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: selectedProduct)
+        .animation((reduceMotionOverride ?? reduceMotion) ? nil : .easeInOut(duration: 0.15), value: selectedProduct)
     }
 
     private var header: some View {
@@ -485,6 +565,12 @@ struct ForensicInvestigationView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("investigation-range-basis")
+                Button("Use latest evidence interval") {
+                    guard let latest = evidence?.records.max(by: { $0.end < $1.end }) else { return }
+                    rangeStart = latest.start
+                    rangeEnd = latest.end
+                }
+                .accessibilityIdentifier("investigation-latest-range")
             }
             .padding(14)
             .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -513,8 +599,13 @@ struct ForensicInvestigationView: View {
             Text("\(ForensicInvestigationPresentation.exact(record.start)) to \(ForensicInvestigationPresentation.exact(record.end))")
                 .font(.subheadline.weight(.semibold))
                 .textSelection(.enabled)
-            Label("Reported reset: \(ForensicInvestigationPresentation.exact(record.identity.resetBoundary)). Trend ends at this boundary; no line crosses the reset.", systemImage: "arrow.counterclockwise.circle")
-                .accessibilityIdentifier("investigation-reset")
+            if let reset = record.resetBoundary {
+                Label("Reported reset: \(ForensicInvestigationPresentation.exact(reset)). Trend ends at this boundary; no line crosses the reset.", systemImage: "arrow.counterclockwise.circle")
+                    .accessibilityIdentifier("investigation-reset")
+            } else {
+                Label("Reset unavailable - no exact reset marker is inferred.", systemImage: "questionmark.circle")
+                    .accessibilityIdentifier("investigation-reset-unavailable")
+            }
             evidenceLine(record.authoritativeTotal, id: "investigation-authoritative-total")
             evidenceLine(record.localBreakdown, id: "investigation-local-breakdown")
             evidenceLine(record.unattributed, id: "investigation-unattributed")
@@ -527,6 +618,8 @@ struct ForensicInvestigationView: View {
             finding("Forecast", record.forecast, id: "investigation-forecast")
             finding("Anomaly", record.anomaly, id: "investigation-anomaly")
             evidenceLine(record.version, id: "investigation-version")
+            evidenceLine(record.freshness, id: "investigation-freshness")
+            evidenceLine(record.traces, id: "investigation-traces")
             Text(record.limitations).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         }
         .padding(14)
@@ -536,15 +629,12 @@ struct ForensicInvestigationView: View {
 
     @ViewBuilder
     private var attribution: some View {
-        if let evidence, !evidence.attributions.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Privacy-safe local attribution").font(.headline)
-                ForEach(evidence.attributions.filter { $0.end >= rangeStart && $0.start <= rangeEnd }) { item in
-                    Text(item.summary).font(.caption).textSelection(.enabled)
-                }
-                Text("These Observed Local Breakdowns are not added to the authoritative provider total and do not prove cause.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+        if evidence != nil {
+            stateCard(
+                "Product-explicit attribution dimensions unavailable",
+                detail: "Schema v2 records Provider identity but not provider product. Generic Anthropic API or OpenAI API project, agent, model, session, operation, and tool dimensions are not mapped to Claude Code or Codex subscription evidence.",
+                detailIdentifier: "investigation-attribution-unavailable"
+            )
         }
     }
 

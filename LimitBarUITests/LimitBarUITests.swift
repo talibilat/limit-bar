@@ -190,14 +190,18 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.datePickers["investigation-range-start"].exists)
         XCTAssertTrue(app.datePickers["investigation-range-end"].exists)
         XCTAssertTrue(text(of: app.staticTexts["investigation-range-basis"]).contains("UTC"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-authoritative-total"]).contains("Reported provider total"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-local-breakdown"]).contains("Observed Local Breakdown"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-unattributed"]).contains("Unattributed"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-reset"]).contains("Reported reset"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-forecast"]).contains("Calculated"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-anomaly"]).contains("method"))
-        XCTAssertTrue(text(of: app.staticTexts["investigation-version"]).contains("adapter"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-authoritative-total"].firstMatch).contains("Calculated movement"))
+        XCTAssertFalse(text(of: app.staticTexts["investigation-authoritative-total"].firstMatch).contains("Reported provider total"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-local-breakdown"].firstMatch).contains("Observed Local Breakdown"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-unattributed"].firstMatch).contains("Unattributed"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-reset"].firstMatch).contains("Reported reset"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-forecast"].firstMatch).contains("Calculated"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-anomaly"].firstMatch).contains("method"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-version"].firstMatch).contains("adapter"))
         XCTAssertTrue(text(of: app.staticTexts["investigation-api-unavailable"]).contains("API-provider quota evidence is unavailable"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-selected-range"]).contains("half-open"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-traces"].firstMatch).contains("Privacy-safe bounded traces"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-attribution-unavailable"]).contains("not mapped"))
     }
 
     func testInvestigationDistinguishesObservedZeroGapAndPartialEvidence() {
@@ -215,7 +219,48 @@ final class LimitBarUITests: XCTestCase {
             app.terminate()
             launch(screen: screen)
             XCTAssertTrue(app.staticTexts["investigation-publication-state"].waitForExistence(timeout: 5), screen)
+            if screen == "investigation-loading" || screen == "investigation-error" {
+                XCTAssertTrue(app.popUpButtons["investigation-product"].exists, screen)
+            }
         }
+    }
+
+    func testInvestigationWorkflowOpensFromPopoverAndChangesProductAndRange() {
+        launch(screen: "investigation-workflow")
+
+        app.buttons["open-forensic-investigation"].click()
+        let picker = app.popUpButtons["investigation-product"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        let range = app.staticTexts["investigation-selected-range"]
+        let originalRange = text(of: range)
+        app.buttons["investigation-latest-range"].click()
+        XCTAssertNotEqual(text(of: range), originalRange)
+
+        picker.click()
+        app.menuItems["Claude Code"].click()
+        XCTAssertTrue(app.staticTexts["investigation-reset-unavailable"].waitForExistence(timeout: 5))
+
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(picker.exists)
+    }
+
+    func testInvestigationKeyboardShortcutOpensAndEscapeRestoresPopoverFocusContext() {
+        launch(screen: "investigation-workflow")
+
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        XCTAssertTrue(app.popUpButtons["investigation-product"].waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.buttons["open-forensic-investigation"].waitForExistence(timeout: 5))
+    }
+
+    func testInvestigationMinimumWindowLargeTextReducedMotionAndPrivacySentinel() {
+        launch(screen: "investigation-minimum-large-text")
+
+        XCTAssertEqual(app.windows["LimitBar UI Tests"].frame.size.width, 420, accuracy: 2)
+        XCTAssertEqual(app.windows["LimitBar UI Tests"].frame.size.height, 552, accuracy: 2) // 520-point content plus title bar.
+        XCTAssertTrue(app.popUpButtons["investigation-product"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["investigation-selected-range"].exists)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "PRIVATE_SENTINEL_PROMPT_PATH_COOKIE", "PRIVATE_SENTINEL_PROMPT_PATH_COOKIE")).firstMatch.exists)
     }
 
     func testPopoverExposesSubordinateInvestigationEntryPoint() {

@@ -113,7 +113,14 @@ struct CodexQuotaExplanationTests {
 
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [], coverageStart: nil, coverageEnd: nil, barriers: []) == .unavailable(.gap))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [], coverageStart: nil, coverageEnd: nil, barriers: [.evidenceLimitExceeded]) == .unavailable(.unsupportedEvidence))
-        #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [evidence(at: 150, input: 0, output: 0)], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: date(600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [evidence(at: 150, input: 0, output: 0)], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .observedZero(CodexQuotaObservedZero(
+            intervalStart: date(100),
+            intervalEnd: date(200),
+            calculatedQuotaMovementPercent: 2,
+            quotaResetBoundary: date(600),
+            observationIdentities: [lower.stableIdentity, upper.stableIdentity],
+            evidenceIdentities: ["\(String(repeating: "a", count: 64)):3:\(String(repeating: "b", count: 64))"]
+        )))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, decreased], evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .unavailable(.counterDecreased))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, changedWindow], evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .unavailable(.incompatibleQuotaWindow))
     }

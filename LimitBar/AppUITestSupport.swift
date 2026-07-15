@@ -12,7 +12,7 @@ enum AppTestConfiguration {
     }
 
     @MainActor
-    static func state() -> LimitBarState {
+    static func state(investigationPublication: ForensicInvestigationSnapshot? = nil) -> LimitBarState {
         LimitBarState(
             providerSettings: [],
             claudeModel: ClaudeRateLimitsModel(
@@ -22,7 +22,8 @@ enum AppTestConfiguration {
             coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
                 refreshUsage: { _, _ in throw CancellationError() },
                 scanCodex: { _ in nil }
-            ))
+            )),
+            investigationPublication: investigationPublication
         )
     }
 }
@@ -64,8 +65,9 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard AppUITestConfiguration.isEnabled else { return }
 
+        let minimumFixture = AppUITestConfiguration.screen == "investigation-minimum-large-text"
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 660, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: minimumFixture ? 420 : 660, height: minimumFixture ? 520 : 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -160,6 +162,11 @@ private struct LimitBarUITestHostView: View {
             ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.unavailable))
         case "investigation-error":
             ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.error))
+        case "investigation-workflow":
+            MonitoringPopoverView(state: AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.available)))
+        case "investigation-minimum-large-text":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.partial), reduceMotionOverride: true)
+                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
@@ -172,6 +179,10 @@ private enum AppUITestInvestigation {
     static let reset = start.addingTimeInterval(7_200)
 
     static func fixture(_ state: InvestigationPublicationState) -> ForensicInvestigationSnapshot {
+        if state == .loading || state == .error {
+            let prior = fixture(.available)
+            return state == .loading ? prior.loading(pendingGeneration: 8) : prior.failed(pendingGeneration: 8)
+        }
         guard state == .available || state == .partial else {
             return ForensicInvestigationSnapshot(
                 publicationState: state,
@@ -195,38 +206,65 @@ private enum AppUITestInvestigation {
         let available = InvestigationRecord(
             id: "available",
             identity: identity,
+            resetBoundary: identity.resetBoundary,
             start: start,
             end: start.addingTimeInterval(900),
-            authoritativeTotal: "Reported provider total: 6 percentage-point movement between two Reported observations.",
+            authoritativeTotal: "Measured local quota observations; Calculated movement: 6 percentage points.",
             localBreakdown: "Measured Observed Local Breakdown: 42 tokens across 2 privacy-safe sessions. Not added to the provider total.",
             unattributed: "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
             forecast: qualifiedForecast,
             anomaly: noFinding,
             version: "Explanation method codex-quota-explanation-v1; adapter codex-rollout-observed-0.144.4; client version unavailable - not captured.",
             limitations: "Exact source traces: 2 Reported observations and 3 Measured evidence items; provider weighting unknown.",
+            traces: "Privacy-safe bounded traces - observations: 111111111111, 222222222222; local evidence: 333333333333.",
+            freshness: "Fresh explanation from coherent generation 7.",
             isGap: false,
             isObservedZero: false
         )
         var records = [available]
+        if state == .available {
+            records.insert(InvestigationRecord(
+                id: "earlier",
+                identity: identity,
+                resetBoundary: identity.resetBoundary,
+                start: start.addingTimeInterval(-900),
+                end: start.addingTimeInterval(-300),
+                authoritativeTotal: "Measured local quota observations; Calculated movement: 2 percentage points.",
+                localBreakdown: "Observed Local Breakdown unavailable because product-explicit evidence was not captured.",
+                unattributed: "Unattributed: no local activity is assigned to quota movement.",
+                forecast: qualifiedForecast,
+                anomaly: noFinding,
+                version: "Explanation method codex-quota-explanation-v1; adapter codex-rollout-observed-0.144.4.",
+                limitations: "Earlier exact interval fixture.",
+                traces: "Privacy-safe bounded traces - observations: 000000000000.",
+                freshness: "Fresh explanation from coherent generation 7.",
+                isGap: true,
+                isObservedZero: false
+            ), at: 0)
+        }
         if state == .partial {
             records.append(InvestigationRecord(
                 id: "observed-zero",
                 identity: identity,
+                resetBoundary: identity.resetBoundary,
                 start: start.addingTimeInterval(1_200),
                 end: start.addingTimeInterval(1_800),
-                authoritativeTotal: "Reported provider total: 0 percentage-point movement.",
+                authoritativeTotal: "Measured local quota observations; Calculated movement: 0 percentage points.",
                 localBreakdown: "Measured Observed Zero local activity with complete supported evidence coverage.",
                 unattributed: "Unattributed: flat movement does not prove that no activity occurred.",
                 forecast: InvestigationFindingPresentation(status: "Unavailable", summary: "Unavailable - no point estimate is shown.", details: "Reason no_positive_burn; method pairwise_positive_slope_interquartile_v2."),
                 anomaly: InvestigationFindingPresentation(status: "Observed Zero", summary: "Measured inputs produced a Calculated zero value.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
                 version: "Adapter version codex-rollout-observed-0.144.4; client version unavailable - not captured.",
                 limitations: "Observed Zero does not prove that no other activity occurred.",
+                traces: "Privacy-safe bounded traces - observations: 444444444444, 555555555555.",
+                freshness: "Fresh explanation from coherent generation 7.",
                 isGap: false,
                 isObservedZero: true
             ))
             records.append(InvestigationRecord(
                 id: "gap",
                 identity: identity,
+                resetBoundary: identity.resetBoundary,
                 start: start.addingTimeInterval(2_100),
                 end: start.addingTimeInterval(2_700),
                 authoritativeTotal: "Authoritative movement unavailable for this exact interval.",
@@ -236,14 +274,39 @@ private enum AppUITestInvestigation {
                 anomaly: InvestigationFindingPresentation(status: "Unavailable - Gap", summary: "Analysis unavailable: gap. No numerical finding is shown.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
                 version: "Adapter version unavailable - not captured; no unchanged-version claim.",
                 limitations: "Partial coverage and Gap. No interpolation is drawn.",
+                traces: "Privacy-safe bounded traces unavailable for the Gap.",
+                freshness: "Evidence freshness unavailable.",
                 isGap: true,
                 isObservedZero: false
             ))
         }
+        let noResetIdentity = try! QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset)
+        let noReset = InvestigationRecord(
+            id: "no-reset",
+            identity: noResetIdentity,
+            resetBoundary: nil,
+            start: start,
+            end: start.addingTimeInterval(900),
+            authoritativeTotal: "Reported percentage observations; Calculated movement: 3 percentage points.",
+            localBreakdown: "Observed Local Breakdown unavailable because product-explicit evidence was not captured.",
+            unattributed: "Unattributed: no local activity is assigned to quota movement.",
+            forecast: qualifiedForecast,
+            anomaly: noFinding,
+            version: "Explanation method claude-code-quota-explanation-v2; source adapter claude-code-otlp-v1.",
+            limitations: "Reset evidence unavailable in this fixture; no exact marker is inferred.",
+            traces: "Privacy-safe bounded traces - observations: aaaaaaaaaaaa, bbbbbbbbbbbb.",
+            freshness: "Fresh explanation from coherent generation 7.",
+            isGap: true,
+            isObservedZero: false
+        )
         return ForensicInvestigationSnapshot(
+            generation: 7,
             publicationState: state,
             publishedAt: start.addingTimeInterval(1_800),
-            products: [InvestigationProductEvidence(product: .codex, records: records, attributions: [])],
+            products: [
+                InvestigationProductEvidence(product: .codex, records: records),
+                InvestigationProductEvidence(product: .claudeCode, records: [noReset]),
+            ],
             apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
             message: state == .partial ? "Independent qualified sections remain available; unavailable sections are not presented as zero." : nil
         )

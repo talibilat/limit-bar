@@ -237,7 +237,7 @@ struct LocalRefreshCoordinatorTests {
         let second = await iterator.next()
 
         #expect(first?.codexRefreshed == true)
-        #expect(first?.codexExplanation == .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(first?.codexExplanation == codexObservedZero(movement: 2))
         #expect(second?.codex == first?.codex)
         #expect(second?.codexRefreshed == false)
         #expect(second?.codexExplanation == .unavailable(.unsupportedEvidence))
@@ -248,7 +248,7 @@ struct LocalRefreshCoordinatorTests {
         let coordinator = LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
             refreshUsage: { _, _ in emptyUsageRefresh() },
             scanCodexPublication: { _ in throw TestFailure() },
-            loadRetainedCodexExplanation: { _ in .observedZero(reportedQuotaMovementPercent: 1, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1) }
+            loadRetainedCodexExplanation: { _ in codexObservedZero(movement: 1) }
         ))
         var iterator = coordinator.snapshots.makeAsyncIterator()
 
@@ -256,9 +256,22 @@ struct LocalRefreshCoordinatorTests {
         let snapshot = await iterator.next()
 
         #expect(snapshot?.codexRefreshed == false)
-        #expect(snapshot?.codexExplanation == .observedZero(reportedQuotaMovementPercent: 1, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(snapshot?.codexExplanation == codexObservedZero(movement: 1))
         #expect(snapshot?.codexExplanationRetained == true)
     }
+}
+
+private func codexObservedZero(movement: Double) -> CodexQuotaExplanationState {
+    .observedZero(CodexQuotaObservedZero(
+        intervalStart: Date(timeIntervalSince1970: 100),
+        intervalEnd: Date(timeIntervalSince1970: 200),
+        calculatedQuotaMovementPercent: movement,
+        quotaResetBoundary: Date(timeIntervalSince1970: 600),
+        observationIdentities: [],
+        evidenceIdentities: [],
+        observationIdentityCount: 2,
+        evidenceIdentityCount: 1
+    ))
 }
 
 private func dependencies(calls: CallRecorder) -> LocalRefreshDependencies {
@@ -393,7 +406,7 @@ private actor CodexPublicationFailureRecorder {
                 credits: nil,
                 reportedAt: Date(timeIntervalSince1970: 1)
             ),
-            explanation: .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1),
+            explanation: codexObservedZero(movement: 2),
             evidence: [],
             barriers: [],
             coverageStart: Date(timeIntervalSince1970: 0),

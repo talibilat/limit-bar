@@ -221,14 +221,24 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
             output: sqlite3_column_int64(statement, 11),
             reasoningOutput: sqlite3_column_int64(statement, 12)
         )
-        if status == "observed_zero", let movement, let quotaResetBoundary = optionalDate(statement, index: 7) {
+        if status == "observed_zero" {
+            guard let movement,
+                  let intervalStart = optionalDate(statement, index: 3),
+                  let intervalEnd = optionalDate(statement, index: 4),
+                  let quotaResetBoundary = optionalDate(statement, index: 7) else {
+                return .unavailable(.unsupportedEvidence)
+            }
             if quotaResetBoundary <= now { return .unavailable(.expiredQuotaWindow) }
-            return .observedZero(
-                reportedQuotaMovementPercent: movement,
+            return .observedZero(CodexQuotaObservedZero(
+                intervalStart: intervalStart,
+                intervalEnd: intervalEnd,
+                calculatedQuotaMovementPercent: movement,
                 quotaResetBoundary: quotaResetBoundary,
+                observationIdentities: [],
+                evidenceIdentities: [],
                 observationIdentityCount: Int(sqlite3_column_int64(statement, 15)),
                 evidenceIdentityCount: Int(sqlite3_column_int64(statement, 14))
-            )
+            ))
         }
         if status == "unavailable", let reason, let value = CodexQuotaExplanationUnavailableReason(rawValue: reason) {
             return .unavailable(value)
@@ -361,21 +371,21 @@ private struct NormalizedFinding {
             self.init(status: "available", explanation: explanation, reason: nil)
         case let .partial(explanation):
             self.init(status: "partial", explanation: explanation, reason: nil)
-        case let .observedZero(movement, quotaResetBoundary, observationIdentityCount, evidenceIdentityCount):
+        case let .observedZero(value):
             self.init(
                 status: "observed_zero",
                 reason: nil,
                 adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
-                intervalStart: nil,
-                intervalEnd: nil,
-                quotaResetBoundary: quotaResetBoundary,
+                intervalStart: value.intervalStart,
+                intervalEnd: value.intervalEnd,
+                quotaResetBoundary: value.quotaResetBoundary,
                 coverageStart: nil,
                 coverageEnd: nil,
-                quotaMovementPercent: movement,
+                quotaMovementPercent: value.calculatedQuotaMovementPercent,
                 tokens: CodexMeasuredTokens(input: 0, cachedInput: 0, output: 0, reasoningOutput: 0),
                 sessionCount: 0,
-                evidenceCount: evidenceIdentityCount,
-                observationCount: observationIdentityCount,
+                evidenceCount: value.evidenceIdentityCount,
+                observationCount: value.observationIdentityCount,
                 barrierCategories: []
             )
         case let .unavailable(value):
