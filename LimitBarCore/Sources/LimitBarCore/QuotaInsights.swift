@@ -860,6 +860,14 @@ public actor QuotaInsightsService {
         try reevaluate(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
     }
 
+    public func reevaluateClaudeAnomalies(now: Date) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try reevaluateAnomalies(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
+    }
+
+    public func reevaluateCodexAnomalies(now: Date) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try reevaluateAnomalies(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
+    }
+
     public func deleteAll() throws {
         try store.deleteAll()
     }
@@ -889,6 +897,20 @@ public actor QuotaInsightsService {
         try Dictionary(uniqueKeysWithValues: identities.map { identity in
             let retained = try store.observations(for: identity, now: now)
             return (identity, QuotaInsightAnalytics.analyze(retained, now: now, maximumAge: maximumAge, expectedIdentity: identity))
+        })
+    }
+
+    private func reevaluateAnomalies(
+        product: ProviderProduct,
+        now: Date,
+        maximumAge: TimeInterval
+    ) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try Dictionary(uniqueKeysWithValues: store.identities(for: product, now: now).map { identity in
+            let retained = try store.observations(for: identity, now: now)
+            return (
+                identity,
+                QuotaAnomalyAnalytics.analyze(retained, now: now, maximumAge: maximumAge, expectedIdentity: identity)
+            )
         })
     }
 }
