@@ -91,6 +91,9 @@ struct AlertSettingsView: View {
                 Text("Claude Code rules use Claude Code subscription quota snapshots. Codex rules use local Codex session quota snapshots.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text(APIProviderQuotaPathAvailability.fixedUnavailableSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ForEach($quotaDrafts) { $draft in
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(draft.product.displayName, isOn: $draft.isEnabled)
