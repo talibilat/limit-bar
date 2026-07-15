@@ -110,9 +110,22 @@ struct LiveWorkloadPlanningData: WorkloadPlanningDataProviding {
     }
 
     func result(workUnits: Int, concurrency: Int, now: Date) -> WorkloadPlanningSurfaceResult {
-        let current = currentEvidence()
-        guard let support = completedRuns.support(),
-              let plan = try? PlannedWorkload(
+        guard let support = completedRuns.support() else {
+            return WorkloadPlanningSurfaceResult(WorkloadPlanning.unavailableForUnsupportedAdapter(
+                currentEvidence: nil,
+                now: now
+            ))
+        }
+        let current = Self.currentEvidence(
+            for: support,
+            codexSnapshot: state.local.codexSnapshot,
+            claudeSnapshot: {
+                guard case let .loaded(snapshot, _) = state.claudeModel.state else { return nil }
+                return snapshot
+            }(),
+            forecasts: state.quotaInsights
+        )
+        guard let plan = try? PlannedWorkload(
                   product: support.product,
                   kind: support.kind,
                   quotaWindowKind: support.quotaWindowKind,
@@ -137,20 +150,30 @@ struct LiveWorkloadPlanningData: WorkloadPlanningDataProviding {
         ))
     }
 
-    private func currentEvidence() -> CurrentWorkloadQuotaEvidence? {
-        if let snapshot = state.local.codexSnapshot {
+    static func currentEvidence(
+        for support: CompletedWorkloadRunSupport?,
+        codexSnapshot: CodexRateLimitSnapshot?,
+        claudeSnapshot: ClaudeRateLimitSnapshot?,
+        forecasts: [QuotaWindowIdentity: QuotaInsightState]
+    ) -> CurrentWorkloadQuotaEvidence? {
+        guard let support else { return nil }
+        switch support.product {
+        case .codex:
+            guard let snapshot = codexSnapshot else { return nil }
             for observation in MeasuredQuotaObservationAdapter.codex(snapshot).reversed() {
-                if let forecast = state.quotaInsights[observation.identity] {
+                if let forecast = forecasts[observation.identity] {
                     return CurrentWorkloadQuotaEvidence(latestObservation: observation, forecast: forecast)
                 }
             }
-        }
-        if case let .loaded(snapshot, _) = state.claudeModel.state {
+        case .claudeCode:
+            guard let snapshot = claudeSnapshot else { return nil }
             for observation in MeasuredQuotaObservationAdapter.claude(snapshot).reversed() {
-                if let forecast = state.quotaInsights[observation.identity] {
+                if let forecast = forecasts[observation.identity] {
                     return CurrentWorkloadQuotaEvidence(latestObservation: observation, forecast: forecast)
                 }
             }
+        case .anthropicAPI, .openAIAPI, .azureOpenAI:
+            return nil
         }
         return nil
     }
