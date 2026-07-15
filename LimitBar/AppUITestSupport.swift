@@ -164,6 +164,7 @@ private struct CodexExplanationUITestView: View {
             metrics: [],
             pricingTable: .empty,
             insights: [:],
+            anomalies: [:],
             insightsStorageAvailable: true,
             explanation: .available(CodexQuotaExplanation(
                 intervalStart: Date(timeIntervalSince1970: 1_783_716_100),
@@ -211,6 +212,7 @@ private struct QuotaInsightUITestView: View {
             resetsAt: fixture.observations.first?.identity.resetBoundary,
             isActive: true,
             insight: insight,
+            anomaly: nil,
             insightsStorageAvailable: true
         )
         .padding(20)

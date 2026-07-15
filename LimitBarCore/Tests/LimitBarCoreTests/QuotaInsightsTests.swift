@@ -271,6 +271,37 @@ struct QuotaInsightsTests {
         expectUnavailable(expired[identity], reason: .resetOrExpired, count: 4, span: 900)
     }
 
+    @Test("service exposes anomaly findings from retained Codex evidence")
+    func codexAnomalyReevaluation() async throws {
+        let service = QuotaInsightsService(store: try SQLiteQuotaObservationStore.inMemory())
+        let reset = base.addingTimeInterval(4 * 3_600)
+        var identity: QuotaWindowIdentity?
+        var percentage = 10.0
+        for (index, movement) in [0.0, 2, 2, 2, 2, 2, 8].enumerated() {
+            percentage += movement
+            let observedAt = base.addingTimeInterval(Double(index) * 10 * 60)
+            let forecasts = try await service.recordCodex(
+                CodexRateLimitSnapshot(
+                    planType: "plus",
+                    primary: CodexRateLimitWindow(percentUsed: percentage, windowMinutes: 300, resetsAt: reset),
+                    secondary: nil,
+                    credits: nil,
+                    reportedAt: observedAt
+                ),
+                now: observedAt
+            )
+            identity = forecasts.keys.first
+        }
+
+        let findings = try await service.reevaluateCodexAnomalies(now: base.addingTimeInterval(61 * 60))
+        guard case let .finding(finding) = findings[try #require(identity)] else {
+            Issue.record("Expected retained evidence to produce an anomaly finding")
+            return
+        }
+        #expect(finding.metadata.qualification == .qualified)
+        #expect(finding.metadata.method == .trailingMedianRatioV1)
+    }
+
     @Test("analytics reports insufficient, stale, reset, and flat evidence explicitly")
     func unavailableStates() throws {
         let identity = try window(reset: base.addingTimeInterval(3_600))

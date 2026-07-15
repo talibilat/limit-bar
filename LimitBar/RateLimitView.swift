@@ -13,6 +13,7 @@ struct RateLimitView: View {
                     ClaudeRateLimitsView(
                         model: state.claudeModel,
                         insights: state.quotaInsights,
+                        anomalies: state.quotaAnomalies,
                         insightsStorageAvailable: state.quotaInsightsStorageAvailable,
                         onActionCompleted: state.claudeActionCompleted
                     )
@@ -25,6 +26,7 @@ struct RateLimitView: View {
                         metrics: state.local.metrics,
                         pricingTable: pricingTable,
                         insights: state.quotaInsights,
+                        anomalies: state.quotaAnomalies,
                         insightsStorageAvailable: state.quotaInsightsStorageAvailable,
                         explanation: state.local.codexExplanation
                     )

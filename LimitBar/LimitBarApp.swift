@@ -2,6 +2,16 @@ import SwiftUI
 import LimitBarCore
 import Observation
 
+protocol QuotaInsightsServing: Sendable {
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) async throws -> QuotaFindingAnalysisSnapshot
+    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) async throws -> QuotaFindingAnalysisSnapshot
+    func reevaluateClaudeAnalysis(now: Date) async throws -> QuotaFindingAnalysisSnapshot
+    func reevaluateCodexAnalysis(now: Date) async throws -> QuotaFindingAnalysisSnapshot
+    func deleteAll() async throws
+}
+
+extension QuotaInsightsService: QuotaInsightsServing {}
+
 @main
 struct LimitBarApp: App {
 #if DEBUG
@@ -51,11 +61,13 @@ final class LimitBarState {
     let claudeModel: ClaudeRateLimitsModel
     let alertSettingsStore: AlertSettingsStore
     let alertCoordinator: AlertCoordinator
-    private(set) var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:]
+    private(set) var quotaAnalysis = QuotaFindingAnalysisSnapshot.empty
+    var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] { quotaAnalysis.forecasts }
+    var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
     private(set) var quotaInsightsStorageAvailable: Bool
 
     private let coordinator: LocalRefreshCoordinator
-    private let quotaInsightsService: QuotaInsightsService?
+    private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
@@ -93,7 +105,7 @@ final class LimitBarState {
         providerSettings: [ProviderSettings],
         claudeModel: ClaudeRateLimitsModel,
         coordinator: LocalRefreshCoordinator,
-        quotaInsightsService: QuotaInsightsService? = nil,
+        quotaInsightsService: (any QuotaInsightsServing)? = nil,
         codexExplanationStore: SQLiteCodexExplanationStore? = nil
     ) {
         self.providerSettings = providerSettings
@@ -147,7 +159,13 @@ final class LimitBarState {
         let observations = QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now)
         Task {
             await recordClaudeInsights(snapshot, now: now)
-            await alertCoordinator.evaluate(quota: observations, costs: [], now: now)
+            await alertCoordinator.evaluate(
+                quota: observations,
+                costs: [],
+                forecasts: Array(quotaInsights.values),
+                anomalies: Array(quotaAnomalies.values),
+                now: now
+            )
         }
     }
 
@@ -155,7 +173,7 @@ final class LimitBarState {
         guard let quotaInsightsService else { return false }
         do {
             try await quotaInsightsService.deleteAll()
-            quotaInsights = [:]
+            quotaAnalysis = .empty
             quotaInsightsStorageAvailable = true
             return true
         } catch {
@@ -191,6 +209,8 @@ final class LimitBarState {
             await alertCoordinator.evaluate(
                 quota: QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now),
                 costs: [],
+                forecasts: Array(quotaInsights.values),
+                anomalies: Array(quotaAnomalies.values),
                 now: now
             )
         }
@@ -211,13 +231,20 @@ final class LimitBarState {
             health: health,
             now: now
         )
-        await alertCoordinator.evaluate(quota: quota, costs: costs, now: now)
+        await alertCoordinator.evaluate(
+            quota: quota,
+            costs: costs,
+            forecasts: Array(quotaInsights.values),
+            anomalies: Array(quotaAnomalies.values),
+            now: now
+        )
     }
 
     private func recordClaudeInsights(_ snapshot: ClaudeRateLimitSnapshot, now: Date) async {
         guard let quotaInsightsService else { return }
         do {
-            quotaInsights.merge(try await quotaInsightsService.recordClaude(snapshot, now: now)) { _, new in new }
+            let analysis = try await quotaInsightsService.recordClaudeAnalysis(snapshot, now: now)
+            publish(analysis, for: .claudeCode)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
@@ -227,35 +254,42 @@ final class LimitBarState {
     private func reevaluateClaudeInsights(now: Date) async {
         guard let quotaInsightsService else { return }
         do {
-            let reevaluated = try await quotaInsightsService.reevaluateClaude(now: now)
-            quotaInsights = quotaInsights.filter { $0.key.product != .claudeCode }
-            quotaInsights.merge(reevaluated) { _, new in new }
+            let analysis = try await quotaInsightsService.reevaluateClaudeAnalysis(now: now)
+            publish(analysis, for: .claudeCode)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
         }
     }
 
-    private func recordCodexInsights(_ snapshot: CodexRateLimitSnapshot, now: Date) async {
+    func recordCodexInsights(_ snapshot: CodexRateLimitSnapshot, now: Date) async {
         guard let quotaInsightsService else { return }
         do {
-            quotaInsights.merge(try await quotaInsightsService.recordCodex(snapshot, now: now)) { _, new in new }
+            let analysis = try await quotaInsightsService.recordCodexAnalysis(snapshot, now: now)
+            publish(analysis, for: .codex)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
         }
     }
 
-    private func reevaluateCodexInsights(now: Date) async {
+    func reevaluateCodexInsights(now: Date) async {
         guard let quotaInsightsService else { return }
         do {
-            let reevaluated = try await quotaInsightsService.reevaluateCodex(now: now)
-            quotaInsights = quotaInsights.filter { $0.key.product != .codex }
-            quotaInsights.merge(reevaluated) { _, new in new }
+            let analysis = try await quotaInsightsService.reevaluateCodexAnalysis(now: now)
+            publish(analysis, for: .codex)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
         }
+    }
+
+    private func publish(_ analysis: QuotaFindingAnalysisSnapshot, for product: ProviderProduct) {
+        var forecasts = quotaAnalysis.forecasts.filter { $0.key.product != product }
+        var anomalies = quotaAnalysis.anomalies.filter { $0.key.product != product }
+        forecasts.merge(analysis.forecasts) { _, new in new }
+        anomalies.merge(analysis.anomalies) { _, new in new }
+        quotaAnalysis = QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
     }
 
 }

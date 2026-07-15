@@ -830,6 +830,21 @@ public final class SQLiteQuotaObservationStore {
     }
 }
 
+public struct QuotaFindingAnalysisSnapshot: Equatable, Sendable {
+    public let forecasts: [QuotaWindowIdentity: QuotaInsightState]
+    public let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+
+    public init(
+        forecasts: [QuotaWindowIdentity: QuotaInsightState],
+        anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+    ) {
+        self.forecasts = forecasts
+        self.anomalies = anomalies
+    }
+
+    public static let empty = QuotaFindingAnalysisSnapshot(forecasts: [:], anomalies: [:])
+}
+
 public actor QuotaInsightsService {
     private let store: SQLiteQuotaObservationStore
 
@@ -848,16 +863,50 @@ public actor QuotaInsightsService {
         try record(MeasuredQuotaObservationAdapter.claude(snapshot), now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
     }
 
+    public func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot {
+        _ = try recordClaude(snapshot, now: now)
+        let forecasts = try reevaluateClaude(now: now)
+        let anomalies = try reevaluateClaudeAnomalies(now: now)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+    }
+
     public func recordCodex(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
         try record(MeasuredQuotaObservationAdapter.codex(snapshot), now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
+    }
+
+    public func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot {
+        _ = try recordCodex(snapshot, now: now)
+        let forecasts = try reevaluateCodex(now: now)
+        let anomalies = try reevaluateCodexAnomalies(now: now)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
     }
 
     public func reevaluateClaude(now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
         try reevaluate(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
     }
 
+    public func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot {
+        let forecasts = try reevaluateClaude(now: now)
+        let anomalies = try reevaluateClaudeAnomalies(now: now)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+    }
+
     public func reevaluateCodex(now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
         try reevaluate(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
+    }
+
+    public func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot {
+        let forecasts = try reevaluateCodex(now: now)
+        let anomalies = try reevaluateCodexAnomalies(now: now)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+    }
+
+    public func reevaluateClaudeAnomalies(now: Date) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try reevaluateAnomalies(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
+    }
+
+    public func reevaluateCodexAnomalies(now: Date) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try reevaluateAnomalies(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
     }
 
     public func deleteAll() throws {
@@ -889,6 +938,20 @@ public actor QuotaInsightsService {
         try Dictionary(uniqueKeysWithValues: identities.map { identity in
             let retained = try store.observations(for: identity, now: now)
             return (identity, QuotaInsightAnalytics.analyze(retained, now: now, maximumAge: maximumAge, expectedIdentity: identity))
+        })
+    }
+
+    private func reevaluateAnomalies(
+        product: ProviderProduct,
+        now: Date,
+        maximumAge: TimeInterval
+    ) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
+        try Dictionary(uniqueKeysWithValues: store.identities(for: product, now: now).map { identity in
+            let retained = try store.observations(for: identity, now: now)
+            return (
+                identity,
+                QuotaAnomalyAnalytics.analyze(retained, now: now, maximumAge: maximumAge, expectedIdentity: identity)
+            )
         })
     }
 }
