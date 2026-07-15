@@ -157,6 +157,21 @@ struct DiagnosticExportTests {
         #expect(anomaly.traceLimit == 16)
         #expect(anomaly.omittedTraceCount == 9)
         #expect(anomaly.evidenceTraceReferences == Array(traces.prefix(16)))
+        let decodedProjection = try DiagnosticEvidenceForecast(
+            status: .unavailable,
+            method: .pairwisePositiveSlopeInterquartileV2,
+            qualification: .unavailable,
+            unavailableReason: .staleEvidence,
+            observationCount: 25,
+            observationSpanSeconds: 900,
+            evidenceAgeSeconds: 100,
+            range: nil,
+            resetInteraction: .unavailable,
+            evidenceTraceReferences: [traces[0]],
+            totalTraceCount: 25,
+            limitations: [.providerWeightingUnknown]
+        )
+        #expect(decodedProjection.omittedTraceCount == 24)
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             _ = try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: ["trace/conflict"], limitations: [.providerWeightingUnknown])
         }

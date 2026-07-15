@@ -560,7 +560,7 @@ public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
         provenance = .calculated
         self.evidenceTraceReferences = Array(canonicalTraces.prefix(DiagnosticExport.maximumFindingTraceReferences))
         traceLimit = DiagnosticExport.maximumFindingTraceReferences
-        omittedTraceCount = max(0, total - DiagnosticExport.maximumFindingTraceReferences)
+        omittedTraceCount = max(0, total - self.evidenceTraceReferences.count)
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
 }
@@ -617,7 +617,7 @@ public struct DiagnosticEvidenceAnomaly: Codable, Equatable, Sendable {
         provenance = .calculated
         self.evidenceTraceReferences = Array(canonicalTraces.prefix(DiagnosticExport.maximumFindingTraceReferences))
         traceLimit = DiagnosticExport.maximumFindingTraceReferences
-        omittedTraceCount = max(0, total - DiagnosticExport.maximumFindingTraceReferences)
+        omittedTraceCount = max(0, total - self.evidenceTraceReferences.count)
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
 }
