@@ -4,22 +4,25 @@ import Testing
 
 @Suite("Diagnostic export")
 struct DiagnosticExportTests {
-    @Test("export has the complete deterministic v4 positive allow-list")
+    @Test("export has the complete deterministic v5 positive allow-list")
     func deterministicSchema() throws {
         let first = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
-        ], includesHistory: true, includesQuotaFinding: true))
+        ], includesHistory: true, includesQuotaFinding: true, includesCodexExplanation: true))
         let second = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .anthropic, state: .connected),
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
-        ], includesHistory: true, includesQuotaFinding: true))
+        ], includesHistory: true, includesQuotaFinding: true, includesCodexExplanation: true))
 
         #expect(first.bytes == second.bytes)
         let object = try JSONSerialization.jsonObject(with: first.bytes)
         #expect(keySnapshot(object) == [
             "application", "application.build", "application.version", "application.version.major",
             "application.version.minor", "application.version.patch", "database", "database.state",
+            "codexExplanation", "codexExplanation.adapterVersion", "codexExplanation.barrierCategories",
+            "codexExplanation.coverage", "codexExplanation.evidenceCount", "codexExplanation.observationCount",
+            "codexExplanation.retention", "codexExplanation.sessionCount", "codexExplanation.status", "codexExplanation.tokenEvidence",
             "generatedAt", "imports", "imports.accepted", "imports.rejected", "operatingSystem",
             "operatingSystem.version", "operatingSystem.version.major", "operatingSystem.version.minor",
             "operatingSystem.version.patch", "providers", "providers[].provider", "providers[].state",
@@ -40,14 +43,15 @@ struct DiagnosticExportTests {
         #expect(report.refreshHistory?.count == 1)
         #expect(report.quotaFindings?.count == 1)
         #expect(report.quotaFindings?.first?.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
+        #expect(report.codexExplanation?.adapterVersion == CodexRolloutEvidenceAdapter.adapterVersion)
     }
 
     @Test("decode routes supported, unsupported, and malformed versions")
     func versionAwareDecode() throws {
         let artifact = try DiagnosticExport.make(from: input())
         #expect(try DiagnosticExport.decode(artifact.bytes).application.build == 42)
-        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(5)) {
-            try DiagnosticExport.decode(Data(#"{"schemaVersion":5,"privateFuturePayload":"SECRET"}"#.utf8))
+        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(6)) {
+            try DiagnosticExport.decode(Data(#"{"schemaVersion":6,"privateFuturePayload":"SECRET"}"#.utf8))
         }
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(Data(#"{"schemaVersion":1}"#.utf8))
@@ -131,7 +135,7 @@ struct DiagnosticExportTests {
     func legacyDecode() throws {
         let v3 = try DiagnosticExport.make(from: input())
         let legacyText = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 1"#)
+            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 1"#)
         let legacy = try DiagnosticExport.decode(Data(legacyText.utf8))
         #expect(legacy.schemaVersion == 1)
         #expect(legacy.quotaFindings == nil)
@@ -141,7 +145,7 @@ struct DiagnosticExportTests {
     func v2ForecastMethodDecode() throws {
         let v3 = try DiagnosticExport.make(from: input(includesQuotaFinding: true))
         let v2Text = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 2"#)
+            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 2"#)
             .replacingOccurrences(of: #"      "qualification" : "qualified",\n"#, with: "")
             .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
 
@@ -153,7 +157,7 @@ struct DiagnosticExportTests {
     func v3UnavailableMetadataDecode() throws {
         let v4 = try DiagnosticExport.make(from: input(quotaFindings: [try unavailableQuotaFinding()]))
         let v3Text = try v4.preview
-            .replacingOccurrences(of: #""schemaVersion" : 4"#, with: #""schemaVersion" : 3"#)
+            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 3"#)
             .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
             .replacingOccurrences(of: #"      "qualification" : "unavailable",\n"#, with: "")
             .replacingOccurrences(of: "incompatible_evidence", with: "stale_evidence")
@@ -255,6 +259,7 @@ struct DiagnosticExportTests {
         ],
         includesHistory: Bool = false,
         includesQuotaFinding: Bool = false,
+        includesCodexExplanation: Bool = false,
         refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil,
         quotaFindings: [DiagnosticQuotaFinding]? = nil
     ) throws -> DiagnosticExportInput {
@@ -268,7 +273,21 @@ struct DiagnosticExportTests {
             importCounts: DiagnosticImportCounts(accepted: 12, rejected: 2),
             resourceLimitReasons: [.rateLimited, .responseTooLarge],
             refreshHistory: refreshHistory ?? (includesHistory ? [try historyRecord()] : nil),
-            quotaFindings: quotaFindings ?? (includesQuotaFinding ? [try quotaFinding()] : nil)
+            quotaFindings: quotaFindings ?? (includesQuotaFinding ? [try quotaFinding()] : nil),
+            codexExplanation: includesCodexExplanation ? try codexExplanationFinding() : nil
+        )
+    }
+
+    private func codexExplanationFinding() throws -> DiagnosticCodexExplanationFinding {
+        try DiagnosticCodexExplanationFinding(
+            status: .partial,
+            adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+            coverage: .partial,
+            tokenEvidence: .positive,
+            sessionCount: 2,
+            evidenceCount: 3,
+            observationCount: 2,
+            barrierCategories: [.malformedRecord]
         )
     }
 

@@ -94,6 +94,8 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         try credentialService.save("fixture-secret", for: credentialKey)
 
         let quotaStore = try SQLiteQuotaObservationStore(path: directory.appendingPathComponent("quota.sqlite").path)
+        let codexExplanationStore = try SQLiteCodexExplanationStore(path: directory.appendingPathComponent("codex-explanations.sqlite").path)
+        try codexExplanationStore.record(.unavailable(.gap), now: now)
         let observation = try MeasuredQuotaObservation(identity: identity, percentageUsed: 25, observedAt: now, source: .codexLocalReport)
         try quotaStore.record([observation], now: now)
         let service = QuotaInsightsService(store: quotaStore)
@@ -107,7 +109,8 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
                 refreshUsage: { _, _ in throw CancellationError() },
                 scanCodex: { _ in nil }
             )),
-            quotaInsightsService: service
+            quotaInsightsService: service,
+            codexExplanationStore: codexExplanationStore
         )
         await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
             sequence: 1,
@@ -134,6 +137,90 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         XCTAssertEqual(alertSettings.preferences, alertPreferences)
         XCTAssertEqual(providerSettingsStore.settings, ProviderSettingsPersistence.decode(try ProviderSettingsPersistence.encode([providerSetting])))
         XCTAssertEqual(try credentialService.credential(for: credentialKey), Data("fixture-secret".utf8))
+
+        let deletedExplanations = await state.deleteCodexExplanations()
+        XCTAssertTrue(deletedExplanations)
+        XCTAssertNil(try codexExplanationStore.latest(now: now))
+        XCTAssertEqual(try usageStore.allMetrics(), [metric])
+        XCTAssertEqual(try quotaStore.observations(for: identity, now: now), [])
+        XCTAssertEqual(try deliveryStore.satisfactions(for: rule.id, window: .quota(identity)).map(\.threshold), [50])
+        XCTAssertEqual(alertSettings.preferences, alertPreferences)
+        XCTAssertEqual(providerSettingsStore.settings, ProviderSettingsPersistence.decode(try ProviderSettingsPersistence.encode([providerSetting])))
+        XCTAssertEqual(try credentialService.credential(for: credentialKey), Data("fixture-secret".utf8))
+    }
+
+    @MainActor
+    func testRetainedCodexExplanationRestoresIntoStateAndDiagnosticsAndDeletesImmediately() async throws {
+        let store = try SQLiteCodexExplanationStore.inMemory()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let explanation = CodexQuotaExplanation(
+            intervalStart: now.addingTimeInterval(-120),
+            intervalEnd: now.addingTimeInterval(-60),
+            quotaResetBoundary: now.addingTimeInterval(3_600),
+            coverageStart: now.addingTimeInterval(-130),
+            coverageEnd: now.addingTimeInterval(-50),
+            reportedQuotaMovementPercent: 2,
+            observedLocalBreakdown: CodexObservedLocalBreakdown(
+                tokens: CodexMeasuredTokens(input: 3, cachedInput: 1, output: 2, reasoningOutput: 1),
+                sessionCount: 1
+            ),
+            unattributed: true,
+            allocationPercent: nil,
+            observationIdentities: [],
+            evidenceIdentities: ["retained-private-digest"],
+            adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+            barriers: []
+        )
+        try store.record(.available(explanation), now: now)
+
+        let state = LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in nil }
+            )),
+            codexExplanationStore: store
+        )
+
+        guard case .available = state.local.codexExplanation else {
+            return XCTFail("Expected retained explanation to be restored")
+        }
+        let restoredRetained = state.local.codexExplanationRetained
+        XCTAssertTrue(restoredRetained)
+
+        let input = try DiagnosticExportInputBuilder.make(
+            generatedAt: now,
+            applicationVersion: "1.0.0",
+            applicationBuild: "1",
+            operatingSystemVersion: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0),
+            providerSettings: ProviderSettings.defaultSettings,
+            customSourceCount: 0,
+            databaseIsAvailable: true,
+            acceptedImportCount: 0,
+            rejectedImportCount: 0,
+            customImportFailures: 0,
+            customRejectedLines: 0,
+            refreshHistory: [:],
+            quotaInsights: [:],
+            codexExplanation: state.local.codexExplanation,
+            codexExplanationRetained: restoredRetained
+        )
+        let artifact = try DiagnosticExport.make(from: input)
+        let preview = try artifact.preview
+        XCTAssertTrue(preview.contains(#""retention" : "retained""#))
+        XCTAssertFalse(preview.contains("retained-private-digest"))
+
+        let deleted = await state.deleteCodexExplanations()
+        let clearedExplanation = state.local.codexExplanation
+        let clearedRetained = state.local.codexExplanationRetained
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(clearedExplanation, .unavailable(.insufficientObservations))
+        XCTAssertFalse(clearedRetained)
+        XCTAssertNil(try store.latest(now: now))
     }
 }
 

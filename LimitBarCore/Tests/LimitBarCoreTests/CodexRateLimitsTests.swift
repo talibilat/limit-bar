@@ -40,6 +40,15 @@ struct CodexRateLimitsTests {
         #expect(snapshot.primary?.displayLabel == "60 minute window")
     }
 
+    @Test("limit identifiers are bounded safe tokens for exact quota identity")
+    func limitIdentifiersAreSafe() {
+        #expect(CodexRateLimitWindow.normalizedLimitID(nil) == "codex")
+        #expect(CodexRateLimitWindow.normalizedLimitID(" Team_A ") == "team_a")
+        let unusual = CodexRateLimitWindow.normalizedLimitID("team:primary:" + String(repeating: "x", count: 200))
+        #expect(unusual.hasPrefix("id_"))
+        #expect(unusual.count == 19)
+    }
+
     @Test("missing rate_limits payload throws")
     func missingRateLimitsThrows() {
         let line = #"{"timestamp":"2026-01-01T00:00:00Z","payload":{"type":"token_count","info":{}}}"#

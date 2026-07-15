@@ -56,7 +56,7 @@ struct QuotaInsightsTests {
 
         let canonicalCodex = try #require(QuotaWindowIdentity.codex(slot: "primary", window: codexWindow))
         #expect(canonicalCodex.product == .codex)
-        #expect(canonicalCodex.identifier == "primary:300")
+        #expect(canonicalCodex.identifier == "codex:primary:300")
         #expect(MeasuredQuotaObservationAdapter.codex(codexSnapshot).map(\.identity) == [canonicalCodex])
         #expect(QuotaObservationAdapter.codex(codexSnapshot, now: base).map(\.identity) == [canonicalCodex])
         #expect(QuotaWindowIdentity.codex(slot: "unsupported", window: codexWindow) == nil)

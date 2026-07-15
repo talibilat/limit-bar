@@ -224,6 +224,41 @@ struct LocalRefreshCoordinatorTests {
         #expect(second?.codexRefreshed == false)
         #expect(second?.usageRefreshed == true)
     }
+
+    @Test("a failed Codex publication preserves display data but does not publish fresh explanation evidence")
+    func failedCodexPublicationDropsExplanationEvidence() async {
+        let calls = CodexPublicationFailureRecorder()
+        let coordinator = LocalRefreshCoordinator(dependencies: await calls.dependencies)
+        var iterator = coordinator.snapshots.makeAsyncIterator()
+
+        await coordinator.requestRefresh()
+        let first = await iterator.next()
+        await coordinator.requestRefresh()
+        let second = await iterator.next()
+
+        #expect(first?.codexRefreshed == true)
+        #expect(first?.codexExplanation == .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(second?.codex == first?.codex)
+        #expect(second?.codexRefreshed == false)
+        #expect(second?.codexExplanation == .unavailable(.unsupportedEvidence))
+    }
+
+    @Test("a failed Codex scan can publish a retained explanation marked retained")
+    func failedCodexScanPublishesRetainedExplanation() async {
+        let coordinator = LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+            refreshUsage: { _, _ in emptyUsageRefresh() },
+            scanCodexPublication: { _ in throw TestFailure() },
+            loadRetainedCodexExplanation: { _ in .observedZero(reportedQuotaMovementPercent: 1, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1) }
+        ))
+        var iterator = coordinator.snapshots.makeAsyncIterator()
+
+        await coordinator.requestRefresh()
+        let snapshot = await iterator.next()
+
+        #expect(snapshot?.codexRefreshed == false)
+        #expect(snapshot?.codexExplanation == .observedZero(reportedQuotaMovementPercent: 1, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(snapshot?.codexExplanationRetained == true)
+    }
 }
 
 private func dependencies(calls: CallRecorder) -> LocalRefreshDependencies {
@@ -333,6 +368,36 @@ private actor CodexFailureRecorder {
             secondary: nil,
             credits: nil,
             reportedAt: Date(timeIntervalSince1970: 1)
+        )
+    }
+}
+
+private actor CodexPublicationFailureRecorder {
+    private var codexPass = 0
+
+    var dependencies: LocalRefreshDependencies {
+        LocalRefreshDependencies(
+            refreshUsage: { _, _ in emptyUsageRefresh() },
+            scanCodexPublication: { [self] _ in try await scanCodex() }
+        )
+    }
+
+    private func scanCodex() throws -> CodexSessionScanPublication {
+        codexPass += 1
+        if codexPass == 2 { throw TestFailure() }
+        return CodexSessionScanPublication(
+            snapshot: CodexRateLimitSnapshot(
+                planType: "plus",
+                primary: CodexRateLimitWindow(percentUsed: 80, windowMinutes: 300, resetsAt: Date(timeIntervalSince1970: 600)),
+                secondary: nil,
+                credits: nil,
+                reportedAt: Date(timeIntervalSince1970: 1)
+            ),
+            explanation: .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: Date(timeIntervalSince1970: 600), observationIdentityCount: 2, evidenceIdentityCount: 1),
+            evidence: [],
+            barriers: [],
+            coverageStart: Date(timeIntervalSince1970: 0),
+            coverageEnd: Date(timeIntervalSince1970: 2)
         )
     }
 }

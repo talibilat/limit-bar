@@ -205,7 +205,7 @@ public struct QuotaWindowIdentity: Codable, Equatable, Hashable, Sendable {
         guard slot == "primary" || slot == "secondary", let reset = window.resetsAt else { return nil }
         return try? QuotaWindowIdentity(
             product: .codex,
-            identifier: "\(slot):\(window.windowMinutes)",
+            identifier: "\(window.limitID):\(slot):\(window.windowMinutes)",
             resetBoundary: reset
         )
     }

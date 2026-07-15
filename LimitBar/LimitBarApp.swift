@@ -56,6 +56,7 @@ final class LimitBarState {
 
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: QuotaInsightsService?
+    private let codexExplanationStore: SQLiteCodexExplanationStore?
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
@@ -67,9 +68,11 @@ final class LimitBarState {
         )
         let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
+        let codexExplanationStore = try? SQLiteCodexExplanationStore.applicationSupportStore()
+        self.codexExplanationStore = codexExplanationStore
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
-            codex: CodexSessionScanner(sessionsDirectory: sessionsDirectory)
+            codexEvidence: CodexSessionScanner(sessionsDirectory: sessionsDirectory, explanationStore: codexExplanationStore)
         ), refreshInterval: refreshCadence.seconds)
         claudeModel = ClaudeRateLimitsModel(
             credentials: ClaudeCredentialBroker.shared,
@@ -83,23 +86,27 @@ final class LimitBarState {
         let alertSettingsStore = AlertSettingsStore()
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
+        local.restoreCodexExplanation(try? codexExplanationStore?.latest())
     }
 
     init(
         providerSettings: [ProviderSettings],
         claudeModel: ClaudeRateLimitsModel,
         coordinator: LocalRefreshCoordinator,
-        quotaInsightsService: QuotaInsightsService? = nil
+        quotaInsightsService: QuotaInsightsService? = nil,
+        codexExplanationStore: SQLiteCodexExplanationStore? = nil
     ) {
         self.providerSettings = providerSettings
         self.claudeModel = claudeModel
         self.coordinator = coordinator
         self.quotaInsightsService = quotaInsightsService
+        self.codexExplanationStore = codexExplanationStore
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
         let alertSettingsStore = AlertSettingsStore()
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
+        local.restoreCodexExplanation(try? codexExplanationStore?.latest())
     }
 
     func start() {
@@ -153,6 +160,17 @@ final class LimitBarState {
             return true
         } catch {
             quotaInsightsStorageAvailable = false
+            return false
+        }
+    }
+
+    func deleteCodexExplanations() async -> Bool {
+        guard let codexExplanationStore else { return false }
+        do {
+            try codexExplanationStore.deleteAll()
+            local.clearCodexExplanation()
+            return true
+        } catch {
             return false
         }
     }

@@ -216,6 +216,75 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
     }
 }
 
+public enum DiagnosticCodexExplanationStatus: String, Codable, CaseIterable, Equatable, Sendable {
+    case available
+    case partial
+    case observedZero = "observed_zero"
+    case unavailable
+}
+
+public enum DiagnosticCodexExplanationCoverage: String, Codable, CaseIterable, Equatable, Sendable {
+    case complete
+    case partial
+    case unavailable
+}
+
+public enum DiagnosticCodexExplanationTokenEvidence: String, Codable, CaseIterable, Equatable, Sendable {
+    case positive
+    case observedZero = "observed_zero"
+    case none
+}
+
+public enum DiagnosticCodexExplanationRetention: String, Codable, CaseIterable, Equatable, Sendable {
+    case fresh
+    case retained
+}
+
+public struct DiagnosticCodexExplanationFinding: Codable, Equatable, Sendable {
+    public let status: DiagnosticCodexExplanationStatus
+    public let adapterVersion: String
+    public let coverage: DiagnosticCodexExplanationCoverage
+    public let tokenEvidence: DiagnosticCodexExplanationTokenEvidence
+    public let sessionCount: Int
+    public let evidenceCount: Int
+    public let observationCount: Int
+    public let barrierCategories: [CodexEvidenceBarrier]
+    public let unavailableReason: CodexQuotaExplanationUnavailableReason?
+    public let retention: DiagnosticCodexExplanationRetention
+
+    public init(
+        status: DiagnosticCodexExplanationStatus,
+        adapterVersion: String,
+        coverage: DiagnosticCodexExplanationCoverage,
+        tokenEvidence: DiagnosticCodexExplanationTokenEvidence,
+        sessionCount: Int,
+        evidenceCount: Int,
+        observationCount: Int,
+        barrierCategories: [CodexEvidenceBarrier],
+        unavailableReason: CodexQuotaExplanationUnavailableReason? = nil,
+        retention: DiagnosticCodexExplanationRetention = .fresh
+    ) throws {
+        guard adapterVersion == CodexRolloutEvidenceAdapter.adapterVersion,
+              (0...1_000).contains(sessionCount),
+              (0...10_000).contains(evidenceCount),
+              (0...1_000).contains(observationCount),
+              Set(barrierCategories).count == barrierCategories.count,
+              (status == .unavailable) == (unavailableReason != nil) else {
+            throw DiagnosticExportError.invalidCodexExplanationFinding
+        }
+        self.status = status
+        self.adapterVersion = adapterVersion
+        self.coverage = coverage
+        self.tokenEvidence = tokenEvidence
+        self.sessionCount = sessionCount
+        self.evidenceCount = evidenceCount
+        self.observationCount = observationCount
+        self.barrierCategories = barrierCategories.sorted { $0.rawValue < $1.rawValue }
+        self.unavailableReason = unavailableReason
+        self.retention = retention
+    }
+}
+
 public struct DiagnosticExportInput: Equatable, Sendable {
     public let generatedAt: Date
     public let appVersion: DiagnosticVersion
@@ -227,6 +296,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
     public let resourceLimitReasons: Set<DiagnosticResourceLimitReason>
     public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
     public let quotaFindings: [DiagnosticQuotaFinding]?
+    public let codexExplanation: DiagnosticCodexExplanationFinding?
 
     public init(
         generatedAt: Date,
@@ -238,7 +308,8 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         importCounts: DiagnosticImportCounts,
         resourceLimitReasons: Set<DiagnosticResourceLimitReason>,
         refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil,
-        quotaFindings: [DiagnosticQuotaFinding]? = nil
+        quotaFindings: [DiagnosticQuotaFinding]? = nil,
+        codexExplanation: DiagnosticCodexExplanationFinding? = nil
     ) throws {
         guard generatedAt.timeIntervalSince1970.isFinite else {
             throw DiagnosticExportError.invalidTimestamp
@@ -266,6 +337,7 @@ public struct DiagnosticExportInput: Equatable, Sendable {
         self.resourceLimitReasons = resourceLimitReasons
         self.refreshHistory = refreshHistory
         self.quotaFindings = quotaFindings
+        self.codexExplanation = codexExplanation
     }
 }
 
@@ -279,6 +351,7 @@ public enum DiagnosticExportError: Error, Equatable {
     case unsupportedSchemaVersion(Int)
     case malformedArtifact
     case previewEncodingFailed
+    case invalidCodexExplanationFinding
 }
 
 public struct DiagnosticExportArtifact: Equatable, Sendable {
@@ -324,6 +397,7 @@ public struct DiagnosticExportReport: Codable, Equatable, Sendable {
     public let resourceLimitReasons: [DiagnosticResourceLimitReason]
     public let refreshHistory: [DiagnosticRefreshHistoryRecord]?
     public let quotaFindings: [DiagnosticQuotaFinding]?
+    public let codexExplanation: DiagnosticCodexExplanationFinding?
 }
 
 public typealias DiagnosticExportReportV1 = DiagnosticExportReport
@@ -365,7 +439,7 @@ private struct LegacyDiagnosticExportReportV3: Codable {
 }
 
 public enum DiagnosticExport {
-    public static let currentSchemaVersion = 4
+    public static let currentSchemaVersion = 5
     public static let maximumRefreshHistoryRecords = 20
     public static let maximumQuotaFindings = 8
 
@@ -391,7 +465,8 @@ public enum DiagnosticExport {
             },
             quotaFindings: input.quotaFindings?.sorted {
                 ($0.product.rawValue, $0.windowKind.rawValue) < ($1.product.rawValue, $1.windowKind.rawValue)
-            }
+            },
+            codexExplanation: input.codexExplanation
         )
 
         let encoder = JSONEncoder()
@@ -427,9 +502,10 @@ public enum DiagnosticExport {
                     imports: legacy.imports,
                     resourceLimitReasons: legacy.resourceLimitReasons,
                     refreshHistory: legacy.refreshHistory,
-                    quotaFindings: nil
+                    quotaFindings: nil,
+                    codexExplanation: nil
                 )
-            } else if envelope.schemaVersion == 2 || envelope.schemaVersion == 3 {
+            } else if envelope.schemaVersion == 2 || envelope.schemaVersion == 3 || envelope.schemaVersion == 4 {
                 let legacy = try decoder.decode(LegacyDiagnosticExportReportV3.self, from: bytes)
                 let quotaFindings = try legacy.quotaFindings?.map {
                     try DiagnosticQuotaFinding(
@@ -458,7 +534,8 @@ public enum DiagnosticExport {
                     imports: legacy.imports,
                     resourceLimitReasons: legacy.resourceLimitReasons,
                     refreshHistory: legacy.refreshHistory,
-                    quotaFindings: quotaFindings
+                    quotaFindings: quotaFindings,
+                    codexExplanation: nil
                 )
             } else {
                 report = try decoder.decode(DiagnosticExportReport.self, from: bytes)
@@ -509,6 +586,20 @@ public enum DiagnosticExport {
                         calculatedExhaustionMinutes: $0.calculatedExhaustionMinutes.map {
                             try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
                         }
+                    )
+                },
+                codexExplanation: try report.codexExplanation.map {
+                    try DiagnosticCodexExplanationFinding(
+                        status: $0.status,
+                        adapterVersion: $0.adapterVersion,
+                        coverage: $0.coverage,
+                        tokenEvidence: $0.tokenEvidence,
+                        sessionCount: $0.sessionCount,
+                        evidenceCount: $0.evidenceCount,
+                        observationCount: $0.observationCount,
+                        barrierCategories: $0.barrierCategories,
+                        unavailableReason: $0.unavailableReason,
+                        retention: $0.retention
                     )
                 }
             )

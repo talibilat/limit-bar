@@ -22,6 +22,7 @@ Click it for two tabs:
 - **Cost labels** distinguish provider-reported values from calculated estimates.
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
 - **Quota insights** retain privacy-safe measured Claude Code and Codex percentages locally and calculate qualified recent burn and exhaustion ranges without project, agent, model, or token attribution.
+- **Codex quota explanations** correlate the latest compatible measured Codex quota interval with validated local rollout token transitions, while keeping quota movement unattributed.
 - **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
 
@@ -74,7 +75,7 @@ Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomical
 
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
-Schema v4 includes coarse quota product and window categories, measured observation counts and span, explicit qualification, calculated burn or exhaustion-minute ranges, and typed forecast-method metadata for every finding.
+Schema v5 includes coarse quota product and window categories, measured observation counts and span, explicit qualification, calculated burn or exhaustion-minute ranges, typed forecast-method metadata for every finding, and coarse Codex explanation status without exact window IDs, resets, token values, session IDs, or digests.
 Current quota findings use `pairwise_positive_slope_interquartile_v2`; V1 remains accepted only for legacy diagnostic decoding.
 The checked synthetic replay baseline contains zero observed held-out completed windows, so empirical forecast quality assessment and a forecast quality threshold remain unavailable and no stronger product claim is enabled.
 The decoder remains compatible with schema v1 artifacts without quota findings and schema v2-v3 findings whose missing method or qualification metadata maps to the established pairwise-slope method and status-derived qualification.
@@ -117,6 +118,39 @@ The burn range uses the middle half of positive pairwise percentage slopes, and 
 Counter decreases, expired windows, stale evidence, flat usage, short spans, and insufficient observations produce an explicit unavailable state instead of a forecast.
 The existing rate-limit rows label provider inputs as **Measured** and derived ranges as **Calculated**; there is no additional gauge or dashboard.
 These findings do not drive notifications, so ticket 12 alert qualification and measured-only behavior remain unchanged.
+
+## Codex Quota Explanations
+
+LimitBar can explain the latest compatible Codex rate-limit interval with an **Observed Local Breakdown** from local Codex rollout files.
+This is not a provider API poll and it does not read Codex credentials.
+The Local Refresh Cycle scans the configured `~/.codex/sessions` boundary once for both the latest Codex rate-limit snapshot and explanation evidence.
+
+The supported rollout evidence adapter is exactly `codex-rollout-observed-0.144.4`.
+Its confidence is `observed-compatible`, and its source evidence was last verified on 2026-07-15.
+The adapter accepts only rollout files whose first complete line is `session_meta` with `cli_version == "0.144.4"`, stable UUID-shaped `session_id` and `id`, and a valid timestamp.
+That creator version proves only the file's initial creator metadata; LimitBar does not claim every resumed line was authored by Codex 0.144.4.
+
+For validation, LimitBar transiently decodes only `session_meta` `session_id`, `id`, and `cli_version`, plus `token_count` `info` and `rate_limits` fields documented in `docs/CODEX_SESSION_EVIDENCE.md`.
+Unknown fields are tolerated in memory and dropped.
+LimitBar never persists or exports raw JSONL lines, prompts, code, responses, reasoning, tool calls, terminal output, request bodies, credentials, local paths, working directories, Git metadata, model labels, project labels, arbitrary payload fields, or unknown fields from Codex rollout files.
+
+Local activity is derived only from consecutive validated cumulative `total_token_usage` transitions in one logical rollout.
+The first valid snapshot is a baseline and counts no activity.
+Unchanged snapshots count no activity.
+Cached input and reasoning output remain subsets of input and output and are not added again to total tokens.
+Estimated or full-context synthetic token shapes, malformed lines, unsupported variants, counter decreases, inconsistent totals, mismatched last-token deltas, unsafe timestamps, source discontinuities, archives outside `sessions`, and `.jsonl.zst` compressed rollouts produce explicit unavailable or partial coverage rather than inferred activity.
+
+The explanation engine requires two compatible measured Codex quota observations in the same exact quota window and validated local evidence strictly inside their interval.
+It keeps the measured quota percentage movement separate from the Observed Local Breakdown by privacy-safe session identity and token categories.
+It does not calculate token-to-percentage allocation, inferred percentage, model attribution, project attribution, agent attribution, tool attribution, or provider weighting.
+If coverage is incomplete or unsafe, the Codex row shows a factual partial or unavailable reason instead of pretending the local evidence is complete.
+
+Codex explanation findings are persisted in `codex-explanations.sqlite` as bounded normalized status, coverage, barrier categories, adapter version, observation/evidence counts, session count, and token-category totals.
+The store validates an exact schema fingerprint, rejects future or malformed schemas without mutation, prunes transactionally by age and count, and can be deleted independently in Settings.
+It does not retain raw JSONL lines, raw payloads, paths, names, exact local session digests, or model/project/agent/tool labels.
+Deleting Codex explanations does not alter current usage, quota observations, settings, credentials, alert rules, or notification delivery history.
+Diagnostic export includes only coarse Codex explanation status, coverage category, counts, barrier categories, adapter version, and unavailable reason.
+It does not export exact session IDs, digests, exact window IDs, exact reset times, token values, paths, names, or raw payloads.
 
 ### Claude Authorization
 
@@ -176,6 +210,7 @@ The default local paths are:
 - `~/Library/Application Support/LimitBar/historical-usage-trends.sqlite` for revisioned historical aggregates.
 - `~/Library/Application Support/LimitBar/quota-observations.sqlite` for bounded measured quota observations.
 - `~/Library/Application Support/LimitBar/provider-refresh-history.sqlite` for bounded privacy-safe provider refresh outcomes and affected windows.
+- `~/Library/Application Support/LimitBar/codex-explanations.sqlite` for bounded privacy-safe Codex explanation findings.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.

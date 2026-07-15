@@ -142,10 +142,50 @@ private struct LimitBarUITestHostView: View {
             .frame(width: 620, height: 720)
         case "quota-insight":
             QuotaInsightUITestView()
+        case "codex-explanation":
+            CodexExplanationUITestView()
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private struct CodexExplanationUITestView: View {
+    var body: some View {
+        CodexRateLimitsView(
+            snapshot: CodexRateLimitSnapshot(
+                planType: "plus",
+                primary: CodexRateLimitWindow(percentUsed: 13.5, windowMinutes: 300, resetsAt: Date(timeIntervalSince1970: 1_783_716_600)),
+                secondary: nil,
+                credits: nil,
+                reportedAt: Date(timeIntervalSince1970: 1_783_716_200)
+            ),
+            metrics: [],
+            pricingTable: .empty,
+            insights: [:],
+            insightsStorageAvailable: true,
+            explanation: .available(CodexQuotaExplanation(
+                intervalStart: Date(timeIntervalSince1970: 1_783_716_100),
+                intervalEnd: Date(timeIntervalSince1970: 1_783_716_200),
+                quotaResetBoundary: Date(timeIntervalSince1970: 1_783_716_600),
+                coverageStart: Date(timeIntervalSince1970: 1_783_716_090),
+                coverageEnd: Date(timeIntervalSince1970: 1_783_716_210),
+                reportedQuotaMovementPercent: 3.5,
+                observedLocalBreakdown: CodexObservedLocalBreakdown(
+                    tokens: CodexMeasuredTokens(input: 7, cachedInput: 2, output: 3, reasoningOutput: 1),
+                    sessionCount: 1
+                ),
+                unattributed: true,
+                allocationPercent: nil,
+                observationIdentities: [],
+                evidenceIdentities: ["fixture"],
+                adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+                barriers: []
+            ))
+        )
+        .padding(20)
+        .frame(width: 620, height: 420)
     }
 }
 

@@ -30,6 +30,8 @@ struct LimitBarSettingsView: View {
     @State private var refreshHistoryMessage: String?
     @State private var showsDeleteQuotaConfirmation = false
     @State private var quotaDeletionMessage: String?
+    @State private var showsDeleteCodexExplanationsConfirmation = false
+    @State private var codexExplanationDeletionMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -133,6 +135,24 @@ struct LimitBarSettingsView: View {
                     Text(quotaDeletionMessage)
                         .font(.caption)
                         .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Codex Explanations") {
+                Text("Codex explanation findings are retained locally in bounded normalized form so the latest compatible explanation can survive relaunch. They contain no raw JSONL lines, prompts, code, paths, model labels, project labels, or local session digests.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting these findings does not alter current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Codex Explanations", role: .destructive) {
+                    showsDeleteCodexExplanationsConfirmation = true
+                }
+                .accessibilityIdentifier("delete-codex-explanations")
+                if let codexExplanationDeletionMessage {
+                    Text(codexExplanationDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
                 }
             }
 
@@ -285,6 +305,22 @@ struct LimitBarSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes retained quota history and calculated findings only. Current reports remain available and may be observed again on a later refresh. Alert rules and delivery state, settings, credentials, and usage remain unchanged.")
+        }
+        .confirmationDialog(
+            "Delete retained Codex explanations?",
+            isPresented: $showsDeleteCodexExplanationsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Codex Explanations", role: .destructive) {
+                Task {
+                    codexExplanationDeletionMessage = await state.deleteCodexExplanations()
+                        ? "Codex explanation findings deleted. Current usage, quota observations, settings, credentials, alert rules, and delivery history were not changed."
+                        : "Could not delete Codex explanation findings."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained Codex explanation findings only. It does not remove current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
         }
         .confirmationDialog(
             "Clear provider refresh history?",

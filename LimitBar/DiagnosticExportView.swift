@@ -21,7 +21,9 @@ enum DiagnosticExportInputBuilder {
             customImportFailures: state.local.customImportFailures,
             customRejectedLines: state.local.customRejectedLines,
             refreshHistory: await ProviderRefreshHistoryRepository.shared.summaries(),
-            quotaInsights: state.quotaInsights
+            quotaInsights: state.quotaInsights,
+            codexExplanation: state.local.codexExplanation,
+            codexExplanationRetained: state.local.codexExplanationRetained
         )
     }
 
@@ -38,7 +40,9 @@ enum DiagnosticExportInputBuilder {
         customImportFailures: Int,
         customRejectedLines: Int,
         refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary],
-        quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:]
+        quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:],
+        codexExplanation: CodexQuotaExplanationState? = nil,
+        codexExplanationRetained: Bool = false
     ) throws -> DiagnosticExportInput {
         let rejected = rejectedImportCount.addingReportingOverflow(customRejectedLines)
         guard !rejected.overflow,
@@ -88,7 +92,8 @@ enum DiagnosticExportInputBuilder {
             importCounts: DiagnosticImportCounts(accepted: acceptedImportCount, rejected: rejected.partialValue),
             resourceLimitReasons: [],
             refreshHistory: projectedHistory.isEmpty ? nil : projectedHistory,
-            quotaFindings: projectedQuota.isEmpty ? nil : projectedQuota
+            quotaFindings: projectedQuota.isEmpty ? nil : projectedQuota,
+            codexExplanation: try codexExplanation.flatMap { try diagnosticCodexExplanation($0, retained: codexExplanationRetained) }
         )
     }
 
@@ -229,6 +234,61 @@ enum DiagnosticExportInputBuilder {
             }
         }
         return findings
+    }
+
+    private static func diagnosticCodexExplanation(_ state: CodexQuotaExplanationState, retained: Bool) throws -> DiagnosticCodexExplanationFinding? {
+        let retention: DiagnosticCodexExplanationRetention = retained ? .retained : .fresh
+        switch state {
+        case let .available(explanation):
+            return try DiagnosticCodexExplanationFinding(
+                status: .available,
+                adapterVersion: explanation.adapterVersion,
+                coverage: .complete,
+                tokenEvidence: explanation.observedLocalBreakdown.tokens.total > 0 ? .positive : .observedZero,
+                sessionCount: explanation.observedLocalBreakdown.sessionCount,
+                evidenceCount: explanation.evidenceIdentityCount,
+                observationCount: explanation.observationIdentityCount,
+                barrierCategories: explanation.barriers,
+                retention: retention
+            )
+        case let .partial(explanation):
+            return try DiagnosticCodexExplanationFinding(
+                status: .partial,
+                adapterVersion: explanation.adapterVersion,
+                coverage: .partial,
+                tokenEvidence: explanation.observedLocalBreakdown.tokens.total > 0 ? .positive : .observedZero,
+                sessionCount: explanation.observedLocalBreakdown.sessionCount,
+                evidenceCount: explanation.evidenceIdentityCount,
+                observationCount: explanation.observationIdentityCount,
+                barrierCategories: explanation.barriers,
+                retention: retention
+            )
+        case let .observedZero(_, _, observationCount, evidenceCount):
+            return try DiagnosticCodexExplanationFinding(
+                status: .observedZero,
+                adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+                coverage: .complete,
+                tokenEvidence: .observedZero,
+                sessionCount: 0,
+                evidenceCount: evidenceCount,
+                observationCount: observationCount,
+                barrierCategories: [],
+                retention: retention
+            )
+        case let .unavailable(reason):
+            return try DiagnosticCodexExplanationFinding(
+                status: .unavailable,
+                adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+                coverage: .unavailable,
+                tokenEvidence: .none,
+                sessionCount: 0,
+                evidenceCount: 0,
+                observationCount: 0,
+                barrierCategories: [],
+                unavailableReason: reason,
+                retention: retention
+            )
+        }
     }
 
     private static func diagnosticStatus(_ reason: QuotaInsightUnavailableReason) -> DiagnosticQuotaFindingStatus {

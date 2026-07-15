@@ -125,6 +125,18 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(text.contains("provider weighting is unknown"))
     }
 
+    func testCodexExplanationFixtureShowsMeasuredBreakdownAndUnattributedStatus() {
+        launch(screen: "codex-explanation")
+
+        let explanation = app.staticTexts["codex-quota-explanation"]
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5))
+        let text = (explanation.value as? String) ?? explanation.label
+        XCTAssertTrue(text.contains("Measured quota change: +3.5%"))
+        XCTAssertTrue(text.contains("Observed Local Breakdown: 10 measured tokens"))
+        XCTAssertTrue(text.contains("Quota movement remains unattributed"))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "codex-rollout-observed-0.144.4")).firstMatch.exists)
+    }
+
     private func launch(screen: String) {
         app.launchEnvironment["LIMITBAR_UI_TEST_SCREEN"] = screen
         app.launch()
