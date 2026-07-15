@@ -83,6 +83,73 @@ struct DiagnosticExportTests {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             try DiagnosticEvidenceVersion(kind: .adapter, value: String(repeating: "x", count: DiagnosticExport.maximumEvidenceTextLength + 1))
         }
+        for unsafe in ["/Users/private", "TOKEN SECRET", "account@label", "credential:value", "..\\private"] {
+            #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+                try DiagnosticEvidenceVersion(kind: .adapter, value: unsafe)
+            }
+        }
+    }
+
+    @Test("forecast and anomaly states require complete typed evidence")
+    func analyticalEvidenceInvariants() throws {
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceForecast(status: .available, method: .pairwisePositiveSlopeInterquartileV2, qualification: .qualified, unavailableReason: nil, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 10, range: nil, resetInteraction: .beforeReportedReset, limitations: [.providerWeightingUnknown])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceForecast(status: .unavailable, method: .pairwisePositiveSlopeInterquartileV2, qualification: .unavailable, unavailableReason: nil, observationCount: 1, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, limitations: [.providerWeightingUnknown])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceAnomaly(status: .noFinding, method: .trailingMedianRatioV1, qualification: .qualified, unavailableReason: nil, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 7, currentValue: nil, baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceAnomaly(status: .unavailable, method: .trailingMedianRatioV1, qualification: .unavailable, unavailableReason: .gap, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated), baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
+        }
+    }
+
+    @Test("more than one hundred shuffled records produce identical newest-first bytes and complete omitted count")
+    func quotaEvidenceLargeShuffledDeterminism() throws {
+        let start = Date(timeIntervalSince1970: 1_900_000_000)
+        let records = try (0..<137).map { try evidenceRecord(index: $0, start: start) }
+        let shuffled = Array(records[37...] + records[..<37]).reversed()
+        let range = try DiagnosticEvidenceSelection(start: start, end: start.addingTimeInterval(20_000), basis: .gregorianUTC)
+        let first = try DiagnosticQuotaEvidenceReport(selectedProduct: .codex, selectedRange: range, publicationGeneration: 7, publicationTime: start, apiProviderEvidence: .unavailable, records: records)
+        let second = try DiagnosticQuotaEvidenceReport(selectedProduct: .codex, selectedRange: range, publicationGeneration: 7, publicationTime: start, apiProviderEvidence: .unavailable, records: Array(shuffled))
+
+        let firstBytes = try DiagnosticExport.make(from: input(quotaEvidence: first)).bytes
+        let secondBytes = try DiagnosticExport.make(from: input(quotaEvidence: second)).bytes
+
+        #expect(firstBytes == secondBytes)
+        #expect(first.omittedRecordCount == 129)
+        #expect(first.records.map(\.traceReference) == (129..<137).reversed().map { String(format: "%012d", $0) })
+    }
+
+    @Test("v6 decode rejects noncanonical order and omitted counts")
+    func quotaEvidenceDecodeCanonicality() throws {
+        let start = Date(timeIntervalSince1970: 1_900_000_000)
+        let evidence = try DiagnosticQuotaEvidenceReport(
+            selectedProduct: .codex,
+            selectedRange: .init(start: start, end: start.addingTimeInterval(3_600), basis: .gregorianUTC),
+            publicationGeneration: 7,
+            publicationTime: start,
+            apiProviderEvidence: .unavailable,
+            records: [try evidenceRecord(index: 1, start: start), try evidenceRecord(index: 2, start: start)]
+        )
+        let bytes = try DiagnosticExport.make(from: input(quotaEvidence: evidence)).bytes
+        var object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        var quota = try #require(object["quotaEvidence"] as? [String: Any])
+        var records = try #require(quota["records"] as? [[String: Any]])
+        records.swapAt(0, 1)
+        quota["records"] = records
+        object["quotaEvidence"] = quota
+        #expect(throws: DiagnosticExportError.malformedArtifact) {
+            try DiagnosticExport.decode(JSONSerialization.data(withJSONObject: object))
+        }
+        quota["records"] = Array(records.reversed())
+        quota["omittedRecordCount"] = 3
+        object["quotaEvidence"] = quota
+        #expect(throws: DiagnosticExportError.malformedArtifact) {
+            try DiagnosticExport.decode(JSONSerialization.data(withJSONObject: object))
+        }
     }
 
     @Test("decode routes supported, unsupported, and malformed versions")
@@ -362,8 +429,9 @@ struct DiagnosticExportTests {
         let unavailable = index == DiagnosticExport.maximumQuotaEvidenceRecords + 2
         let forecast = try DiagnosticEvidenceForecast(
             status: .unavailable,
-            methodVersion: "pairwise_positive_slope_interquartile_v2",
+            method: .pairwisePositiveSlopeInterquartileV2,
             qualification: .unavailable,
+            unavailableReason: .insufficientObservations,
             observationCount: 0,
             observationSpanSeconds: 0,
             evidenceAgeSeconds: nil,
@@ -371,15 +439,18 @@ struct DiagnosticExportTests {
             resetInteraction: .unavailable,
             limitations: [.providerWeightingUnknown]
         )
+        let currentPeriod = try DiagnosticEvidencePeriod(start: start, end: start.addingTimeInterval(60))
+        let baselinePeriod = try DiagnosticEvidencePeriod(start: start.addingTimeInterval(-60), end: start)
         let anomaly = try DiagnosticEvidenceAnomaly(
             status: unavailable ? .unavailable : .noFinding,
-            methodVersion: "trailing_median_ratio_v1",
+            method: .trailingMedianRatioV1,
             qualification: unavailable ? .unavailable : .qualified,
-            currentPeriod: nil,
-            baselinePeriod: nil,
-            measuredInputCount: 0,
-            currentValue: nil,
-            baselineValue: nil,
+            unavailableReason: unavailable ? .gap : nil,
+            currentPeriod: unavailable ? nil : currentPeriod,
+            baselinePeriod: unavailable ? nil : baselinePeriod,
+            measuredInputCount: unavailable ? 0 : 1,
+            currentValue: unavailable ? nil : DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated),
+            baselineValue: unavailable ? nil : DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated),
             result: nil,
             limitations: [.noCausalAttribution]
         )
@@ -387,13 +458,14 @@ struct DiagnosticExportTests {
             traceReference: String(format: "%012d", index),
             intervalStart: start.addingTimeInterval(Double(index) * 60),
             intervalEnd: start.addingTimeInterval(Double(index + 1) * 60),
-            resetBoundary: unavailable ? nil : start.addingTimeInterval(7_200),
-            movement: DiagnosticEvidenceMovement(value: Double(index), unit: .percentagePoints, provenance: unavailable ? .reported : .calculated),
+            resetBoundary: unavailable ? nil : start.addingTimeInterval(100_000),
+            movement: DiagnosticEvidenceMovement(value: Double(min(index, 100)), unit: .percentagePoints, provenance: unavailable ? .reported : .calculated),
             localBreakdown: unavailable ? .gap : .observedZero,
-            unattributedMovement: true,
+            unattributedRemainder: DiagnosticEvidenceRemainder(availability: .available, value: Double(min(index, 100)), provenance: .calculated, method: nil, unavailableReason: nil, limitations: [.noCausalAttribution]),
             inferredAllocation: nil,
             forecast: forecast,
             anomaly: anomaly,
+            interpretation: .codexLocalReportV1,
             versions: [try DiagnosticEvidenceVersion(kind: .adapter, value: "quota-observation-v1")],
             limitations: [.fixtureValidationOnly]
         )

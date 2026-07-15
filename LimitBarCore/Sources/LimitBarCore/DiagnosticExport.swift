@@ -317,6 +317,7 @@ public enum DiagnosticEvidenceQualification: String, Codable, Equatable, Sendabl
 public enum DiagnosticEvidenceUnit: String, Codable, Equatable, Sendable {
     case percentagePoints = "percentage_points"
     case percentPerHour = "percent_per_hour"
+    case ratio
 }
 
 public enum DiagnosticEvidenceResetInteraction: String, Codable, Equatable, Sendable {
@@ -335,11 +336,66 @@ public enum DiagnosticEvidenceLimitation: String, Codable, Equatable, Sendable {
 }
 
 public enum DiagnosticEvidenceVersionKind: String, Codable, Equatable, Sendable {
-    case method
     case adapter
     case client
-    case providerFormat = "provider_format"
-    case interpretation
+}
+
+public enum DiagnosticEvidenceInterpretation: String, Codable, Equatable, Sendable {
+    case claudeProviderReportV1 = "claude_provider_report_v1"
+    case codexLocalReportV1 = "codex_local_report_v1"
+}
+
+public enum DiagnosticEvidenceForecastMethod: String, Codable, Equatable, Sendable {
+    case pairwisePositiveSlopeInterquartileV1 = "pairwise_positive_slope_interquartile_v1"
+    case pairwisePositiveSlopeInterquartileV2 = "pairwise_positive_slope_interquartile_v2"
+    case notPublished = "not_published"
+}
+
+public enum DiagnosticEvidenceAnomalyMethod: String, Codable, Equatable, Sendable {
+    case trailingMedianRatioV1 = "trailing_median_ratio_v1"
+    case notPublished = "not_published"
+}
+
+public enum DiagnosticEvidenceAllocationMethod: String, Codable, Equatable, Sendable {
+    case temporalProportionalV1 = "temporal_proportional_v1"
+}
+
+public enum DiagnosticForecastUnavailableReason: String, Codable, Equatable, Sendable {
+    case insufficientObservations = "insufficient_observations"
+    case insufficientSpan = "insufficient_span"
+    case staleEvidence = "stale_evidence"
+    case resetOrExpired = "reset_or_expired"
+    case counterDecreased = "counter_decreased"
+    case noPositiveBurn = "no_positive_burn"
+    case conflictingObservations = "conflicting_observations"
+    case incompatibleEvidence = "incompatible_evidence"
+    case invalidEvaluation = "invalid_evaluation"
+    case notPublished = "not_published"
+}
+
+public enum DiagnosticAnomalyUnavailableReason: String, Codable, Equatable, Sendable {
+    case invalidEvaluation = "invalid_evaluation"
+    case insufficientObservations = "insufficient_observations"
+    case insufficientBaseline = "insufficient_baseline"
+    case insufficientSpan = "insufficient_span"
+    case staleEvidence = "stale_evidence"
+    case resetOrExpired = "reset_or_expired"
+    case incompatibleEvidence = "incompatible_evidence"
+    case conflictingObservations = "conflicting_observations"
+    case counterDecreased = "counter_decreased"
+    case gap
+    case unstableBaseline = "unstable_baseline"
+    case missingDenominator = "missing_denominator"
+    case zeroDenominator = "zero_denominator"
+    case staleDenominator = "stale_denominator"
+    case partialDenominatorCoverage = "partial_denominator_coverage"
+    case incompatibleDenominator = "incompatible_denominator"
+    case notPublished = "not_published"
+}
+
+public enum DiagnosticRemainderUnavailableReason: String, Codable, Equatable, Sendable {
+    case movementUnavailable = "movement_unavailable"
+    case unsafeCalculation = "unsafe_calculation"
 }
 
 public struct DiagnosticEvidenceVersion: Codable, Equatable, Sendable {
@@ -347,7 +403,7 @@ public struct DiagnosticEvidenceVersion: Codable, Equatable, Sendable {
     public let value: String
 
     public init(kind: DiagnosticEvidenceVersionKind, value: String) throws {
-        guard DiagnosticExport.isBoundedEvidenceText(value) else { throw DiagnosticExportError.invalidQuotaEvidence }
+        guard DiagnosticExport.isSafeEvidenceToken(value) else { throw DiagnosticExportError.invalidQuotaEvidence }
         self.kind = kind
         self.value = value
     }
@@ -372,7 +428,7 @@ public struct DiagnosticEvidenceMovement: Codable, Equatable, Sendable {
     public let provenance: DiagnosticEvidenceProvenance
 
     public init(value: Double, unit: DiagnosticEvidenceUnit, provenance: DiagnosticEvidenceProvenance) throws {
-        guard value.isFinite, (-10_000...10_000).contains(value), provenance != .inferred else {
+        guard value.isFinite, (0...100).contains(value), unit == .percentagePoints, provenance != .inferred else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
         self.value = value == 0 ? 0 : value
@@ -383,51 +439,109 @@ public struct DiagnosticEvidenceMovement: Codable, Equatable, Sendable {
 
 public struct DiagnosticEvidenceAllocation: Codable, Equatable, Sendable {
     public let percent: Double
-    public let methodVersion: String
+    public let method: DiagnosticEvidenceAllocationMethod
     public let qualification: DiagnosticEvidenceQualification
     public let provenance: DiagnosticEvidenceProvenance
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(percent: Double, methodVersion: String, qualification: DiagnosticEvidenceQualification, limitations: [DiagnosticEvidenceLimitation]) throws {
+    public init(percent: Double, method: DiagnosticEvidenceAllocationMethod, qualification: DiagnosticEvidenceQualification, limitations: [DiagnosticEvidenceLimitation]) throws {
         guard percent.isFinite, (0...100).contains(percent), qualification == .qualified,
-              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
-              DiagnosticExport.isBoundedEvidenceText(methodVersion) else {
+              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
         self.percent = percent
-        self.methodVersion = methodVersion
+        self.method = method
         self.qualification = qualification
         provenance = .inferred
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
 }
 
+public struct DiagnosticEvidenceRange: Codable, Equatable, Sendable {
+    public let lower: Double
+    public let upper: Double
+    public let unit: DiagnosticEvidenceUnit
+    public let provenance: DiagnosticEvidenceProvenance
+
+    public init(lower: Double, upper: Double, unit: DiagnosticEvidenceUnit, provenance: DiagnosticEvidenceProvenance) throws {
+        guard lower.isFinite, upper.isFinite, lower >= 0, upper >= lower, upper <= 10_000,
+              unit != .ratio, provenance == .calculated else { throw DiagnosticExportError.invalidQuotaEvidence }
+        self.lower = lower
+        self.upper = upper
+        self.unit = unit
+        self.provenance = provenance
+    }
+}
+
+public struct DiagnosticEvidenceValue: Codable, Equatable, Sendable {
+    public let value: Double
+    public let unit: DiagnosticEvidenceUnit
+    public let provenance: DiagnosticEvidenceProvenance
+
+    public init(value: Double, unit: DiagnosticEvidenceUnit, provenance: DiagnosticEvidenceProvenance) throws {
+        guard value.isFinite, (-10_000...10_000).contains(value), provenance == .calculated else {
+            throw DiagnosticExportError.invalidQuotaEvidence
+        }
+        self.value = value == 0 ? 0 : value
+        self.unit = unit
+        self.provenance = provenance
+    }
+}
+
+public struct DiagnosticEvidenceRemainder: Codable, Equatable, Sendable {
+    public let availability: DiagnosticEvidenceAvailability
+    public let value: Double?
+    public let unit: DiagnosticEvidenceUnit
+    public let provenance: DiagnosticEvidenceProvenance?
+    public let method: DiagnosticEvidenceAllocationMethod?
+    public let unavailableReason: DiagnosticRemainderUnavailableReason?
+    public let limitations: [DiagnosticEvidenceLimitation]
+
+    public init(availability: DiagnosticEvidenceAvailability, value: Double?, unit: DiagnosticEvidenceUnit = .percentagePoints, provenance: DiagnosticEvidenceProvenance?, method: DiagnosticEvidenceAllocationMethod?, unavailableReason: DiagnosticRemainderUnavailableReason?, limitations: [DiagnosticEvidenceLimitation]) throws {
+        guard !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
+              unit == .percentagePoints,
+              (availability == .available) == (value != nil && provenance != nil && unavailableReason == nil),
+              availability == .unavailable || (value?.isFinite == true && value! >= 0 && value! <= 10_000),
+              availability == .available || (value == nil && provenance == nil && method == nil && unavailableReason != nil),
+              method == nil || provenance == .inferred else { throw DiagnosticExportError.invalidQuotaEvidence }
+        self.availability = availability
+        self.value = value
+        self.unit = unit
+        self.provenance = provenance
+        self.method = method
+        self.unavailableReason = unavailableReason
+        self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
+    }
+}
+
 public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
     public let status: DiagnosticEvidenceState
-    public let methodVersion: String
+    public let method: DiagnosticEvidenceForecastMethod
     public let qualification: DiagnosticEvidenceQualification
+    public let unavailableReason: DiagnosticForecastUnavailableReason?
     public let observationCount: Int
     public let observationSpanSeconds: Int
     public let evidenceAgeSeconds: Int?
-    public let range: DiagnosticNumberRange?
+    public let range: DiagnosticEvidenceRange?
     public let resetInteraction: DiagnosticEvidenceResetInteraction
     public let provenance: DiagnosticEvidenceProvenance
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(status: DiagnosticEvidenceState, methodVersion: String, qualification: DiagnosticEvidenceQualification, observationCount: Int, observationSpanSeconds: Int, evidenceAgeSeconds: Int?, range: DiagnosticNumberRange?, resetInteraction: DiagnosticEvidenceResetInteraction, limitations: [DiagnosticEvidenceLimitation]) throws {
+    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceForecastMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticForecastUnavailableReason?, observationCount: Int, observationSpanSeconds: Int, evidenceAgeSeconds: Int?, range: DiagnosticEvidenceRange?, resetInteraction: DiagnosticEvidenceResetInteraction, limitations: [DiagnosticEvidenceLimitation]) throws {
         guard [.available, .unavailable].contains(status),
               (status == .available) == (qualification == .qualified),
-              status == .available || range == nil,
+              status == .available ? (range != nil && evidenceAgeSeconds != nil && unavailableReason == nil && resetInteraction != .unavailable && method != .notPublished) : (range == nil && unavailableReason != nil && resetInteraction == .unavailable),
+              status != .available || observationCount > 0,
               (0...SQLiteQuotaObservationStore.maximumObservationsPerWindow).contains(observationCount),
               (0...2_592_000).contains(observationSpanSeconds),
               evidenceAgeSeconds.map({ (0...2_592_000).contains($0) }) ?? true,
-              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
-              DiagnosticExport.isBoundedEvidenceText(methodVersion) else {
+              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
         self.status = status
-        self.methodVersion = methodVersion
+        self.method = method
         self.qualification = qualification
+        self.unavailableReason = unavailableReason
         self.observationCount = observationCount
         self.observationSpanSeconds = observationSpanSeconds
         self.evidenceAgeSeconds = evidenceAgeSeconds
@@ -440,31 +554,37 @@ public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
 
 public struct DiagnosticEvidenceAnomaly: Codable, Equatable, Sendable {
     public let status: DiagnosticEvidenceState
-    public let methodVersion: String
+    public let method: DiagnosticEvidenceAnomalyMethod
     public let qualification: DiagnosticEvidenceQualification
+    public let unavailableReason: DiagnosticAnomalyUnavailableReason?
     public let currentPeriod: DiagnosticEvidencePeriod?
     public let baselinePeriod: DiagnosticEvidencePeriod?
     public let measuredInputCount: Int
-    public let currentValue: Double?
-    public let baselineValue: Double?
-    public let result: Double?
+    public let currentValue: DiagnosticEvidenceValue?
+    public let baselineValue: DiagnosticEvidenceValue?
+    public let result: DiagnosticEvidenceValue?
     public let provenance: DiagnosticEvidenceProvenance
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(status: DiagnosticEvidenceState, methodVersion: String, qualification: DiagnosticEvidenceQualification, currentPeriod: DiagnosticEvidencePeriod?, baselinePeriod: DiagnosticEvidencePeriod?, measuredInputCount: Int, currentValue: Double?, baselineValue: Double?, result: Double?, limitations: [DiagnosticEvidenceLimitation]) throws {
-        let values = [currentValue, baselineValue, result].compactMap { $0 }
+    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceAnomalyMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticAnomalyUnavailableReason?, currentPeriod: DiagnosticEvidencePeriod?, baselinePeriod: DiagnosticEvidencePeriod?, measuredInputCount: Int, currentValue: DiagnosticEvidenceValue?, baselineValue: DiagnosticEvidenceValue?, result: DiagnosticEvidenceValue?, limitations: [DiagnosticEvidenceLimitation]) throws {
+        let qualifiedValuesAreValid: Bool = switch status {
+        case .available: currentValue?.unit == .percentagePoints && baselineValue?.unit == .percentagePoints && result?.unit == .ratio
+        case .noFinding: currentValue?.unit == .percentagePoints && baselineValue?.unit == .percentagePoints
+        case .observedZero: currentValue?.unit == .percentagePoints && currentValue?.value == 0 && baselineValue != nil
+        default: false
+        }
         guard [.available, .observedZero, .noFinding, .unavailable].contains(status),
               (status == .unavailable) == (qualification == .unavailable),
-              status != .unavailable || values.isEmpty,
-              values.allSatisfy({ $0.isFinite && (-10_000...10_000).contains($0) }),
+              status == .unavailable ? (unavailableReason != nil && currentPeriod == nil && baselinePeriod == nil && currentValue == nil && baselineValue == nil && result == nil) : (unavailableReason == nil && currentPeriod != nil && baselinePeriod != nil && qualifiedValuesAreValid && method != .notPublished),
               (0...10_000).contains(measuredInputCount),
-              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
-              DiagnosticExport.isBoundedEvidenceText(methodVersion) else {
+              status == .unavailable || measuredInputCount > 0,
+              !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
         self.status = status
-        self.methodVersion = methodVersion
+        self.method = method
         self.qualification = qualification
+        self.unavailableReason = unavailableReason
         self.currentPeriod = currentPeriod
         self.baselinePeriod = baselinePeriod
         self.measuredInputCount = measuredInputCount
@@ -487,15 +607,15 @@ public struct DiagnosticQuotaEvidenceRecord: Codable, Equatable, Sendable {
     public let localBreakdownProvenance: DiagnosticEvidenceProvenance
     public let localTokenCount: Int64?
     public let localSessionCount: Int?
-    public let unattributedMovement: Bool
-    public let unattributedMovementValue: DiagnosticEvidenceMovement?
+    public let unattributedRemainder: DiagnosticEvidenceRemainder
     public let inferredAllocation: DiagnosticEvidenceAllocation?
     public let forecast: DiagnosticEvidenceForecast
     public let anomaly: DiagnosticEvidenceAnomaly
+    public let interpretation: DiagnosticEvidenceInterpretation
     public let versions: [DiagnosticEvidenceVersion]
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(traceReference: String, intervalStart: Date, intervalEnd: Date, resetBoundary: Date?, movement: DiagnosticEvidenceMovement?, localBreakdown: DiagnosticEvidenceState, localTokenCount: Int64? = nil, localSessionCount: Int? = nil, unattributedMovement: Bool, unattributedMovementValue: DiagnosticEvidenceMovement? = nil, inferredAllocation: DiagnosticEvidenceAllocation?, forecast: DiagnosticEvidenceForecast, anomaly: DiagnosticEvidenceAnomaly, versions: [DiagnosticEvidenceVersion], limitations: [DiagnosticEvidenceLimitation]) throws {
+    public init(traceReference: String, intervalStart: Date, intervalEnd: Date, resetBoundary: Date?, movement: DiagnosticEvidenceMovement?, localBreakdown: DiagnosticEvidenceState, localTokenCount: Int64? = nil, localSessionCount: Int? = nil, unattributedRemainder: DiagnosticEvidenceRemainder, inferredAllocation: DiagnosticEvidenceAllocation?, forecast: DiagnosticEvidenceForecast, anomaly: DiagnosticEvidenceAnomaly, interpretation: DiagnosticEvidenceInterpretation, versions: [DiagnosticEvidenceVersion], limitations: [DiagnosticEvidenceLimitation]) throws {
         guard DiagnosticExport.isTraceReference(traceReference), intervalStart.timeIntervalSince1970.isFinite,
               intervalEnd.timeIntervalSince1970.isFinite, intervalStart < intervalEnd,
               resetBoundary.map({ $0.timeIntervalSince1970.isFinite && $0 >= intervalEnd }) ?? true,
@@ -504,8 +624,7 @@ public struct DiagnosticQuotaEvidenceRecord: Codable, Equatable, Sendable {
               localSessionCount.map({ (0...1_000).contains($0) }) ?? true,
               localBreakdown == .available || localTokenCount == nil,
               localBreakdown == .available || localSessionCount == nil,
-              unattributedMovement || unattributedMovementValue == nil,
-              unattributedMovementValue?.provenance == .calculated || unattributedMovementValue == nil,
+              inferredAllocation == nil || unattributedRemainder.method == inferredAllocation?.method,
               !versions.isEmpty, versions.count <= DiagnosticExport.maximumEvidenceVersions,
               Set(versions.map { "\($0.kind.rawValue):\($0.value)" }).count == versions.count,
               !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
@@ -521,11 +640,11 @@ public struct DiagnosticQuotaEvidenceRecord: Codable, Equatable, Sendable {
         localBreakdownProvenance = .measured
         self.localTokenCount = localTokenCount
         self.localSessionCount = localSessionCount
-        self.unattributedMovement = unattributedMovement
-        self.unattributedMovementValue = unattributedMovementValue
+        self.unattributedRemainder = unattributedRemainder
         self.inferredAllocation = inferredAllocation
         self.forecast = forecast
         self.anomaly = anomaly
+        self.interpretation = interpretation
         self.versions = versions.sorted { ($0.kind.rawValue, $0.value) < ($1.kind.rawValue, $1.value) }
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
@@ -554,22 +673,33 @@ public struct DiagnosticQuotaEvidenceReport: Codable, Equatable, Sendable {
     public let apiProviderEvidence: DiagnosticEvidenceAvailability
     public let records: [DiagnosticQuotaEvidenceRecord]
     public let recordLimit: Int
+    public let projectionRecordLimit: Int
+    public let candidateRecordLimit: Int
     public let omittedRecordCount: Int
 
-    public init(selectedProduct: DiagnosticQuotaProduct, selectedRange: DiagnosticEvidenceSelection, publicationGeneration: UInt64?, publicationTime: Date, apiProviderEvidence: DiagnosticEvidenceAvailability, records: [DiagnosticQuotaEvidenceRecord]) throws {
-        guard publicationTime.timeIntervalSince1970.isFinite, records.count <= DiagnosticExport.maximumQuotaEvidenceInputRecords else {
+    public init(selectedProduct: DiagnosticQuotaProduct, selectedRange: DiagnosticEvidenceSelection, publicationGeneration: UInt64?, publicationTime: Date, apiProviderEvidence: DiagnosticEvidenceAvailability, records: [DiagnosticQuotaEvidenceRecord], totalMatchingRecordCount: Int? = nil) throws {
+        guard publicationTime.timeIntervalSince1970.isFinite, records.count <= DiagnosticExport.maximumQuotaEvidenceCandidateRecords else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
         let matching = records.filter { $0.intervalEnd > selectedRange.start && $0.intervalStart < selectedRange.end }
         let ordered = matching.sorted { ($0.intervalStart, $0.intervalEnd, $0.traceReference) > ($1.intervalStart, $1.intervalEnd, $1.traceReference) }
+        let total = totalMatchingRecordCount ?? ordered.count
+        guard total >= ordered.count, total <= DiagnosticExport.maximumQuotaEvidenceCandidateRecords,
+              apiProviderEvidence == .unavailable,
+              Set(ordered.map(\.traceReference)).count == ordered.count,
+              ordered.allSatisfy({ selectedProduct == .claudeCode ? $0.interpretation == .claudeProviderReportV1 : $0.interpretation == .codexLocalReportV1 }) else {
+            throw DiagnosticExportError.invalidQuotaEvidence
+        }
         self.selectedProduct = selectedProduct
         self.selectedRange = selectedRange
         self.publicationGeneration = publicationGeneration
         self.publicationTime = publicationTime
         self.apiProviderEvidence = apiProviderEvidence
-        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
+        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceInputRecords).prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
         recordLimit = DiagnosticExport.maximumQuotaEvidenceRecords
-        omittedRecordCount = max(0, ordered.count - DiagnosticExport.maximumQuotaEvidenceRecords)
+        projectionRecordLimit = DiagnosticExport.maximumQuotaEvidenceInputRecords
+        candidateRecordLimit = DiagnosticExport.maximumQuotaEvidenceCandidateRecords
+        omittedRecordCount = max(0, total - DiagnosticExport.maximumQuotaEvidenceRecords)
     }
 }
 
@@ -737,6 +867,7 @@ public enum DiagnosticExport {
     public static let maximumQuotaFindings = 8
     public static let maximumQuotaEvidenceRecords = 8
     public static let maximumQuotaEvidenceInputRecords = 100
+    public static let maximumQuotaEvidenceCandidateRecords = 10_000
     public static let maximumEvidenceTextLength = 128
     public static let maximumEvidenceVersions = 8
     public static let maximumEvidenceLimitations = 8
@@ -921,6 +1052,12 @@ public enum DiagnosticExport {
             && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
     }
 
+    static func isSafeEvidenceToken(_ value: String) -> Bool {
+        (1...maximumEvidenceTextLength).contains(value.utf8.count) && value.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 46 || $0 == 95
+        }
+    }
+
     static func isTraceReference(_ value: String) -> Bool {
         (1...24).contains(value.utf8.count) && value.utf8.allSatisfy {
             (48...57).contains($0) || (97...102).contains($0) || $0 == 45
@@ -929,8 +1066,10 @@ public enum DiagnosticExport {
 
     private static func validateEvidence(_ value: DiagnosticQuotaEvidenceReport) throws {
         guard value.recordLimit == maximumQuotaEvidenceRecords,
+              value.projectionRecordLimit == maximumQuotaEvidenceInputRecords,
+              value.candidateRecordLimit == maximumQuotaEvidenceCandidateRecords,
               value.records.count <= maximumQuotaEvidenceRecords,
-              (0...maximumQuotaEvidenceInputRecords).contains(value.omittedRecordCount),
+              (0...maximumQuotaEvidenceCandidateRecords).contains(value.omittedRecordCount),
               value.publicationTime.timeIntervalSince1970.isFinite else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
@@ -940,29 +1079,31 @@ public enum DiagnosticExport {
                 try DiagnosticEvidenceMovement(value: $0.value, unit: $0.unit, provenance: $0.provenance)
             }
             let allocation = try record.inferredAllocation.map {
-                try DiagnosticEvidenceAllocation(percent: $0.percent, methodVersion: $0.methodVersion, qualification: $0.qualification, limitations: $0.limitations)
+                try DiagnosticEvidenceAllocation(percent: $0.percent, method: $0.method, qualification: $0.qualification, limitations: $0.limitations)
             }
             let forecast = try DiagnosticEvidenceForecast(
                 status: record.forecast.status,
-                methodVersion: record.forecast.methodVersion,
+                method: record.forecast.method,
                 qualification: record.forecast.qualification,
+                unavailableReason: record.forecast.unavailableReason,
                 observationCount: record.forecast.observationCount,
                 observationSpanSeconds: record.forecast.observationSpanSeconds,
                 evidenceAgeSeconds: record.forecast.evidenceAgeSeconds,
-                range: record.forecast.range,
+                range: try record.forecast.range.map { try DiagnosticEvidenceRange(lower: $0.lower, upper: $0.upper, unit: $0.unit, provenance: $0.provenance) },
                 resetInteraction: record.forecast.resetInteraction,
                 limitations: record.forecast.limitations
             )
             let anomaly = try DiagnosticEvidenceAnomaly(
                 status: record.anomaly.status,
-                methodVersion: record.anomaly.methodVersion,
+                method: record.anomaly.method,
                 qualification: record.anomaly.qualification,
+                unavailableReason: record.anomaly.unavailableReason,
                 currentPeriod: try record.anomaly.currentPeriod.map { try DiagnosticEvidencePeriod(start: $0.start, end: $0.end) },
                 baselinePeriod: try record.anomaly.baselinePeriod.map { try DiagnosticEvidencePeriod(start: $0.start, end: $0.end) },
                 measuredInputCount: record.anomaly.measuredInputCount,
-                currentValue: record.anomaly.currentValue,
-                baselineValue: record.anomaly.baselineValue,
-                result: record.anomaly.result,
+                currentValue: try record.anomaly.currentValue.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
+                baselineValue: try record.anomaly.baselineValue.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
+                result: try record.anomaly.result.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
                 limitations: record.anomaly.limitations
             )
             let versions = try record.versions.map { try DiagnosticEvidenceVersion(kind: $0.kind, value: $0.value) }
@@ -975,17 +1116,33 @@ public enum DiagnosticExport {
                 localBreakdown: record.localBreakdown,
                 localTokenCount: record.localTokenCount,
                 localSessionCount: record.localSessionCount,
-                unattributedMovement: record.unattributedMovement,
-                unattributedMovementValue: try record.unattributedMovementValue.map {
-                    try DiagnosticEvidenceMovement(value: $0.value, unit: $0.unit, provenance: $0.provenance)
-                },
+                unattributedRemainder: try DiagnosticEvidenceRemainder(
+                    availability: record.unattributedRemainder.availability,
+                    value: record.unattributedRemainder.value,
+                    unit: record.unattributedRemainder.unit,
+                    provenance: record.unattributedRemainder.provenance,
+                    method: record.unattributedRemainder.method,
+                    unavailableReason: record.unattributedRemainder.unavailableReason,
+                    limitations: record.unattributedRemainder.limitations
+                ),
                 inferredAllocation: allocation,
                 forecast: forecast,
                 anomaly: anomaly,
+                interpretation: record.interpretation,
                 versions: versions,
                 limitations: record.limitations
             )
             guard validated == record else { throw DiagnosticExportError.invalidQuotaEvidence }
         }
+        let reconstructed = try DiagnosticQuotaEvidenceReport(
+            selectedProduct: value.selectedProduct,
+            selectedRange: DiagnosticEvidenceSelection(start: value.selectedRange.start, end: value.selectedRange.end, basis: value.selectedRange.basis),
+            publicationGeneration: value.publicationGeneration,
+            publicationTime: value.publicationTime,
+            apiProviderEvidence: value.apiProviderEvidence,
+            records: value.records,
+            totalMatchingRecordCount: value.records.count + value.omittedRecordCount
+        )
+        guard reconstructed == value else { throw DiagnosticExportError.invalidQuotaEvidence }
     }
 }

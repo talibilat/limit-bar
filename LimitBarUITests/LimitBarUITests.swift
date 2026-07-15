@@ -120,6 +120,7 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(previewText.contains("schemaVersion"))
         XCTAssertTrue(previewText.contains("quotaEvidence"))
         XCTAssertTrue(previewText.contains("gregorian_utc_half_open"))
+        XCTAssertFalse(previewText.contains("PRIVATE_SENTINEL_PROMPT_PATH_COOKIE"))
         app.buttons["diagnostic-export-approve"].click()
         XCTAssertTrue(app.buttons["diagnostic-export-choose-destination"].exists)
         app.buttons["diagnostic-export-choose-destination"].click()
@@ -145,6 +146,32 @@ final class LimitBarUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["diagnostic-export-choose-destination"].exists)
         XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
+    }
+
+    func testDiagnosticExportProductPickerChangesExactCandidateBeforePreview() {
+        launch(screen: "diagnostic-export")
+        let picker = app.popUpButtons["diagnostic-export-product"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.click()
+        app.menuItems["Claude Code"].click()
+        app.buttons["diagnostic-export-preview"].click()
+
+        let preview = app.staticTexts["diagnostic-export-json-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        let previewText = (preview.value as? String) ?? preview.label
+        XCTAssertTrue(previewText.contains(#""selectedProduct" : "claude_code""#))
+        XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
+    }
+
+    func testDiagnosticExportCancellationAfterDestinationCreatesNoReport() {
+        launch(screen: "diagnostic-export")
+        app.buttons["diagnostic-export-preview"].click()
+        app.buttons["diagnostic-export-approve"].click()
+        app.buttons["diagnostic-export-choose-destination"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-save"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].click()
+
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
     }
 

@@ -330,6 +330,8 @@ struct DiagnosticExportSelection: Equatable {
 final class DiagnosticExportModel {
     static let preparationError = "Could not prepare the diagnostic export."
     static let saveError = "Could not save the diagnostic export."
+    static let successMessage = "Diagnostic export saved."
+    static let destinationDefaultName = "limitbar-diagnostics.json"
 
     var showsPreview = false
     private(set) var preview = ""
@@ -339,6 +341,7 @@ final class DiagnosticExportModel {
     private(set) var selection: DiagnosticExportSelection?
     private var artifact: DiagnosticExportArtifact?
     private var destination: URL?
+    private var preparationRevision: UInt64 = 0
     private let makeArtifact: @MainActor () async throws -> DiagnosticExportArtifact
     private let makeSelectedArtifact: (@MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact)?
     private let chooseDestination: @MainActor () -> URL?
@@ -372,6 +375,11 @@ final class DiagnosticExportModel {
     }
 
     func prepare() async {
+        preparationRevision &+= 1
+        let revision = preparationRevision
+        let requestedSelection = selection
+        clearCandidate()
+        message = nil
         do {
             let artifact: DiagnosticExportArtifact
             if let selection, let makeSelectedArtifact {
@@ -379,7 +387,9 @@ final class DiagnosticExportModel {
             } else {
                 artifact = try await makeArtifact()
             }
-            preview = try artifact.preview
+            let preview = try artifact.preview
+            guard preparationRevision == revision, selection == requestedSelection else { return }
+            self.preview = preview
             self.artifact = artifact
             destination = nil
             isApproved = false
@@ -387,9 +397,8 @@ final class DiagnosticExportModel {
             message = nil
             showsPreview = true
         } catch {
-            artifact = nil
-            preview = ""
-            showsPreview = false
+            guard preparationRevision == revision, selection == requestedSelection else { return }
+            clearCandidate()
             message = Self.preparationError
         }
     }
@@ -412,20 +421,29 @@ final class DiagnosticExportModel {
         do {
             try artifact.save(to: destination)
             showsPreview = false
-            message = "Diagnostic export saved."
+            message = Self.successMessage
         } catch {
             message = Self.saveError
         }
     }
 
     func invalidateApproval() {
+        preparationRevision &+= 1
+        clearCandidate()
+        message = nil
+    }
+
+    func cancelPreview() {
+        invalidateApproval()
+    }
+
+    private func clearCandidate() {
         artifact = nil
         destination = nil
         preview = ""
         isApproved = false
         hasDestination = false
         showsPreview = false
-        message = nil
     }
 
 
@@ -438,7 +456,7 @@ final class DiagnosticExportModel {
     static func chooseDestinationWithSavePanel() -> URL? {
         let panel = NSSavePanel()
         panel.title = "Save Diagnostic Export"
-        panel.nameFieldStringValue = "limitbar-diagnostics.json"
+        panel.nameFieldStringValue = destinationDefaultName
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         return panel.runModal() == .OK ? panel.url : nil
@@ -514,7 +532,7 @@ struct DiagnosticExportSection: View {
             if let message = model.message {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(message == "Diagnostic export saved." ? Color.secondary : Color.orange)
+                    .foregroundStyle(message == DiagnosticExportModel.successMessage ? Color.secondary : Color.orange)
                     .accessibilityIdentifier("diagnostic-export-message")
             }
         }
@@ -540,7 +558,7 @@ struct DiagnosticExportSection: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel", role: .cancel) { model.showsPreview = false }
+                    Button("Cancel", role: .cancel) { model.cancelPreview() }
                     if !model.isApproved {
                         Button("Approve Complete Preview") { model.approvePreview() }
                             .keyboardShortcut(.defaultAction)

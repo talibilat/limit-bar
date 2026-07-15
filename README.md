@@ -82,9 +82,11 @@ Report generation, preview, cancellation, destination selection, and saving do n
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
 Schema v6 retains the v5 sections and adds a positive allow-listed Quota Evidence section projected from one coherent forensic publication.
-It includes the exact selected range and basis, reported reset or explicit boundary unavailability, typed movement provenance, separate Observed Local Breakdown state, unattributed movement, qualified inferred allocation, forecasts, anomalies, bounded method and version metadata, limitations, and privacy-safe trace references.
+It includes the exact selected range and basis, reported reset or explicit boundary unavailability, typed movement provenance, separate Observed Local Breakdown state, unattributed remainder, qualified inferred allocation, forecasts, anomalies, bounded method and version metadata, limitations, and privacy-safe trace references.
+Forecast and anomaly methods, units, provenance, reset interaction, and unavailable reasons are closed typed values; dynamic adapter and client versions must satisfy a strict bounded ASCII token policy.
 Gap, Observed Zero, no finding, and analysis unavailable remain distinct.
-Records are ordered newest-first, limited to eight, and declare both the applicable limit and omitted count; source inputs are capped at 100 records, text at 128 UTF-8 bytes, and version and limitation collections at eight items each before preview.
+Matching records are deterministically ordered newest-first before projection, limited to eight, and declare both the applicable limit and the total omitted count, including records beyond the 100-record projection cap.
+Candidate processing is capped at 10,000 records, text at 128 UTF-8 bytes, and version and limitation collections at eight items each before preview.
 Current quota findings use `pairwise_positive_slope_interquartile_v2`; V1 remains accepted only for legacy diagnostic decoding.
 The checked synthetic replay baseline contains zero observed held-out completed windows, so empirical forecast quality assessment and a forecast quality threshold remain unavailable and no stronger product claim is enabled.
 The decoder remains compatible with schema v1 artifacts without quota findings and schema v2-v3 findings whose missing method or qualification metadata maps to the established pairwise-slope method and status-derived qualification.

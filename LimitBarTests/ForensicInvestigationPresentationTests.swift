@@ -159,6 +159,13 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertTrue(codexText.contains("temporal_proportional_v1"))
         XCTAssertTrue(codexText.contains("temporal_correlation_only"))
         XCTAssertTrue(codexText.contains("no causal claim"))
+        let codexReport = try QuotaEvidenceReportBuilder.make(snapshot: codexPublication, product: .codex, rangeStart: codex.intervalStart, rangeEnd: codex.intervalEnd)
+        let exported = try XCTUnwrap(codexReport.records.first)
+        XCTAssertEqual(exported.inferredAllocation?.percent, 25)
+        XCTAssertEqual(exported.inferredAllocation?.provenance, .inferred)
+        XCTAssertEqual(exported.unattributedRemainder.value, 1.5)
+        XCTAssertEqual(exported.unattributedRemainder.provenance, .inferred)
+        XCTAssertEqual(exported.unattributedRemainder.method, .temporalProportionalV1)
 
         let claudeIdentity = try QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset)
         let claudeValue = ClaudeQuotaExplanation(
@@ -207,6 +214,10 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertTrue(incompatibleText.contains("incompatible_evidence"))
         XCTAssertTrue(incompatibleText.contains("codex_local_report_v1"))
         XCTAssertTrue(incompatibleText.contains("claude_provider_report_v1"))
+        let stalePublication = ForensicInvestigationAssembler.make(input(now: now, explanation: .unavailable(.gap), forecasts: [identity: stale]))
+        let staleRecord = try XCTUnwrap(stalePublication.products.first?.records.first)
+        let staleReport = try QuotaEvidenceReportBuilder.make(snapshot: stalePublication, product: .codex, rangeStart: staleRecord.start, rangeEnd: staleRecord.end)
+        XCTAssertEqual(staleReport.records.first?.forecast.unavailableReason, .staleEvidence)
     }
 
     func testIncompatibleEvidenceVersionsAndSectionLocalFailurePreserveIndependentAnalysis() throws {
@@ -232,6 +243,17 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertEqual(record.forecast.status, "Unavailable")
         XCTAssertNotEqual(record.anomaly.status, "Unavailable")
         XCTAssertTrue(record.anomaly.details.contains("no_causal_attribution"))
+        let report = try QuotaEvidenceReportBuilder.make(snapshot: publication, product: .codex, rangeStart: record.start, rangeEnd: record.end)
+        XCTAssertEqual(report.records.first?.forecast.unavailableReason, .invalidEvaluation)
+
+        let intervalForecast = QuotaInsightAnalytics.analyze(values, now: now, maximumAge: 60)
+        let incompatiblePublication = ForensicInvestigationAssembler.make(ForensicInvestigationInput(
+            generation: 2, publishedAt: now, codexSnapshot: nil, codexExplanation: .unavailable(.gap), codexExplanationRetained: false,
+            claudeExplanationCatalog: .empty, forecasts: [identity: intervalForecast], anomalies: [identity: incompatible], storageAvailable: true, storeOpen: true
+        ))
+        let incompatibleRecord = try XCTUnwrap(incompatiblePublication.products.first?.records.first)
+        let incompatibleReport = try QuotaEvidenceReportBuilder.make(snapshot: incompatiblePublication, product: .codex, rangeStart: incompatibleRecord.start, rangeEnd: incompatibleRecord.end)
+        XCTAssertEqual(incompatibleReport.records.first?.anomaly.unavailableReason, .incompatibleEvidence)
     }
 
     func testGenericAPIAttributionSentinelCannotEnterInvestigationOrDiagnostics() throws {
@@ -262,7 +284,11 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
     }
 
     func testQuotaEvidenceProjectionUsesStructuredCoherentPublicationAndExcludesSourceText() throws {
-        let sentinel = "PRIVATE_PROMPT_PATH_ACCOUNT_RESPONSE_TERMINAL"
+        let sentinels = [
+            "PROMPT_SENTINEL", "SOURCE_CODE_SENTINEL", "MODEL_RESPONSE_SENTINEL", "TERMINAL_OUTPUT_SENTINEL",
+            "REQUEST_BODY_SENTINEL", "CREDENTIAL_SENTINEL", "/Users/private/source", "ACCOUNT_LABEL_SENTINEL",
+            "RAW_PAYLOAD_SENTINEL",
+        ]
         let now = Date(timeIntervalSince1970: 1_900_000_000)
         let reset = now.addingTimeInterval(3_600)
         let explanation = CodexQuotaExplanation(
@@ -276,7 +302,7 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
             unattributed: true,
             inferredAllocation: nil,
             observationIdentities: [],
-            evidenceIdentities: [sentinel],
+            evidenceIdentities: sentinels,
             adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
             barriers: []
         )
@@ -311,12 +337,37 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertEqual(decoded.records.first?.localBreakdown, .available)
         XCTAssertEqual(decoded.records.first?.localTokenCount, 3)
         XCTAssertEqual(decoded.records.first?.localSessionCount, 1)
-        XCTAssertEqual(decoded.records.first?.unattributedMovementValue?.value, 2)
-        XCTAssertEqual(decoded.records.first?.unattributedMovementValue?.provenance, .calculated)
+        XCTAssertEqual(decoded.records.first?.unattributedRemainder.value, 2)
+        XCTAssertEqual(decoded.records.first?.unattributedRemainder.provenance, .calculated)
         XCTAssertEqual(decoded.records.first?.forecast.status, .unavailable)
         XCTAssertEqual(decoded.records.first?.anomaly.status, .unavailable)
         XCTAssertEqual(decoded.records.first?.resetBoundary, reset)
-        XCTAssertFalse(try artifact.preview.contains(sentinel))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("evidence.json")
+        try artifact.save(to: destination)
+        let saved = try String(contentsOf: destination, encoding: .utf8)
+        for sentinel in sentinels {
+            XCTAssertFalse(try artifact.preview.contains(sentinel))
+            XCTAssertFalse(saved.contains(sentinel))
+        }
+    }
+
+    func testQuotaEvidenceBuilderSortsBeforeHundredRecordProjectionCap() throws {
+        let start = Date(timeIntervalSince1970: 1_900_000_000)
+        let ordered = (0..<137).map { investigationRecord(index: $0, start: start) }
+        let shuffled = Array(Array(ordered[51...] + ordered[..<51]).reversed())
+        let first = ForensicInvestigationSnapshot(generation: 1, publicationState: .partial, publishedAt: start, products: [.init(product: .codex, records: ordered)], apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary, message: nil)
+        let second = ForensicInvestigationSnapshot(generation: 1, publicationState: .partial, publishedAt: start, products: [.init(product: .codex, records: shuffled)], apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary, message: nil)
+        let end = start.addingTimeInterval(20_000)
+
+        let firstReport = try QuotaEvidenceReportBuilder.make(snapshot: first, product: .codex, rangeStart: start, rangeEnd: end)
+        let secondReport = try QuotaEvidenceReportBuilder.make(snapshot: second, product: .codex, rangeStart: start, rangeEnd: end)
+
+        XCTAssertEqual(firstReport, secondReport)
+        XCTAssertEqual(firstReport.omittedRecordCount, 129)
+        XCTAssertEqual(firstReport.records.first?.intervalStart, start.addingTimeInterval(136 * 60))
     }
 
     private func observations(
@@ -333,6 +384,27 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
                 source: .codexLocalReport
             )
         }
+    }
+
+    private func investigationRecord(index: Int, start: Date) -> InvestigationRecord {
+        InvestigationRecord(
+            id: "record-\(index)",
+            identity: nil,
+            resetBoundary: nil,
+            start: start.addingTimeInterval(Double(index) * 60),
+            end: start.addingTimeInterval(Double(index + 1) * 60),
+            authoritativeTotal: "Unavailable",
+            localBreakdown: "Gap",
+            unattributed: "Unattributed",
+            forecast: .init(status: "Unavailable", summary: "Unavailable", details: "Unavailable"),
+            anomaly: .init(status: "Unavailable", summary: "Unavailable", details: "Unavailable"),
+            version: "Unavailable",
+            limitations: "Unavailable",
+            traces: "Unavailable",
+            freshness: "Unavailable",
+            isGap: true,
+            isObservedZero: false
+        )
     }
 
     private func input(

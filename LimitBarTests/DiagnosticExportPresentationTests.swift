@@ -144,7 +144,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
 
         XCTAssertEqual(generation, 1)
         XCTAssertEqual(try Data(contentsOf: destination), Data(preview.utf8))
-        XCTAssertEqual(model.message, "Diagnostic export saved.")
+        XCTAssertEqual(model.message, DiagnosticExportModel.successMessage)
     }
 
     func testFailuresExposeOnlyFixedGenericMessages() async {
@@ -204,6 +204,133 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertFalse(model.hasDestination)
         XCTAssertFalse(model.showsPreview)
         XCTAssertEqual(model.preview, "")
+    }
+
+    func testSelectionChangeInvalidatesDelayedPreparationCompletion() async throws {
+        let initial = DiagnosticExportSelection(product: .codex, rangeStart: Date(timeIntervalSince1970: 100), rangeEnd: Date(timeIntervalSince1970: 200))
+        let changed = DiagnosticExportSelection(product: .claudeCode, rangeStart: Date(timeIntervalSince1970: 300), rangeEnd: Date(timeIntervalSince1970: 400))
+        let model = DiagnosticExportModel(selection: initial, makeArtifact: { _ in
+            try await Task.sleep(for: .milliseconds(80))
+            return try self.artifact(build: 1)
+        })
+
+        let preparation = Task { await model.prepare() }
+        try await Task.sleep(for: .milliseconds(10))
+        model.updateSelection(changed)
+        await preparation.value
+
+        XCTAssertEqual(model.selection, changed)
+        XCTAssertFalse(model.showsPreview)
+        XCTAssertEqual(model.preview, "")
+    }
+
+    func testNewerConcurrentPreparationWinsWhenOlderFinishesLast() async throws {
+        var request = 0
+        let model = DiagnosticExportModel(makeArtifact: {
+            request += 1
+            let current = request
+            try await Task.sleep(for: .milliseconds(current == 1 ? 80 : 10))
+            return try self.artifact(build: current)
+        })
+
+        let older = Task { await model.prepare() }
+        try await Task.sleep(for: .milliseconds(5))
+        let newer = Task { await model.prepare() }
+        await newer.value
+        let approvedPreview = model.preview
+        await older.value
+
+        XCTAssertTrue(model.showsPreview)
+        XCTAssertEqual(model.preview, approvedPreview)
+        XCTAssertTrue(approvedPreview.contains(#""build" : 2"#))
+        XCTAssertFalse(approvedPreview.contains(#""build" : 1"#))
+    }
+
+    func testCancelInvalidatesDelayedPreparationAndCannotReopenPreview() async throws {
+        let model = DiagnosticExportModel(makeArtifact: {
+            try await Task.sleep(for: .milliseconds(60))
+            return try self.artifact()
+        })
+
+        let preparation = Task { await model.prepare() }
+        try await Task.sleep(for: .milliseconds(10))
+        model.cancelPreview()
+        await preparation.value
+
+        XCTAssertFalse(model.showsPreview)
+        XCTAssertEqual(model.preview, "")
+    }
+
+    func testCancellationAfterDestinationSelectionCreatesNoFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("cancelled.json")
+        let model = DiagnosticExportModel(makeArtifact: { try self.artifact() }, chooseDestination: { destination })
+
+        await model.prepare()
+        model.approvePreview()
+        model.chooseApprovedDestination()
+        model.cancelPreview()
+        model.save()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testBackgroundPublicationAfterPreviewCannotChangeApprovedBytes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let destination = directory.appendingPathComponent("background.json")
+        var publishedBuild = 1
+        let model = DiagnosticExportModel(makeArtifact: { try self.artifact(build: publishedBuild) }, chooseDestination: { destination })
+
+        await model.prepare()
+        let approved = Data(model.preview.utf8)
+        publishedBuild = 2
+        model.approvePreview()
+        model.chooseApprovedDestination()
+        model.save()
+
+        XCTAssertEqual(try Data(contentsOf: destination), approved)
+        XCTAssertTrue(model.message == DiagnosticExportModel.successMessage)
+    }
+
+    func testProductAndRangeChangesRequireRegeneratedPreview() async throws {
+        let initial = DiagnosticExportSelection(product: .codex, rangeStart: Date(timeIntervalSince1970: 100), rangeEnd: Date(timeIntervalSince1970: 200))
+        let changed = DiagnosticExportSelection(product: .claudeCode, rangeStart: Date(timeIntervalSince1970: 300), rangeEnd: Date(timeIntervalSince1970: 500))
+        var generatedSelections: [DiagnosticExportSelection] = []
+        let model = DiagnosticExportModel(selection: initial, makeArtifact: { selection in
+            generatedSelections.append(selection)
+            return try self.artifact(build: selection.product == .codex ? 1 : 2)
+        })
+
+        await model.prepare()
+        model.approvePreview()
+        model.updateSelection(changed)
+        XCTAssertFalse(model.isApproved)
+        XCTAssertEqual(model.preview, "")
+        await model.prepare()
+
+        XCTAssertEqual(generatedSelections, [initial, changed])
+        XCTAssertTrue(model.preview.contains(#""build" : 2"#))
+    }
+
+    func testWorkflowHasNoNetworkUploadCollaboratorAndUsesFixedSafeStrings() async {
+        let sentinel = "/Users/private TOKEN_SECRET ACCOUNT_LABEL"
+        let model = DiagnosticExportModel(makeArtifact: { try self.artifact() })
+        let collaboratorNames = Mirror(reflecting: model).children.compactMap(\.label).joined(separator: " ").lowercased()
+
+        await model.prepare()
+
+        XCTAssertFalse(collaboratorNames.contains("network"))
+        XCTAssertFalse(collaboratorNames.contains("upload"))
+        for value in [DiagnosticExportModel.preparationError, DiagnosticExportModel.saveError, DiagnosticExportModel.successMessage, DiagnosticExportModel.destinationDefaultName, model.preview] {
+            XCTAssertFalse(value.contains(sentinel))
+            XCTAssertFalse(value.contains("/Users/private"))
+            XCTAssertFalse(value.contains("TOKEN_SECRET"))
+            XCTAssertFalse(value.contains("ACCOUNT_LABEL"))
+        }
     }
 
     func testDiagnosticQuotaWindowKindsUseExactIdentityParsing() throws {
