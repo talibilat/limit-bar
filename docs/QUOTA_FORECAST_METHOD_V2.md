@@ -57,7 +57,7 @@ An exhaustion range is published only when its later endpoint is strictly before
 Otherwise burn remains qualified and exhaustion is explicitly not projected before reset.
 No exhaustion range can cross the reset boundary.
 
-Every qualified finding records its exact quota-window identity, ordered distinct input observation identities, interpretation versions, method identity, creation time, observation count, observation span, evidence age, calculated burn range, and optional calculated exhaustion range.
+Every qualified finding records its exact quota-window identity, ordered distinct input observation identities, explicit latest observation identity and timestamp, interpretation versions, method identity, creation time, observation count, observation span, evidence age, calculated burn range, and optional reset-bounded exhaustion range.
 Every unavailable finding records the same versioned method and creation metadata, interpretation versions, the ordered distinct inputs considered, count, span, evidence age when present, and reason.
 Qualification is derived from the enclosing finding state rather than stored redundantly.
 Creation time is analytical metadata and is not a provider event.

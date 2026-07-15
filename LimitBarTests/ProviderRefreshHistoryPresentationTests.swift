@@ -3,6 +3,47 @@ import LimitBarCore
 @testable import LimitBar
 
 final class ProviderRefreshHistoryPresentationTests: XCTestCase {
+    @MainActor
+    func testPlannedWorkloadViewRendersInjectedAvailableIndeterminateAndUnavailableStates() {
+        let cases: [(WorkloadPlanningSurfaceStatus, String)] = [
+            (.available, "Assessment available"),
+            (.indeterminate, "Assessment indeterminate"),
+            (.unavailable, "Assessment unavailable"),
+        ]
+
+        for (status, title) in cases {
+            let expected = WorkloadPlanningSurfaceResult(
+                status: status,
+                title: title,
+                summary: "Fixture summary",
+                evidence: "Fixture evidence"
+            )
+            let provider = InjectedWorkloadPlanningData(expected: expected)
+            let view = PlannedWorkloadView(data: provider)
+
+            XCTAssertEqual(view.renderedResult, expected)
+        }
+    }
+
+    @MainActor
+    func testUnsupportedProductionBoundaryHidesNoOpPlanningControls() {
+        let state = LimitBarState(
+            providerSettings: [],
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in nil }
+            ))
+        )
+        let provider = LiveWorkloadPlanningData(state: state)
+
+        XCTAssertNil(provider.inputSupport)
+        XCTAssertEqual(provider.result(workUnits: 10, concurrency: 1, now: Date()).status, .unavailable)
+    }
+
     func testOutcomesUseDistinctSafeCopy() {
         XCTAssertEqual(ProviderRefreshHistoryStatusText.outcome(.success), "Succeeded")
         XCTAssertEqual(ProviderRefreshHistoryStatusText.outcome(.partialFailure), "Partially failed")
@@ -263,6 +304,16 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
             )),
             attributionEvidenceStore: attributionStore
         )
+    }
+}
+
+@MainActor
+private struct InjectedWorkloadPlanningData: WorkloadPlanningDataProviding {
+    let expected: WorkloadPlanningSurfaceResult
+    var inputSupport: WorkloadPlanningInputSupport? { nil }
+
+    func result(workUnits: Int, concurrency: Int, now: Date) -> WorkloadPlanningSurfaceResult {
+        expected
     }
 }
 

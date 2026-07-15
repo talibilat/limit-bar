@@ -141,12 +141,12 @@ final class LimitBarUITests: XCTestCase {
         launch(screen: "popover")
 
         XCTAssertTrue(app.staticTexts["planned-workload-title"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.steppers["planned-workload-units"].exists)
+        XCTAssertFalse(app.steppers["planned-workload-units"].exists)
         let outcome = app.staticTexts["planned-workload-outcome"]
         XCTAssertTrue(outcome.exists)
         let text = (outcome.value as? String) ?? outcome.label
         XCTAssertTrue(text.contains("Assessment unavailable"))
-        XCTAssertTrue(text.contains("No measured completed runs"))
+        XCTAssertTrue(text.contains("No supported adapter records measured completed runs"))
     }
 
     private func launch(screen: String) {

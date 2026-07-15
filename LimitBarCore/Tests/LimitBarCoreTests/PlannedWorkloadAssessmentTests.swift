@@ -6,386 +6,416 @@ import Testing
 struct PlannedWorkloadAssessmentTests {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
-    @Test("comparable measured runs produce a traceable calculated completion range")
+    @Test("comparable exact-window runs produce a traceable calculated range")
     func comparableRuns() throws {
         let fixture = try Fixture(start: start)
         let result = WorkloadPlanning.assess(
             fixture.plan(units: 10),
-            historicalRuns: try fixture.runs(requirements: [18, 20, 22, 24], durations: [1_800, 1_900, 2_000, 2_100]),
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
+            historicalRuns: try fixture.runs(requirements: [18, 20, 22, 24]),
+            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            now: fixture.now
         )
 
-        guard case let .available(assessment) = result else {
+        guard case let .available(value) = result else {
             Issue.record("Expected an available assessment")
             return
         }
-        #expect(assessment.conclusion == .likelyCompletionBeforeExhaustion)
-        #expect(assessment.requirementPercent.lower == 19.5)
-        #expect(assessment.requirementPercent.upper == 22.5)
-        #expect(assessment.availablePercent == 70)
-        #expect(assessment.currentEvidence.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
-        #expect(assessment.currentEvidence.identity.resetBoundary == fixture.identity.resetBoundary)
-        #expect(assessment.sample.includedRunIDs == ["run-0", "run-1", "run-2", "run-3"])
-        #expect(assessment.sample.excluded[.incompatibleProviderProduct] == 1)
-        #expect(assessment.metadata.comparabilityMethod == .strictMeasuredOperationsV1)
-        #expect(assessment.metadata.rangeMethod == .interquartilePerUnitV1)
-        #expect(assessment.reasons.contains(.requirementBelowAvailableQuota))
-        #expect(assessment.limitations.contains(.syntheticFixtureValidationOnly))
+        #expect(value.conclusion == .likelyCompletionBeforeLimitingBoundary)
+        #expect(value.requirementPercent == QuotaInsightRange(lower: 19.5, upper: 22.5))
+        #expect(value.currentEvidence.availablePercent == 70)
+        #expect(value.currentEvidence.boundaryInteraction == .resetExpectedFirst)
+        #expect(value.sample.includedRevisionIdentities.count == 4)
+        #expect(value.sample.observationIdentities.count == 4)
+        #expect(value.sample.evidenceIdentities.count == 4)
+        #expect(value.metadata.comparabilityMethod == .strictMeasuredOperationsV2)
     }
 
-    @Test("strict comparison excludes incomplete, failed, version-divergent, and incompatible runs")
+    @Test("historical runs require an exact contained interval and immutable typed evidence")
+    func exactHistoricalWindowValidation() throws {
+        let fixture = try Fixture(start: start)
+        #expect(throws: WorkloadPlanningValidationError.self) {
+            try fixture.run(index: 1, requirement: 10, startedAt: fixture.historicalWindowStart.addingTimeInterval(-1))
+        }
+        #expect(throws: WorkloadPlanningValidationError.self) {
+            try fixture.run(index: 1, requirement: 10, endedAt: fixture.historicalIdentity.resetBoundary.addingTimeInterval(1))
+        }
+    }
+
+    @Test("strict comparison rejects product, window, source, and every typed version boundary")
     func strictCompatibility() throws {
         let fixture = try Fixture(start: start)
-        var runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: [1_800, 1_900, 2_000, 2_100])
-        runs.append(try fixture.run(id: "incomplete", requirement: 10, outcome: .incomplete))
-        runs.append(try fixture.run(id: "failed", requirement: 10, outcome: .failed))
-        runs.append(try fixture.run(id: "client-v2", requirement: 10, clientVersion: "codex-2"))
-        runs.append(try fixture.run(id: "adapter-v2", requirement: 10, adapterVersion: "adapter-2"))
-        runs.append(try fixture.run(id: "weekly", requirement: 10, windowKind: .weekly))
+        var runs = try fixture.runs(requirements: [18, 20, 22, 24])
+        runs.append(try fixture.run(index: 10, requirement: 10, identity: fixture.otherProductIdentity))
+        runs.append(try fixture.run(index: 11, requirement: 10, identity: fixture.weeklyIdentity))
+        runs.append(try fixture.run(index: 12, requirement: 10, source: .normalizedCompletedRunAdapter, adapter: fixture.otherAdapter))
+        runs.append(try fixture.run(index: 13, requirement: 10, client: fixture.otherClient))
+        runs.append(try fixture.run(index: 14, requirement: 10, format: fixture.otherFormat))
 
         guard case let .available(value) = WorkloadPlanning.assess(
             fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
         ) else {
             Issue.record("Expected compatible runs to remain available")
             return
         }
-        #expect(value.sample.includedRunIDs.count == 4)
-        #expect(value.sample.excluded[.incompleteOutcome] == 1)
-        #expect(value.sample.excluded[.failedOutcome] == 1)
-        #expect(value.sample.excluded[.incompatibleClientVersion] == 1)
-        #expect(value.sample.excluded[.incompatibleAdapterVersion] == 1)
+        #expect(value.sample.includedRevisionIdentities.count == 4)
+        #expect(value.sample.excluded[.incompatibleProviderProduct] == 1)
         #expect(value.sample.excluded[.incompatibleWindowSemantics] == 1)
+        #expect(value.sample.excluded[.incompatibleAdapterVersion] == 1)
+        #expect(value.sample.excluded[.incompatibleClientVersion] == 1)
+        #expect(value.sample.excluded[.incompatibleProviderFormatVersion] == 1)
     }
 
-    @Test("insufficient or wholly incompatible history is unavailable with distinct reasons")
-    func unavailableHistory() throws {
+    @Test("corrections select one terminal immutable revision and retain superseded traceability")
+    func corrections() throws {
         let fixture = try Fixture(start: start)
-        let current = fixture.current(used: 30, exhaustionMinutes: 180)
-        let insufficient = WorkloadPlanning.assess(
-            fixture.plan(units: 10),
-            historicalRuns: try fixture.runs(requirements: [18, 20, 22], durations: [1_800, 1_900, 2_000], includeIncompatible: false),
-            currentEvidence: current,
-            now: start.addingTimeInterval(31 * 60)
+        var runs = try fixture.runs(requirements: [18, 20, 22, 24])
+        let original = runs.removeFirst()
+        let corrected = try fixture.run(
+            index: 0,
+            revision: 100,
+            supersedes: original.revisionIdentity,
+            requirement: 26
         )
-        let incompatible = WorkloadPlanning.assess(
-            fixture.plan(units: 10),
-            historicalRuns: [try fixture.run(id: "other", requirement: 10, product: .claudeCode)],
-            currentEvidence: current,
-            now: start.addingTimeInterval(31 * 60)
-        )
-        let incomplete = WorkloadPlanning.assess(
-            fixture.plan(units: 10),
-            historicalRuns: [try fixture.run(id: "incomplete", requirement: 10, outcome: .incomplete)],
-            currentEvidence: current,
-            now: start.addingTimeInterval(31 * 60)
-        )
-
-        #expect(insufficient.unavailableReason == .insufficientComparableRuns)
-        #expect(incompatible.unavailableReason == .incompatibleHistoricalRuns)
-        #expect(incomplete.unavailableReason == .incompleteHistoricalRuns)
-    }
-
-    @Test("stale, unqualified, expired, and identity-mismatched current evidence is unavailable")
-    func unavailableCurrentEvidence() throws {
-        let fixture = try Fixture(start: start)
-        let runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: [1_800, 1_900, 2_000, 2_100])
-        let plan = fixture.plan(units: 10)
-        let now = start.addingTimeInterval(31 * 60)
-
-        #expect(WorkloadPlanning.assess(plan, historicalRuns: runs, currentEvidence: nil, now: now).unavailableReason == .missingCurrentQuotaEvidence)
-        #expect(WorkloadPlanning.assess(plan, historicalRuns: runs, currentEvidence: fixture.unqualified(), now: now).unavailableReason == .unqualifiedCurrentQuotaEvidence)
-        #expect(WorkloadPlanning.assess(plan, historicalRuns: runs, currentEvidence: fixture.staleCurrent(), now: now).unavailableReason == .staleCurrentQuotaEvidence)
-        #expect(WorkloadPlanning.assess(plan, historicalRuns: runs, currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180), now: start.addingTimeInterval(241 * 60)).unavailableReason == .expiredCurrentQuotaBoundary)
-        #expect(WorkloadPlanning.assess(plan, historicalRuns: runs, currentEvidence: fixture.mismatchedCurrent(), now: now).unavailableReason == .incompatibleCurrentQuotaEvidence)
-    }
-
-    @Test("overlapping ranges remain indeterminate and do not promise completion")
-    func indeterminateRange() throws {
-        let fixture = try Fixture(start: start)
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10),
-            historicalRuns: try fixture.runs(requirements: [65, 70, 75, 80], durations: [1_800, 1_900, 2_000, 2_100]),
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
-        )
-
-        guard case let .indeterminate(value) = result else {
-            Issue.record("Expected an indeterminate overlap")
-            return
-        }
-        #expect(value.reason == .requirementOverlapsAvailableQuota)
-        #expect(value.requirementPercent.lower == 68.75)
-        #expect(value.requirementPercent.upper == 76.25)
-        #expect(value.options.isEmpty)
-    }
-
-    @Test("reset and exhaustion interactions are explicit")
-    func resetAndExhaustion() throws {
-        let fixture = try Fixture(start: start)
-        let runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: [14_000, 14_400, 14_800, 15_200])
-        let reset = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 10, exhaustionMinutes: nil),
-            now: start.addingTimeInterval(31 * 60)
-        )
-        let exhaustion = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 10, exhaustionMinutes: 60),
-            now: start.addingTimeInterval(31 * 60)
-        )
-
-        #expect(reset.availableConclusion == .likelyResetBeforeCompletion)
-        #expect(exhaustion.availableConclusion == .likelyExhaustionBeforeCompletion)
-    }
-
-    @Test("options appear only when their measured prerequisites hold")
-    func evidenceBackedOptions() throws {
-        let fixture = try Fixture(start: start)
-        let high = try fixture.runs(requirements: [75, 78, 81, 84], durations: [1_800, 1_900, 2_000, 2_100], includeIncompatible: false)
-        let lowerConcurrency = try (0..<4).map {
-            try fixture.run(id: "lower-\($0)", requirement: Double(35 + $0), concurrency: 1)
-        }
-        let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: high + lowerConcurrency,
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
+            fixture.plan(units: 10), historicalRuns: [original, corrected] + runs,
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
 
         guard case let .available(value) = result else {
-            Issue.record("Expected an available insufficiency conclusion")
+            Issue.record("Expected corrected sample")
+            return
+        }
+        #expect(value.sample.includedRevisionIdentities.contains(corrected.revisionIdentity))
+        #expect(!value.sample.includedRevisionIdentities.contains(original.revisionIdentity))
+        #expect(value.sample.supersededRevisionIdentities == [original.revisionIdentity])
+        #expect(value.sample.excluded[.supersededRevision] == 1)
+    }
+
+    @Test("retries and conflicting revision identities never qualify samples or options")
+    func retriesAndConflicts() throws {
+        let fixture = try Fixture(start: start)
+        let high = try fixture.runs(requirements: [75, 78, 81, 84])
+        let alternatives = try (20..<24).map { try fixture.run(index: $0, requirement: Double($0), concurrency: 1) }
+        let retryFlood = Array(repeating: alternatives[0], count: 4)
+        let conflict = try fixture.run(
+            index: 99,
+            revisionIdentity: alternatives[1].revisionIdentity,
+            requirement: 1,
+            concurrency: 1
+        )
+        let result = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: high + retryFlood + [alternatives[1], conflict],
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+        )
+
+        guard case let .available(value) = result else {
+            Issue.record("Expected current-concurrency insufficiency")
             return
         }
         #expect(value.conclusion == .likelyInsufficientCurrentQuota)
-        #expect(value.options.map(\.kind) == [.reduceConcurrency, .reduceWorkUnits, .deferUntilReset])
-
-        let withoutAlternatives = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: high,
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
-        )
-        #expect(withoutAlternatives.options.map(\.kind) == [.reduceWorkUnits, .deferUntilReset])
+        #expect(!value.options.map(\.kind).contains(.reduceConcurrency))
+        #expect(value.sample.excluded[.duplicateRevision] == 3)
+        #expect(value.sample.excluded[.conflictingRevisionIdentity] == 2)
     }
 
-    @Test("bounded workload input rejects arbitrary labels and invalid counts")
-    func boundedInput() throws {
-        #expect(throws: WorkloadPlanningValidationError.self) {
-            try PlannedWorkload(
-                product: .codex, kind: .codingAgentOperations, quotaWindowKind: .session,
-                executionMode: .interactive, concurrency: 0, workUnits: 10,
-                adapterVersion: "adapter-1", clientVersion: "codex-1"
-            )
-        }
-        #expect(throws: WorkloadPlanningValidationError.self) {
-            try PlannedWorkload(
-                product: .codex, kind: .codingAgentOperations, quotaWindowKind: .session,
-                executionMode: .interactive, concurrency: 2, workUnits: 10,
-                adapterVersion: String(repeating: "x", count: 129), clientVersion: "codex-1"
-            )
-        }
-        #expect(throws: WorkloadPlanningValidationError.self) {
-            try Fixture(start: start).run(
-                id: "sentinel", requirement: 10,
-                clientVersion: "prompt:/private/source.swift"
-            )
-        }
-    }
-
-    @Test("Observed Zero, Gap, unavailable, and duplicate evidence stay distinct")
-    func evidenceStateDistinctions() throws {
+    @Test("current evidence must be the exact latest forecast observation")
+    func latestCurrentObservation() throws {
         let fixture = try Fixture(start: start)
-        let completed = try fixture.runs(
-            requirements: [18, 20, 22, 24], durations: [1_800, 1_900, 2_000, 2_100], includeIncompatible: false
-        )
-        var runs = completed
-        runs.append(try fixture.run(id: "zero", requirement: 0, outcome: .observedZero))
-        runs.append(try fixture.run(id: "gap", requirement: 1, outcome: .gap))
-        runs.append(try fixture.run(id: "unavailable", requirement: 1, outcome: .unavailable))
-        runs.append(completed[0])
+        let runs = try fixture.runs(requirements: [18, 20, 22, 24])
+        let older = fixture.current(used: 30, burn: 5...10, passOlderObservation: true)
 
-        guard case let .available(value) = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
-        ) else {
-            Issue.record("Expected completed evidence to remain available")
-            return
-        }
-        #expect(value.sample.excluded[.observedZeroUnsupported] == 1)
-        #expect(value.sample.excluded[.gap] == 1)
-        #expect(value.sample.excluded[.unavailableEvidence] == 1)
-        #expect(value.sample.excluded[.duplicateRun] == 1)
-    }
-
-    @Test("conflicting run identity excludes every conflicting record")
-    func conflictingRunIdentity() throws {
-        let fixture = try Fixture(start: start)
-        let first = try fixture.run(id: "conflict", requirement: 10)
-        let second = try fixture.run(id: "conflict", requirement: 20)
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: [first, second],
-            currentEvidence: fixture.current(used: 30, exhaustionMinutes: 180),
-            now: start.addingTimeInterval(31 * 60)
+            fixture.plan(units: 10), historicalRuns: runs, currentEvidence: older, now: fixture.now
+        )
+        #expect(result.unavailable?.reason == .incompatibleCurrentQuotaEvidence)
+        #expect(result.unavailable?.currentEvidence?.latestObservationIdentity == older.latestObservation.stableIdentity)
+        #expect(result.unavailable?.currentEvidence?.unboundedExhaustionRange == nil)
+        #expect(result.unavailable?.currentEvidence?.boundaryInteraction == nil)
+    }
+
+    @Test("unavailable current evidence retains safe qualification, method, age, and boundary metadata")
+    func unavailableMetadata() throws {
+        let fixture = try Fixture(start: start)
+        let runs = try fixture.runs(requirements: [18, 20, 22, 24])
+        let unqualified = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: fixture.unqualified(), now: fixture.now
+        )
+        let stale = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: fixture.staleCurrent(), now: fixture.now
+        )
+        let expired = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            now: fixture.currentIdentity.resetBoundary
         )
 
-        guard case let .unavailable(value) = result else {
-            Issue.record("Expected conflicting evidence to be unavailable")
-            return
-        }
-        #expect(value.reason == .incompleteHistoricalRuns)
-        #expect(value.sample.includedRunIDs.isEmpty)
-        #expect(value.sample.excluded[.conflictingRunIdentity] == 2)
+        #expect(unqualified.unavailable?.currentEvidence?.forecastQualification == .unavailable)
+        #expect(unqualified.unavailable?.currentEvidence?.forecastUnavailableReason == .insufficientObservations)
+        #expect(unqualified.unavailable?.currentEvidence?.forecastMethod == .pairwisePositiveSlopeInterquartileV2)
+        #expect(stale.unavailable?.currentEvidence?.evidenceAge == Double(7 * 60 * 60 + 31 * 60))
+        #expect(stale.unavailable?.currentEvidence?.identity.resetBoundary == fixture.currentIdentity.resetBoundary)
+        #expect(expired.unavailable?.currentEvidence?.identity.resetBoundary == fixture.currentIdentity.resetBoundary)
+    }
+
+    @Test("exhaustion and reset interactions distinguish before, overlap, equality, and after")
+    func boundaryInteractions() throws {
+        let fixture = try Fixture(start: start)
+        let short = try fixture.runs(requirements: [18, 20, 22, 24], durations: [1_800, 1_900, 2_000, 2_100])
+        let long = try fixture.runs(requirements: [18, 20, 22, 24], durations: [15_000, 15_100, 15_200, 15_300])
+
+        let exhaustionFirst = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: fixture.current(used: 10, burn: 60...90), now: fixture.now
+        )
+        let resetFirst = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+        )
+        let straddling = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+        )
+        let equal = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: fixture.current(used: 30, burn: 10...20), now: fixture.now
+        )
+        let completesBeforeOverlap = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: short,
+            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+        )
+
+        #expect(exhaustionFirst.available?.conclusion == .likelyExhaustionBeforeCompletion)
+        #expect(exhaustionFirst.available?.currentEvidence.boundaryInteraction == .exhaustionExpectedFirst)
+        #expect(resetFirst.available?.conclusion == .likelyResetBeforeCompletion)
+        #expect(resetFirst.available?.currentEvidence.boundaryInteraction == .resetExpectedFirst)
+        #expect(straddling.indeterminate?.reason == .exhaustionOverlapsReset)
+        #expect(equal.indeterminate?.reason == .exhaustionOverlapsReset)
+        #expect(equal.indeterminate?.currentEvidence.boundaryInteraction == .indeterminateOverlap)
+        #expect(completesBeforeOverlap.available?.conclusion == .likelyCompletionBeforeLimitingBoundary)
+    }
+
+    @Test("closed-range equality with workload completion is indeterminate")
+    func boundaryEqualityIsIndeterminate() throws {
+        let fixture = try Fixture(start: start)
+        let exactDuration = fixture.currentIdentity.resetBoundary.timeIntervalSince(fixture.now)
+        let runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: Array(repeating: exactDuration, count: 4))
+        let result = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+        )
+        #expect(result.indeterminate?.reason == .completionOverlapsReset)
+    }
+
+    @Test("defer option requires reset-first evidence and cites typed evidence")
+    func deferOptionQualification() throws {
+        let fixture = try Fixture(start: start)
+        let high = try fixture.runs(requirements: [75, 78, 81, 84])
+        let resetFirst = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: high,
+            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+        )
+        let exhaustionFirst = WorkloadPlanning.assess(
+            fixture.plan(units: 10), historicalRuns: high,
+            currentEvidence: fixture.current(used: 30, burn: 60...90), now: fixture.now
+        )
+
+        let option = resetFirst.available?.options.first { $0.kind == .deferUntilReset }
+        #expect(option?.limitation == .postResetCapacityUnknown)
+        #expect(option?.observationIdentities.count == 1)
+        #expect(option?.evidenceIdentities.count == 4)
+        #expect(exhaustionFirst.available?.options.allSatisfy { $0.kind != .deferUntilReset } == true)
     }
 }
 
 private extension WorkloadPlanningState {
-    var unavailableReason: WorkloadPlanningUnavailableReason? {
-        guard case let .unavailable(value) = self else { return nil }
-        return value.reason
-    }
-
-    var availableConclusion: WorkloadPlanningConclusion? {
+    var available: AvailableWorkloadPlanningAssessment? {
         guard case let .available(value) = self else { return nil }
-        return value.conclusion
+        return value
     }
-
-    var options: [WorkloadPlanningOption] {
-        switch self {
-        case let .available(value): value.options
-        case let .indeterminate(value): value.options
-        case .unavailable: []
-        }
+    var indeterminate: IndeterminateWorkloadPlanningAssessment? {
+        guard case let .indeterminate(value) = self else { return nil }
+        return value
+    }
+    var unavailable: UnavailableWorkloadPlanningAssessment? {
+        guard case let .unavailable(value) = self else { return nil }
+        return value
     }
 }
 
 private struct Fixture {
     let start: Date
-    let identity: QuotaWindowIdentity
+    let now: Date
+    let currentIdentity: QuotaWindowIdentity
+    let historicalIdentity: QuotaWindowIdentity
+    let weeklyIdentity: QuotaWindowIdentity
+    let otherProductIdentity: QuotaWindowIdentity
+    let historicalWindowStart: Date
+    let adapter = WorkloadAdapterVersion(uuid(1))
+    let otherAdapter = WorkloadAdapterVersion(uuid(2))
+    let client = WorkloadClientVersion(uuid(3))
+    let otherClient = WorkloadClientVersion(uuid(4))
+    let format = WorkloadProviderFormatVersion(uuid(5))
+    let otherFormat = WorkloadProviderFormatVersion(uuid(6))
 
     init(start: Date) throws {
         self.start = start
-        identity = try QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: start.addingTimeInterval(240 * 60))
+        now = start.addingTimeInterval(31 * 60)
+        currentIdentity = try QuotaWindowIdentity(
+            product: .codex, identifier: "codex:primary:300", resetBoundary: start.addingTimeInterval(240 * 60)
+        )
+        historicalIdentity = try QuotaWindowIdentity(
+            product: .codex, identifier: "codex:primary:300", resetBoundary: start.addingTimeInterval(10 * 60)
+        )
+        weeklyIdentity = try QuotaWindowIdentity(
+            product: .codex, identifier: "codex:secondary:10080", resetBoundary: start.addingTimeInterval(10 * 60)
+        )
+        otherProductIdentity = try QuotaWindowIdentity(
+            product: .claudeCode, identifier: "session:session", resetBoundary: start.addingTimeInterval(10 * 60)
+        )
+        historicalWindowStart = start.addingTimeInterval(-300 * 60)
     }
 
     func plan(units: Int) -> PlannedWorkload {
         try! PlannedWorkload(
             product: .codex, kind: .codingAgentOperations, quotaWindowKind: .session,
             executionMode: .interactive, concurrency: 2, workUnits: units,
-            adapterVersion: "adapter-1", clientVersion: "codex-1"
+            source: .normalizedCompletedRunAdapter, adapterVersion: adapter,
+            clientVersion: client, providerFormatVersion: format
         )
     }
 
-    func runs(
-        requirements: [Double], durations: [TimeInterval], includeIncompatible: Bool = true
-    ) throws -> [MeasuredHistoricalRun] {
-        var values = try zip(requirements, durations).enumerated().map {
-            try run(id: "run-\($0.offset)", requirement: $0.element.0, duration: $0.element.1)
+    func runs(requirements: [Double], durations: [TimeInterval]? = nil) throws -> [MeasuredHistoricalRun] {
+        try requirements.enumerated().map {
+            try run(index: $0.offset, requirement: $0.element, duration: durations?[$0.offset] ?? 1_800)
         }
-        if includeIncompatible {
-            values.append(try run(id: "other-product", requirement: 1, product: .claudeCode))
-        }
-        return values
     }
 
     func run(
-        id: String,
+        index: Int,
+        revision: Int? = nil,
+        revisionIdentity: HistoricalRunRevisionIdentity? = nil,
+        supersedes: HistoricalRunRevisionIdentity? = nil,
         requirement: Double,
         duration: TimeInterval = 1_800,
-        product: ProviderProduct = .codex,
+        identity: QuotaWindowIdentity? = nil,
         concurrency: Int = 2,
         outcome: MeasuredHistoricalRunOutcome = .completed,
-        clientVersion: String = "codex-1",
-        adapterVersion: String = "adapter-1",
-        windowKind: WorkloadQuotaWindowKind = .session
+        source: WorkloadRunSourceProvenance = .normalizedCompletedRunAdapter,
+        adapter: WorkloadAdapterVersion? = nil,
+        client: WorkloadClientVersion? = nil,
+        format: WorkloadProviderFormatVersion? = nil,
+        startedAt: Date? = nil,
+        endedAt: Date? = nil
     ) throws -> MeasuredHistoricalRun {
-        try MeasuredHistoricalRun(
-            id: id,
-            product: product,
+        let quotaIdentity = identity ?? historicalIdentity
+        let end = endedAt ?? start
+        let observation = try MeasuredQuotaObservation(
+            identity: quotaIdentity,
+            percentageUsed: min(100, max(0, requirement)),
+            observedAt: min(end, quotaIdentity.resetBoundary),
+            source: quotaIdentity.product == .codex ? .codexLocalReport : .claudeProviderReport
+        )
+        return try MeasuredHistoricalRun(
+            identity: HistoricalRunIdentity(uuid(index + 100)),
+            revisionIdentity: revisionIdentity ?? HistoricalRunRevisionIdentity(uuid((revision ?? index) + 1_000)),
+            supersedesRevisionIdentity: supersedes,
+            quotaWindowIdentity: quotaIdentity,
+            quotaWindowStart: historicalWindowStart,
             kind: .codingAgentOperations,
-            quotaWindowKind: windowKind,
             executionMode: .interactive,
             concurrency: concurrency,
             completedWorkUnits: 10,
-            startedAt: start.addingTimeInterval(-duration),
-            endedAt: start,
+            startedAt: startedAt ?? end.addingTimeInterval(-duration),
+            endedAt: end,
             measuredQuotaUsedPercent: requirement,
             quotaUnit: .providerReportedPercentage,
             outcome: outcome,
-            adapterVersion: adapterVersion,
-            clientVersion: clientVersion,
-            evidenceIDs: ["evidence-\(id)"]
+            source: source,
+            adapterVersion: adapter ?? self.adapter,
+            clientVersion: client ?? self.client,
+            providerFormatVersion: format ?? self.format,
+            observationIdentities: [observation.stableIdentity],
+            evidenceIdentities: [WorkloadEvidenceIdentity(uuid(index + 2_000))]
         )
     }
 
-    func current(used: Double, exhaustionMinutes: Double?) -> CurrentWorkloadQuotaEvidence {
-        let observedAt = start.addingTimeInterval(30 * 60)
-        let observation = try! MeasuredQuotaObservation(
-            identity: identity, percentageUsed: used, observedAt: observedAt, source: .codexLocalReport
+    func current(
+        used: Double,
+        burn: ClosedRange<Double>,
+        passOlderObservation: Bool = false
+    ) -> CurrentWorkloadQuotaEvidence {
+        let older = try! MeasuredQuotaObservation(
+            identity: currentIdentity, percentageUsed: max(0, used - 1),
+            observedAt: start.addingTimeInterval(20 * 60), source: .codexLocalReport
+        )
+        let latest = try! MeasuredQuotaObservation(
+            identity: currentIdentity, percentageUsed: used,
+            observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
         let insight = QualifiedQuotaInsight(
-            identity: identity,
+            identity: currentIdentity,
             measuredObservationCount: 4,
             measuredSpan: 30 * 60,
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
-            createdAt: start.addingTimeInterval(31 * 60),
+            createdAt: now,
             evidenceAge: 60,
-            inputObservationIdentities: [observation.stableIdentity],
+            inputObservationIdentities: [older.stableIdentity, latest.stableIdentity],
+            latestObservationIdentity: latest.stableIdentity,
+            latestObservationAt: latest.observedAt,
             interpretationVersions: [.codexLocalReportV1],
-            calculatedBurnPercentPerHour: .init(lower: 5, upper: 10),
-            calculatedExhaustionRange: exhaustionMinutes.map {
-                start.addingTimeInterval($0 * 60)...start.addingTimeInterval(($0 + 20) * 60)
-            }
+            calculatedBurnPercentPerHour: .init(lower: burn.lowerBound, upper: burn.upperBound),
+            calculatedExhaustionRange: nil
         )
-        return CurrentWorkloadQuotaEvidence(observation: observation, forecast: .qualified(insight))
+        return CurrentWorkloadQuotaEvidence(
+            latestObservation: passOlderObservation ? older : latest,
+            forecast: .qualified(insight)
+        )
     }
 
     func unqualified() -> CurrentWorkloadQuotaEvidence {
         let observation = try! MeasuredQuotaObservation(
-            identity: identity, percentageUsed: 30, observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
+            identity: currentIdentity, percentageUsed: 30,
+            observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
-        let unavailable = UnavailableQuotaInsight(
-            reason: .insufficientObservations,
-            implicatedIdentities: [identity],
-            measuredObservationCount: 1,
-            measuredSpan: 0,
-            forecastMethod: .pairwisePositiveSlopeInterquartileV2,
-            createdAt: start.addingTimeInterval(31 * 60),
-            evidenceAge: 60,
-            inputObservationIdentities: [observation.stableIdentity],
-            interpretationVersions: [.codexLocalReportV1]
+        return CurrentWorkloadQuotaEvidence(
+            latestObservation: observation,
+            forecast: .unavailable(UnavailableQuotaInsight(
+                reason: .insufficientObservations,
+                implicatedIdentities: [currentIdentity],
+                measuredObservationCount: 1,
+                measuredSpan: 0,
+                forecastMethod: .pairwisePositiveSlopeInterquartileV2,
+                createdAt: now,
+                evidenceAge: 60,
+                inputObservationIdentities: [observation.stableIdentity],
+                interpretationVersions: [.codexLocalReportV1]
+            ))
         )
-        return CurrentWorkloadQuotaEvidence(observation: observation, forecast: .unavailable(unavailable))
     }
 
     func staleCurrent() -> CurrentWorkloadQuotaEvidence {
-        let observedAt = start.addingTimeInterval(-7 * 60 * 60)
         let observation = try! MeasuredQuotaObservation(
-            identity: identity, percentageUsed: 30, observedAt: observedAt, source: .codexLocalReport
+            identity: currentIdentity, percentageUsed: 30,
+            observedAt: start.addingTimeInterval(-7 * 60 * 60), source: .codexLocalReport
         )
         let insight = QualifiedQuotaInsight(
-            identity: identity, measuredObservationCount: 4, measuredSpan: 1_800,
+            identity: currentIdentity, measuredObservationCount: 4, measuredSpan: 1_800,
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
-            createdAt: start.addingTimeInterval(31 * 60), evidenceAge: 60,
-            inputObservationIdentities: [observation.stableIdentity], interpretationVersions: [.codexLocalReportV1],
+            createdAt: now, evidenceAge: 60,
+            inputObservationIdentities: [observation.stableIdentity],
+            latestObservationIdentity: observation.stableIdentity,
+            latestObservationAt: observation.observedAt,
+            interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: .init(lower: 5, upper: 10), calculatedExhaustionRange: nil
         )
-        return CurrentWorkloadQuotaEvidence(observation: observation, forecast: .qualified(insight))
+        return CurrentWorkloadQuotaEvidence(latestObservation: observation, forecast: .qualified(insight))
     }
 
-    func mismatchedCurrent() -> CurrentWorkloadQuotaEvidence {
-        let observation = try! MeasuredQuotaObservation(
-            identity: identity, percentageUsed: 30, observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
-        )
-        let other = try! QuotaWindowIdentity(product: .codex, identifier: "secondary:10080", resetBoundary: identity.resetBoundary)
-        let insight = QualifiedQuotaInsight(
-            identity: other, measuredObservationCount: 4, measuredSpan: 1_800,
-            forecastMethod: .pairwisePositiveSlopeInterquartileV2,
-            createdAt: start.addingTimeInterval(31 * 60), evidenceAge: 60,
-            inputObservationIdentities: [observation.stableIdentity], interpretationVersions: [.codexLocalReportV1],
-            calculatedBurnPercentPerHour: .init(lower: 5, upper: 10), calculatedExhaustionRange: nil
-        )
-        return CurrentWorkloadQuotaEvidence(observation: observation, forecast: .qualified(insight))
-    }
+}
+
+private func uuid(_ value: Int) -> UUID {
+    UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value))!
 }

@@ -122,17 +122,18 @@ These findings do not drive notifications, so ticket 12 alert qualification and 
 
 ## Planned Workloads
 
-The Rate Limit tab includes a local, ephemeral planning card for a provider product and coding-agent operation count.
+The Rate Limit tab includes a local, ephemeral planning card.
 It does not accept or inspect prompts, code, responses, terminal output, paths, credentials, or raw provider payloads.
 
-The versioned core method requires four completed runs with the same provider product, percentage-window semantics, execution mode, concurrency, client version, and adapter version.
-It calculates interquartile per-operation requirement and duration ranges, combines them only with fresh qualified current quota evidence and an exact reported reset, and preserves available, indeterminate, and unavailable outcomes.
+The versioned core method requires four canonical completed runs with the same provider product, percentage-window semantics, execution mode, concurrency, source provenance, quota unit, and typed adapter, client, and provider-format versions.
+Each immutable run revision carries an exact quota-window identity, a contained run interval, typed observation and evidence identities, and correction provenance.
+The method calculates interquartile per-operation requirement and duration ranges, combines them only with the exact latest observation from fresh qualified current quota evidence, and preserves available, indeterminate, and unavailable outcomes.
 Options are shown only when measured comparison evidence activates their documented rules and always require user action.
 
 Current merged adapters do not establish completed workload-run boundaries or safely map a run to provider-reported quota movement.
-Live assessment therefore reports unavailable instead of deriving runs from local token attribution or inventing provider weighting.
+The production boundary therefore reports an unsupported historical-run adapter and hides planning controls instead of deriving runs from local token attribution or inventing provider weighting.
 Planning input and output are not persisted, and signed-app acceptance with real run evidence remains pending a supported adapter.
-See [`docs/PLANNED_WORKLOAD_METHOD_V1.md`](docs/PLANNED_WORKLOAD_METHOD_V1.md) for comparison dimensions, fixture rationale, qualification, range calculation, outcomes, and limitations.
+See [`docs/PLANNED_WORKLOAD_METHOD_V2.md`](docs/PLANNED_WORKLOAD_METHOD_V2.md) for comparison dimensions, fixture rationale, qualification, range calculation, outcomes, and limitations.
 
 ## Codex Quota Explanations
 
