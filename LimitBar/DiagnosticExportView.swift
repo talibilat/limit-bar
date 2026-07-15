@@ -380,8 +380,18 @@ final class DiagnosticExportModel {
 
     init(
         selection: DiagnosticExportSelection,
+        makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact
+    ) {
+        self.selection = selection
+        self.makeSelectedArtifact = makeArtifact
+        self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: Self.chooseDestinationWithSavePanel, write: { try $0.save(to: $1) })
+    }
+
+    init(
+        selection: DiagnosticExportSelection,
         makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact,
-        chooseDestination: @escaping @MainActor () -> URL? = DiagnosticExportModel.chooseDestinationWithSavePanel
+        chooseDestination: @escaping @MainActor () -> URL?
     ) {
         self.selection = selection
         self.makeSelectedArtifact = makeArtifact
