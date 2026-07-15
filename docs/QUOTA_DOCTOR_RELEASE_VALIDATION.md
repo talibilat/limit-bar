@@ -14,9 +14,11 @@ scripts/validate-quota-doctor-release.sh \
 The command never scans source logs automatically because those logs may contain private source material.
 If no artifact roots are supplied, the report records the caller-provided artifact scan as unavailable.
 
-The scanner examines text and printable strings from binary files, including SQLite and every regular file inside an xcresult package.
+The scanner rejects symlink roots and every nested file or directory symlink instead of following or skipping them.
+It examines ASCII/UTF-8, UTF-16LE, and UTF-16BE strings from bounded binary files, including SQLite and every regular file inside an xcresult package.
 It validates ZIP structure and member paths, then scans member names and member bytes without extracting them.
-Unreadable files, malformed ZIPs, unsafe ZIP member paths, or failed member reads fail the scan rather than being skipped.
+It bounds artifact bytes, ZIP compressed bytes, member count, per-member and total uncompressed bytes, compression ratio, and decompression output.
+ZIP64, encryption, duplicate names, symlink members, nested archives, unsupported compression, malformed metadata, unsafe member paths, FIFOs/devices, unreadable files, and failed member reads fail the scan rather than being skipped.
 For screenshots and other images, embedded metadata and printable strings are scanned.
 Image pixels are not OCR-scanned, so a human must inspect screenshots for visible prohibited content before retaining or sharing them.
 

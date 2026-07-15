@@ -68,15 +68,17 @@ record_ui_check() {
   shift 3
   names+=("$name")
   references+=("$reference")
-  if "$@" >"$temporary_root/output" 2>&1; then
-    statuses+=("passed")
+  "$@" >"$temporary_root/output" 2>&1
+  local command_status=$?
+  local classification
+  classification="$("$root/scripts/classify-ui-test-log.sh" "$command_status" "$temporary_root/output")"
+  statuses+=("$classification")
+  if [[ "$classification" == "passed" ]]; then
     details+=("$detail")
-  elif /usr/bin/grep -Eq 'Timed out while enabling automation mode|operation never finished bootstrapping' "$temporary_root/output"; then
-    statuses+=("unavailable")
-    details+=("Local XCTest automation host could not initialize; no UI assertion result is claimed")
+  elif [[ "$classification" == "unavailable" ]]; then
+    details+=("Local XCTest automation host could not initialize before any test began; no UI assertion result is claimed")
   else
-    statuses+=("failed")
-    details+=("$detail; rerun the evidence reference for diagnostics")
+    details+=("$detail; assertion, crash, test execution, or ordinary command failure evidence prevents unavailable classification")
   fi
 }
 
@@ -106,8 +108,10 @@ else
 fi
 record_check "Inventory drift self-tests" "Missing declarations and code-version drift are rejected" \
   "scripts/test-quota-doctor-inventory.sh" "$root/scripts/test-quota-doctor-inventory.sh"
-record_check "Scanner self-tests" "Text, binary, SQLite, ZIP, malformed archive, unreadable artifact, sentinel, and clean cases" \
+record_check "Scanner self-tests" "Symlinks, UTF-8/UTF-16, bounded binary/SQLite/ZIP, malformed, traversal, duplicate, nested, expansion, sentinel, and clean cases" \
   "scripts/test-prohibited-content-scan.sh" "$root/scripts/test-prohibited-content-scan.sh"
+record_check "UI classifier self-tests" "Bootstrap-only unavailable and all assertion, crash, started-test, and ordinary failures remain failed" \
+  "scripts/test-ui-test-log-classifier.sh" "$root/scripts/test-ui-test-log-classifier.sh"
 record_check "Fixture privacy scan" "All bytes and extracted strings from synthetic fixture artifacts" \
   "scripts/scan-prohibited-content.sh LimitBarCore/Tests/LimitBarCoreTests/Fixtures" \
   "$root/scripts/scan-prohibited-content.sh" "$root/LimitBarCore/Tests/LimitBarCoreTests/Fixtures"
