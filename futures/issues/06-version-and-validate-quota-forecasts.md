@@ -42,7 +42,7 @@ If the available fixtures are too sparse or unrepresentative to support a qualit
 - Define qualification rules for observation count, observation span, recency, positive movement, counter stability, exact active boundary, and reset interaction.
 - Define deterministic outcomes for insufficient, stale, flat, decreasing, reset, expired, out-of-order, duplicate, and incompatible evidence.
 - Preserve a distinction between an unavailable forecast and a qualified forecast that projects no exhaustion before reset.
-- Ensure forecast calculations never combine observations from different exact quota windows.
+- Ensure forecast calculations never combine observations from different Quota windows or Exact boundaries.
 - Ensure an exhaustion range never crosses the provider-reported reset boundary.
 - Ensure all forecast outputs identify their creation time without presenting it as a provider event.
 - Establish a fixture corpus of completed quota windows suitable for replay.
@@ -132,7 +132,7 @@ If the available fixtures are too sparse or unrepresentative to support a qualit
 - Replay each method version against deterministic unit fixtures for stable, flat, bursty, reset, decreasing, sparse, stale, duplicate, out-of-order, expired, and missing-boundary cases.
 - Verify that input order and duplicate delivery do not create undocumented output changes.
 - Verify that every result can be reproduced from its recorded method version and input identities.
-- Verify that no result combines exact quota windows or crosses a provider-reported reset boundary.
+- Verify that no result combines Quota windows or Exact boundaries or crosses a provider-reported reset boundary.
 - Freeze the held-out fixture membership before final scoring of the candidate method version.
 - Run the defined metrics once against the frozen held-out set after method changes settle.
 - Review the report for omitted unavailable, censored, non-exhausting, and failed cases.

@@ -61,7 +61,7 @@ The exact rule configuration and candidate-ingestion interfaces in the existing 
 - [ ] Deduplication uses the exact subject window and rule threshold.
 - [ ] Repeated evaluation of an equivalent candidate does not produce a second accepted delivery for the same rule threshold and exact subject window.
 - [ ] Restarting the application does not lose the Delivery Ledger decision for an already accepted candidate.
-- [ ] A new exact quota window is evaluated independently from the preceding quota window.
+- [ ] A new Quota window with a new Exact boundary is evaluated independently from the preceding Quota window.
 - [ ] Superseding or recalculating a finding does not silently evade delivery-ledger deduplication for a threshold already accepted in the same exact subject window.
 - [ ] Deleting quota observations or derived findings does not delete, consume, recreate, or otherwise mutate Delivery Ledger state.
 - [ ] Deleting quota observations or derived findings does not mutate alert rules, provider settings, current usage, or credentials.

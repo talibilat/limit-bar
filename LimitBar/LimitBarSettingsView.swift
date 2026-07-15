@@ -126,7 +126,7 @@ struct LimitBarSettingsView: View {
             DiagnosticExportSection(state: state)
 
             Section("Quota Observations") {
-                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per exact quota window. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
+                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per Quota window and Exact boundary. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")

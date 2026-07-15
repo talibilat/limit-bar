@@ -149,37 +149,44 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
         }
 
         var foundClaudeMetric = false
-        var foundUnsupported = false
+        var foundUnsupportedMetric = false
+        var foundUnsupportedVersion = false
+        var limitations: [ClaudeEvidenceLimitation] = []
         var evidence: [ClaudeCodeOTLPEvidence] = []
         for resourceMetrics in request.resourceMetrics {
             for scope in resourceMetrics.scopeMetrics {
                 for metric in scope.metrics where metric.name == "claude_code.token.usage" {
                     foundClaudeMetric = true
                     guard let sum = metric.sum, sum.aggregationTemporality == 1, sum.isMonotonic else {
-                        foundUnsupported = true
+                        foundUnsupportedMetric = true
                         continue
                     }
-                    var limitations: [ClaudeEvidenceLimitation] = []
                     for point in sum.dataPoints {
                         let pointAttributes = attributes(point.attributes)
+                        guard let sourceVersion = pointAttributes["app.version"], sourceVersion == supportedSourceVersion else {
+                            foundUnsupportedVersion = true
+                            continue
+                        }
+                        guard let startNanosText = point.startTimeUnixNano,
+                              let startNanos = UInt64(startNanosText), startNanos > 0 else {
+                            foundUnsupportedMetric = true
+                            limitations.append(.missingEvidenceBoundary)
+                            continue
+                        }
                         guard let count = Int64(point.asInt), count >= 0,
-                              let startNanosText = point.startTimeUnixNano,
-                              let startNanos = UInt64(startNanosText), startNanos > 0,
                               let endNanos = UInt64(point.timeUnixNano), endNanos > startNanos,
                               let tokenTypeText = pointAttributes["type"],
                               let tokenType = ClaudeCodeTokenType(rawValue: tokenTypeText),
                               let model = pointAttributes["model"],
-                              let sourceVersion = pointAttributes["app.version"], sourceVersion == supportedSourceVersion,
                               let rawAccount = pointAttributes["user.account_uuid"], UUID(uuidString: rawAccount) != nil,
                               let rawSession = pointAttributes["session.id"], UUID(uuidString: rawSession) != nil else {
-                            foundUnsupported = true
-                            if point.startTimeUnixNano == nil { limitations.append(.missingEvidenceBoundary) }
+                            foundUnsupportedMetric = true
                             continue
                         }
                         let intervalStart = Date(timeIntervalSince1970: Double(startNanos) / 1_000_000_000)
                         let intervalEnd = Date(timeIntervalSince1970: Double(endNanos) / 1_000_000_000)
                         guard intervalStart.timeIntervalSince1970.isFinite, intervalEnd.timeIntervalSince1970.isFinite else {
-                            foundUnsupported = true
+                            foundUnsupportedMetric = true
                             continue
                         }
                         let accountIdentity = keyedDigest(rawAccount, key: identityKey)
@@ -197,30 +204,30 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                             sourceVersion: sourceVersion,
                             adapterVersion: adapterVersion
                         ) else {
-                            foundUnsupported = true
+                            foundUnsupportedMetric = true
                             continue
                         }
                         evidence.append(normalized)
                     }
-                    if !limitations.isEmpty { return result(.unsupportedMetric, evidence: evidence, limitations: limitations) }
                 }
             }
         }
 
         let status: ClaudeCodeOTLPSourceStatus
-        if !evidence.isEmpty, foundUnsupported {
-            // A partly recognized request cannot establish one supported source contract.
-            return result(.unsupportedVersion)
+        if foundUnsupportedVersion {
+            status = .unsupportedVersion
+            evidence = []
+        } else if foundUnsupportedMetric {
+            status = .unsupportedMetric
+            evidence = []
         } else if !evidence.isEmpty {
             status = .supported
-        } else if foundUnsupported {
-            status = .unsupportedVersion
         } else if foundClaudeMetric {
             status = .unsupportedMetric
         } else {
             status = .noClaudeCodeMetric
         }
-        return result(status, evidence: evidence)
+        return result(status, evidence: evidence, limitations: limitations)
     }
 
     private static func result(

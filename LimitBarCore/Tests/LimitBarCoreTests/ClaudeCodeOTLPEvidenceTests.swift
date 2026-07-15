@@ -70,19 +70,32 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(generic.evidence.isEmpty)
     }
 
-    @Test("mixed supported and unsupported points produce no normalized evidence")
-    func mixedVersionRequestFailsClosed() throws {
-        var mixed = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))
-        let supportedVersion = #"{"key": "app.version", "value": {"stringValue": "2.1.207"}}"#
-        let lastVersion = try #require(mixed.range(of: supportedVersion, options: .backwards))
-        mixed.replaceSubrange(lastVersion, with: #"{"key": "app.version", "value": {"stringValue": "future"}}"#)
-        let result = ClaudeCodeOTLPEvidenceAdapter.scan(
-            data: try #require(mixed.data(using: .utf8)),
-            identityKey: Data("key".utf8)
-        )
+    @Test("mixed invalid points fail closed regardless of point order")
+    func mixedPointsFailClosed() throws {
+        let fixtureText = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))
+        let cases: [(String, String, ClaudeCodeOTLPSourceStatus, ClaudeEvidenceLimitation?)] = [
+            (#""startTimeUnixNano": "120000000000", "#, "", .unsupportedMetric, .missingEvidenceBoundary),
+            (#""startTimeUnixNano": "150000000000", "#, "", .unsupportedMetric, .missingEvidenceBoundary),
+            (#"{"key": "app.version", "value": {"stringValue": "2.1.207"}}"#, #"{"key": "app.version", "value": {"stringValue": "future"}}"#, .unsupportedVersion, nil),
+            (#"{"key": "app.version", "value": {"stringValue": "2.1.207"}}"#, #"{"key": "app.version", "value": {"stringValue": "future"}}"#, .unsupportedVersion, nil),
+            (#""asInt": "120""#, #""asInt": "invalid""#, .unsupportedMetric, nil),
+            (#""asInt": "30""#, #""asInt": "invalid""#, .unsupportedMetric, nil),
+        ]
 
-        #expect(result.sourceStatus == .unsupportedVersion)
-        #expect(result.evidence.isEmpty)
+        for (index, fixtureCase) in cases.enumerated() {
+            var mixed = fixtureText
+            let options: String.CompareOptions = index == 3 ? .backwards : []
+            let range = try #require(mixed.range(of: fixtureCase.0, options: options))
+            mixed.replaceSubrange(range, with: fixtureCase.1)
+            let result = ClaudeCodeOTLPEvidenceAdapter.scan(
+                data: try #require(mixed.data(using: .utf8)),
+                identityKey: Data("key".utf8)
+            )
+
+            #expect(result.sourceStatus == fixtureCase.2)
+            #expect(result.evidence.isEmpty)
+            if let limitation = fixtureCase.3 { #expect(result.limitations.contains(limitation)) }
+        }
     }
 
     @Test("prohibited payload content never enters normalized evidence")

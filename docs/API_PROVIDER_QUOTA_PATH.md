@@ -55,7 +55,7 @@ Remaining token values are rounded to the nearest thousand.
 The corresponding reset headers are RFC 3339 timestamps for when each continuously replenished token bucket would be fully replenished.
 The combined token headers identify the most restrictive limit currently in effect, which can be a workspace limit or an organization total.
 
-These timestamps are not exact Quota window boundaries.
+These timestamps are not Exact boundaries for Quota windows.
 Anthropic explicitly documents a continuously replenished token-bucket algorithm rather than fixed windows, so the full-replenishment timestamp moves with the bucket state.
 The headers therefore cannot establish the exact provider-defined Quota window identity required by the canonical contract.
 
@@ -150,7 +150,7 @@ The reviewed REST API is `v1`, and OpenAI documents a general policy of avoiding
 The API overview identifies the current response `openai-version` value as `2020-10-01`.
 No deprecation notice for the reviewed rate-limit headers or Usage API was present in the reviewed pages.
 The Usage endpoint acquisition rate limit and narrower read-only authorization are unknown.
-It is unknown whether OpenAI will add an exact Quota window or current-quota status endpoint.
+It is unknown whether OpenAI will add a current-quota status endpoint with a Quota window and Exact boundary.
 
 ## Azure OpenAI
 

@@ -25,7 +25,7 @@ Codex accepts only supported individual-plan local reports.
 The calculation also requires an explicit creation time and a finite nonnegative maximum evidence age.
 
 Private labels, raw provider payloads, prompts, model responses, request data, terminal output, credentials, and filesystem paths are excluded before normalization and cannot contribute to identity or calculation.
-Observations from different exact quota windows are never combined.
+Observations from different Quota windows or Exact boundaries are never combined.
 
 ## Qualification Order
 
@@ -33,7 +33,7 @@ The method applies these rules in order.
 
 1. Return `invalid_evaluation` without a creation time when analytical evaluation time is non-finite.
 2. Sort observations by observation time and stable observation identity, then remove exact duplicates by stable identity.
-3. Return `incompatible_evidence` when observations or expected context identify more than one exact quota window.
+3. Return `incompatible_evidence` when observations or expected context identify more than one Quota window or Exact boundary.
 4. Return `conflicting_observations` when one observation time has different measured percentages.
 5. Return `insufficient_observations` when no normalized observation is present, retaining expected exact-window context when supplied.
 6. Return `reset_or_expired` when the provider-reported reset boundary is not later than creation time.

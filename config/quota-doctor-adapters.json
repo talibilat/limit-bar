@@ -1,0 +1,93 @@
+{
+  "formatVersion": 1,
+  "application": {
+    "marketingVersion": "0.1.0",
+    "buildVersion": "1"
+  },
+  "methods": {
+    "forecast": "pairwise_positive_slope_interquartile_v2",
+    "anomaly": "trailing_median_ratio_v1",
+    "codexExplanation": "codex-quota-explanation-v1",
+    "claudeExplanation": "claude-code-quota-explanation-v2",
+    "workloadComparability": "strict_measured_operations_v2",
+    "workloadRange": "interquartile_per_unit_v1"
+  },
+  "schemas": {
+    "quotaObservations": 1,
+    "claudeExplanations": 1
+  },
+  "declarations": [
+    {
+      "id": "codex-rollout-observed-0.144.4",
+      "providerProduct": "Codex subscription",
+      "category": "subscription",
+      "stability": "experimental",
+      "releaseSupported": true,
+      "supportedVersions": ["Codex creator 0.144.4"],
+      "capturedFields": ["session/thread UUID for local keyed identity", "creator version", "record timestamp", "validated cumulative and delta token categories", "limit ID", "percentage used", "window duration", "reset timestamp", "plan type", "credits"],
+      "omittedFields": ["prompts", "responses", "reasoning", "tool calls", "terminal output", "request bodies", "paths", "repository data", "instructions", "model/project attribution", "unknown fields"],
+      "authenticationAccess": "None; no credential is read",
+      "userVisibleOSInteraction": "None",
+      "confidence": "observed-compatible",
+      "lastVerified": "2026-07-15",
+      "configuredReadBoundary": "Recursively reads recent canonical regular .jsonl files under the configured canonical sessions root; symlinks and paths outside that root are excluded. It does not semantically classify archive-named subdirectories inside that root.",
+      "limitations": ["Internal undocumented format", "creator metadata cannot prove resumed-line authorship", "compressed rollouts unsupported", "no project/model attribution"],
+      "fixtureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/CodexRolloutEvidenceTests.swift"],
+      "failureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/CodexRolloutEvidenceTests.swift", "LimitBarCore/Tests/LimitBarCoreTests/CodexRateLimitsTests.swift"]
+    },
+    {
+      "id": "claude-code-otlp-http-json-2.1.207-v1",
+      "providerProduct": "Claude Code subscription",
+      "category": "subscription",
+      "stability": "verification-only",
+      "releaseSupported": false,
+      "supportedVersions": ["Claude Code 2.1.207", "OTLP HTTP/JSON delta monotonic sum"],
+      "capturedFields": ["metric identity", "delta temporality", "interval boundaries", "token count/type", "bounded model", "session UUID", "account UUID", "producer version"],
+      "omittedFields": ["resource/scope metadata", "content-bearing telemetry", "account labels", "paths", "arbitrary attributes", "headers", "credentials", "raw payloads"],
+      "authenticationAccess": "User-owned exporter authentication only; LimitBar adapter reads none",
+      "userVisibleOSInteraction": "None in the verification seam",
+      "confidence": "documented-compatible",
+      "lastVerified": "2026-07-15",
+      "configuredReadBoundary": "Caller-supplied in-memory OTLP request bytes, bounded to 8 MiB; no filesystem or network acquisition",
+      "limitations": ["No production receiver", "No trustworthy quota-account binding", "No signed real-source run"],
+      "fixtureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/ClaudeCodeOTLPEvidenceTests.swift"],
+      "failureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/ClaudeCodeOTLPEvidenceTests.swift", "LimitBarCore/Tests/LimitBarCoreTests/ClaudeQuotaExplanationTests.swift"]
+    },
+    {
+      "id": "claude-oauth-usage-observed-v1",
+      "providerProduct": "Claude Code quota report",
+      "category": "subscription",
+      "stability": "experimental",
+      "releaseSupported": true,
+      "supportedVersions": ["anthropic-beta oauth-2025-04-20", "producer/client version unavailable"],
+      "capturedFields": ["percentage windows", "reported reset timestamps", "coarse scope classification", "active status", "fetch time"],
+      "omittedFields": ["display labels from normalized quota evidence", "account identity", "credential data", "raw response payload"],
+      "authenticationAccess": "Existing Claude Code Keychain OAuth credential",
+      "userVisibleOSInteraction": "Passive checks prohibit UI; Connect permits explicit interactive Keychain authorization",
+      "confidence": "observed-compatible",
+      "lastVerified": "2026-07-15",
+      "configuredReadBoundary": "Claude Code Keychain item and https://api.anthropic.com/api/oauth/usage only",
+      "limitations": ["No documented stable response schema", "No captured producer/client version", "No signed authorization acceptance"],
+      "fixtureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/ClaudeRateLimitsTests.swift"],
+      "failureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/ClaudeRateLimitsTests.swift", "LimitBarCore/Tests/LimitBarCoreTests/ClaudeRateLimitsModelTests.swift"]
+    },
+    {
+      "id": "api-provider-quota-unavailable-2026-07-15",
+      "providerProduct": "Anthropic API, OpenAI API, and Azure OpenAI",
+      "category": "api",
+      "stability": "unavailable",
+      "releaseSupported": false,
+      "supportedVersions": ["No qualifying quota-consumption contract"],
+      "capturedFields": ["No fields; no adapter ships"],
+      "omittedFields": ["All provider payload and authorization fields"],
+      "authenticationAccess": "None because no adapter ships",
+      "userVisibleOSInteraction": "None",
+      "confidence": "unavailable",
+      "lastVerified": "2026-07-15",
+      "configuredReadBoundary": "None because no adapter ships",
+      "limitations": ["No safely acquirable current consumption in a provider-defined Quota window with an Exact boundary"],
+      "fixtureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/APIProviderQuotaPathTests.swift"],
+      "failureSuites": ["LimitBarCore/Tests/LimitBarCoreTests/APIProviderQuotaPathTests.swift"]
+    }
+  ]
+}

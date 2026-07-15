@@ -58,19 +58,46 @@ struct ClaudeExplanationStoreTests {
         try store.record(.unavailable(.incompatibleQuotaWindow), now: now)
         #expect(try store.recordCount(now: now) == 2)
         #expect(try store.latest(now: now) == .unavailable(.incompatibleQuotaWindow))
+        #expect(try store.recordCount(now: now.addingTimeInterval(101)) == 0)
     }
 
-    @Test("malformed schemas are rejected without replacement")
-    func rejectsMalformedSchema() throws {
+    @Test("future and malformed schemas are rejected without mutation")
+    func rejectsUnknownSchemasWithoutMutation() throws {
+        for sql in [
+            "PRAGMA user_version = 2;",
+            "CREATE TABLE claude_explanation_findings (id INTEGER PRIMARY KEY); CREATE INDEX claude_explanation_findings_recorded ON claude_explanation_findings (id); PRAGMA user_version = 1;",
+            "CREATE TABLE claude_explanation_findings (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX claude_explanation_findings_recorded ON claude_explanation_findings (id); PRAGMA user_version = 1;",
+        ] {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
+            defer { try? FileManager.default.removeItem(at: url) }
+            var database: OpaquePointer?
+            #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+            #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+            sqlite3_close(database)
+            let original = try Data(contentsOf: url)
+
+            #expect(throws: ClaudeExplanationStoreError.schemaFailed) {
+                try SQLiteClaudeExplanationStore(path: url.path)
+            }
+            #expect(try Data(contentsOf: url) == original)
+        }
+    }
+
+    @Test("interrupted writes roll back inserted and retention changes")
+    func interruptedWriteRollsBack() throws {
+        struct Interruption: Error {}
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
-        var database: OpaquePointer?
-        #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
-        #expect(sqlite3_exec(database, "CREATE TABLE claude_explanation_findings (id INTEGER PRIMARY KEY); CREATE INDEX claude_explanation_findings_recorded ON claude_explanation_findings (id); PRAGMA user_version = 1;", nil, nil, nil) == SQLITE_OK)
-        sqlite3_close(database)
+        let store = try SQLiteClaudeExplanationStore(path: url.path, maximumRecords: 1, retention: 10)
+        let now = Date(timeIntervalSince1970: 100)
+        try store.record(.unavailable(.insufficientObservations), now: now)
 
-        #expect(throws: ClaudeExplanationStoreError.schemaFailed) {
-            try SQLiteClaudeExplanationStore(path: url.path)
+        #expect(throws: Interruption.self) {
+            try store.recordForTesting(.unavailable(.counterDecreased), now: now.addingTimeInterval(20)) {
+                throw Interruption()
+            }
         }
+        #expect(try store.recordCount(now: now) == 1)
+        #expect(try store.latest(now: now) == .unavailable(.insufficientObservations))
     }
 }

@@ -98,7 +98,7 @@ An inability to access trustworthy data safely must produce an unavailable resul
 
 - Predetermining OpenAI, Anthropic API, Azure OpenAI, or any other provider before primary-source evaluation.
 - Supporting more than one API-provider path in this ticket.
-- Inferring exact quota windows from calendar periods, billing labels, timestamps, or conventional reset schedules.
+- Inferring Quota windows or Exact boundaries from calendar periods, billing labels, timestamps, or conventional reset schedules.
 - Reverse-engineering undocumented provider payloads or private client behavior.
 - Scraping private provider pages or automating a browser.
 - Treating billing usage as quota evidence unless primary documentation supplies the required quota semantics and exact boundaries.

@@ -19,7 +19,7 @@ Use participant-local identifiers and aggregate only after explicit approval.
 
 1. Ask the participant to investigate one quota movement and record whether the evidence helped explain what was known, unknown, or unattributed.
 2. Ask whether the evidence changed a scheduling decision and record the decision category without work content.
-3. For completed exact Quota windows only, compare previously produced forecast ranges with held-out observed outcomes where versions and boundaries remain compatible.
+3. For completed Quota windows with Exact boundaries only, compare previously produced forecast ranges with held-out observed outcomes where versions and boundaries remain compatible.
 4. Record attribution coverage without assigning unattributed movement to known local activity.
 5. Review anomaly and alert candidates against qualification rules and record privacy-safe false-positive, no-finding, and unavailable classifications.
 6. Have the participant preview an export and assess comprehension, usefulness, provenance language, limitations, and prohibited-content absence.

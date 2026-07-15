@@ -9,7 +9,7 @@ public enum ClaudeExplanationStoreError: Error, Equatable {
 }
 
 public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
-    private static let schemaVersion = 1
+    public static let schemaVersion = 1
     private static let createTableSQL = """
     CREATE TABLE claude_explanation_findings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,6 +22,20 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
     private let maximumRecords: Int
     private let retention: TimeInterval
     private var database: OpaquePointer?
+
+    private struct SchemaColumn: Equatable {
+        let position: Int
+        let name: String
+        let type: String
+        let isNotNull: Bool
+        let primaryKeyPosition: Int
+    }
+
+    private static let expectedColumns = [
+        SchemaColumn(position: 0, name: "id", type: "INTEGER", isNotNull: false, primaryKeyPosition: 1),
+        SchemaColumn(position: 1, name: "recorded_at", type: "REAL", isNotNull: true, primaryKeyPosition: 0),
+        SchemaColumn(position: 2, name: "payload", type: "TEXT", isNotNull: true, primaryKeyPosition: 0),
+    ]
 
     public init(
         path: String,
@@ -59,6 +73,22 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
     }
 
     public func record(_ state: ClaudeQuotaExplanationState, now: Date = Date()) throws {
+        try record(state, now: now, beforeCommit: nil)
+    }
+
+    func recordForTesting(
+        _ state: ClaudeQuotaExplanationState,
+        now: Date,
+        beforeCommit: @escaping () throws -> Void
+    ) throws {
+        try record(state, now: now, beforeCommit: beforeCommit)
+    }
+
+    private func record(
+        _ state: ClaudeQuotaExplanationState,
+        now: Date,
+        beforeCommit: (() throws -> Void)?
+    ) throws {
         guard now.timeIntervalSince1970.isFinite,
               let payload = String(data: try JSONEncoder().encode(StoredClaudeExplanation(state)), encoding: .utf8) else {
             throw ClaudeExplanationStoreError.writeFailed
@@ -71,6 +101,7 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
             bind(payload, at: 2, in: statement)
             guard sqlite3_step(statement) == SQLITE_DONE else { throw ClaudeExplanationStoreError.writeFailed }
             try pruneInTransaction(now: now)
+            try beforeCommit?()
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -110,7 +141,9 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
         if version == Self.schemaVersion {
             guard try objects() == ["index:claude_explanation_findings_recorded", "table:claude_explanation_findings"],
                   try schemaSQL(type: "table", name: "claude_explanation_findings") == Self.normalizedSQL(Self.createTableSQL),
-                  try schemaSQL(type: "index", name: "claude_explanation_findings_recorded") == Self.normalizedSQL(Self.createIndexSQL) else {
+                  try schemaSQL(type: "index", name: "claude_explanation_findings_recorded") == Self.normalizedSQL(Self.createIndexSQL),
+                  try columns() == Self.expectedColumns,
+                  try indexColumns() == ["recorded_at"] else {
                 throw ClaudeExplanationStoreError.schemaFailed
             }
             return
@@ -150,6 +183,42 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
             throw ClaudeExplanationStoreError.schemaFailed
         }
         return Self.normalizedSQL(String(cString: text))
+    }
+
+    private func columns() throws -> [SchemaColumn] {
+        let statement = try prepare("PRAGMA table_info(claude_explanation_findings);")
+        defer { sqlite3_finalize(statement) }
+        var result: [SchemaColumn] = []
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            guard let name = sqlite3_column_text(statement, 1), let type = sqlite3_column_text(statement, 2),
+                  sqlite3_column_type(statement, 4) == SQLITE_NULL else { throw ClaudeExplanationStoreError.schemaFailed }
+            result.append(SchemaColumn(
+                position: Int(sqlite3_column_int(statement, 0)),
+                name: String(cString: name),
+                type: String(cString: type),
+                isNotNull: sqlite3_column_int(statement, 3) == 1,
+                primaryKeyPosition: Int(sqlite3_column_int(statement, 5))
+            ))
+            step = sqlite3_step(statement)
+        }
+        guard step == SQLITE_DONE else { throw ClaudeExplanationStoreError.schemaFailed }
+        return result
+    }
+
+    private func indexColumns() throws -> [String] {
+        let statement = try prepare("PRAGMA index_info(claude_explanation_findings_recorded);")
+        defer { sqlite3_finalize(statement) }
+        var result: [String] = []
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            guard Int(sqlite3_column_int(statement, 0)) == result.count,
+                  let name = sqlite3_column_text(statement, 2) else { throw ClaudeExplanationStoreError.schemaFailed }
+            result.append(String(cString: name))
+            step = sqlite3_step(statement)
+        }
+        guard step == SQLITE_DONE else { throw ClaudeExplanationStoreError.schemaFailed }
+        return result
     }
 
     private static func normalizedSQL(_ sql: String) -> String {

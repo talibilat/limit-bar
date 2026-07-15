@@ -110,7 +110,7 @@ The result must establish a dependable base for later attribution, explanation, 
 - Re-run every required CI check on the final merge candidate and retain the check result with the reviewed revision identity.
 - Run the complete automated suites covering observation identity, deduplication, bounded retention, deletion, schema handling, analytics qualification, reset handling, UI provenance, and export allow-list behavior.
 - Run targeted tests with duplicate, out-of-order, decreasing, flat, stale, expired, reset-crossing, and insufficient observations.
-- Verify that data from two exact quota windows cannot contribute to one result.
+- Verify that data from two Quota windows or Exact boundaries cannot contribute to one result.
 - Verify deletion from the user-visible action through persistent state while confirming unrelated state remains intact.
 - Verify prohibited-content sentinels do not appear in diagnostic output.
 - Launch the signed application and manually inspect Claude Code and Codex measured percentages, calculated ranges, unavailable states, reset behavior, and labels.

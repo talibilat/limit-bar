@@ -201,7 +201,9 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
 
         let quotaStore = try SQLiteQuotaObservationStore(path: directory.appendingPathComponent("quota.sqlite").path)
         let codexExplanationStore = try SQLiteCodexExplanationStore(path: directory.appendingPathComponent("codex-explanations.sqlite").path)
+        let claudeExplanationStore = try SQLiteClaudeExplanationStore(path: directory.appendingPathComponent("claude-explanations.sqlite").path)
         try codexExplanationStore.record(.unavailable(.gap), now: now)
+        try claudeExplanationStore.record(.unavailable(.insufficientObservations), now: now)
         let observation = try MeasuredQuotaObservation(identity: identity, percentageUsed: 25, observedAt: now, source: .codexLocalReport)
         try quotaStore.record([observation], now: now)
         let service = QuotaInsightsService(store: quotaStore)
@@ -216,7 +218,8 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
                 scanCodex: { _ in nil }
             )),
             quotaInsightsService: service,
-            codexExplanationStore: codexExplanationStore
+            codexExplanationStore: codexExplanationStore,
+            claudeExplanationStore: claudeExplanationStore
         )
         await state.refreshQuotaInsights(for: LocalRefreshSnapshot(
             sequence: 1,
@@ -232,6 +235,17 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
             codexRefreshed: true
         ))
         XCTAssertFalse(state.quotaInsights.isEmpty)
+
+        let deletedClaudeExplanations = await state.deleteClaudeExplanations()
+        XCTAssertTrue(deletedClaudeExplanations)
+        XCTAssertNil(try claudeExplanationStore.latest(now: now))
+        XCTAssertEqual(try quotaStore.observations(for: identity, now: now), [observation])
+        XCTAssertNotNil(try codexExplanationStore.latest(now: now))
+        XCTAssertEqual(try usageStore.allMetrics(), [metric])
+        XCTAssertEqual(try deliveryStore.satisfactions(for: rule.id, window: .quota(identity)).map(\.threshold), [50])
+        XCTAssertEqual(alertSettings.preferences, alertPreferences)
+        XCTAssertEqual(providerSettingsStore.settings, ProviderSettingsPersistence.decode(try ProviderSettingsPersistence.encode([providerSetting])))
+        XCTAssertEqual(try credentialService.credential(for: credentialKey), Data("fixture-secret".utf8))
 
         let deleted = await state.deleteQuotaObservations()
         XCTAssertTrue(deleted)
