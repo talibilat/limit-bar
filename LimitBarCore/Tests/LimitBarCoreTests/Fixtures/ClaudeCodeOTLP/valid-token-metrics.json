@@ -1,0 +1,35 @@
+{
+  "resourceMetrics": [{
+    "resource": {"attributes": [
+      {"key": "service.name", "value": {"stringValue": "claude-code"}},
+      {"key": "user.email", "value": {"stringValue": "PRIVATE_SENTINEL"}},
+      {"key": "workspace.host_paths", "value": {"stringValue": "PRIVATE_PATH_SENTINEL"}},
+      {"key": "account.label", "value": {"stringValue": "ACCOUNT_LABEL_SENTINEL"}},
+      {"key": "credential", "value": {"stringValue": "CREDENTIAL_SENTINEL"}},
+      {"key": "raw_payload", "value": {"stringValue": "RAW_PAYLOAD_SENTINEL"}}
+    ]},
+    "scopeMetrics": [{"metrics": [{
+      "name": "claude_code.token.usage",
+      "sum": {"aggregationTemporality": 1, "isMonotonic": true, "dataPoints": [
+        {"asInt": "120", "startTimeUnixNano": "120000000000", "timeUnixNano": "150000000000", "attributes": [
+          {"key": "type", "value": {"stringValue": "input"}},
+          {"key": "model", "value": {"stringValue": "claude-sonnet-4-5"}},
+          {"key": "session.id", "value": {"stringValue": "22222222-2222-4222-8222-222222222222"}},
+          {"key": "app.version", "value": {"stringValue": "2.1.207"}},
+          {"key": "user.account_uuid", "value": {"stringValue": "11111111-1111-4111-8111-111111111111"}},
+          {"key": "prompt", "value": {"stringValue": "PRIVATE_SENTINEL"}}
+          ,{"key": "code", "value": {"stringValue": "CODE_SENTINEL"}}
+          ,{"key": "response", "value": {"stringValue": "RESPONSE_SENTINEL"}}
+          ,{"key": "terminal_output", "value": {"stringValue": "TERMINAL_SENTINEL"}}
+        ]},
+        {"asInt": "30", "startTimeUnixNano": "150000000000", "timeUnixNano": "160000000000", "attributes": [
+          {"key": "type", "value": {"stringValue": "output"}},
+          {"key": "model", "value": {"stringValue": "claude-sonnet-4-5"}},
+          {"key": "session.id", "value": {"stringValue": "22222222-2222-4222-8222-222222222222"}},
+          {"key": "app.version", "value": {"stringValue": "2.1.207"}},
+          {"key": "user.account_uuid", "value": {"stringValue": "11111111-1111-4111-8111-111111111111"}}
+        ]}
+      ]}
+    }]}]
+  }]
+}

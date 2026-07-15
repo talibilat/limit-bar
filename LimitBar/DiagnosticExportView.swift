@@ -22,6 +22,7 @@ enum DiagnosticExportInputBuilder {
             customRejectedLines: state.local.customRejectedLines,
             refreshHistory: await ProviderRefreshHistoryRepository.shared.summaries(),
             quotaInsights: state.quotaInsights,
+            claudeExplanations: state.claudeExplanationCatalog,
             codexExplanation: state.local.codexExplanation,
             codexExplanationRetained: state.local.codexExplanationRetained
         )
@@ -41,6 +42,7 @@ enum DiagnosticExportInputBuilder {
         customRejectedLines: Int,
         refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary],
         quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:],
+        claudeExplanations: ClaudeQuotaExplanationCatalog = .empty,
         codexExplanation: CodexQuotaExplanationState? = nil,
         codexExplanationRetained: Bool = false
     ) throws -> DiagnosticExportInput {
@@ -77,6 +79,7 @@ enum DiagnosticExportInputBuilder {
             return $0.role.rawValue < $1.role.rawValue
         }
         let projectedQuota = try quotaFindings(from: quotaInsights, generatedAt: generatedAt)
+        _ = claudeExplanations // Deliberately omitted until a diagnostic positive allow-list is specified.
 
         return try DiagnosticExportInput(
             generatedAt: generatedAt,

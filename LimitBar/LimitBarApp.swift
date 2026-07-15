@@ -71,10 +71,15 @@ final class LimitBarState {
     var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] { quotaAnalysis.forecasts }
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
     private(set) var quotaInsightsStorageAvailable: Bool
+    private(set) var claudeExplanationCatalog: ClaudeQuotaExplanationCatalog = .empty
+    var claudeExplanation: ClaudeQuotaExplanationState {
+        claudeExplanationCatalog.defaultSelection?.state ?? .unavailable(.insufficientObservations)
+    }
 
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
+    private let claudeExplanationStore: SQLiteClaudeExplanationStore?
     private let attributionEvidenceStore: any AttributionEvidenceDeleting
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
@@ -88,7 +93,9 @@ final class LimitBarState {
         let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
         let codexExplanationStore = try? SQLiteCodexExplanationStore.applicationSupportStore()
+        let claudeExplanationStore = try? SQLiteClaudeExplanationStore.applicationSupportStore()
         self.codexExplanationStore = codexExplanationStore
+        self.claudeExplanationStore = claudeExplanationStore
         attributionEvidenceStore = UsageDatabase.shared
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
@@ -107,6 +114,7 @@ final class LimitBarState {
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
+        claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
     }
 
     init(
@@ -115,6 +123,7 @@ final class LimitBarState {
         coordinator: LocalRefreshCoordinator,
         quotaInsightsService: (any QuotaInsightsServing)? = nil,
         codexExplanationStore: SQLiteCodexExplanationStore? = nil,
+        claudeExplanationStore: SQLiteClaudeExplanationStore? = nil,
         attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared
     ) {
         self.providerSettings = providerSettings
@@ -122,6 +131,7 @@ final class LimitBarState {
         self.coordinator = coordinator
         self.quotaInsightsService = quotaInsightsService
         self.codexExplanationStore = codexExplanationStore
+        self.claudeExplanationStore = claudeExplanationStore
         self.attributionEvidenceStore = attributionEvidenceStore
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
@@ -129,6 +139,7 @@ final class LimitBarState {
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
+        claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
     }
 
     func start() {
@@ -203,6 +214,17 @@ final class LimitBarState {
         }
     }
 
+    func deleteClaudeExplanations() async -> Bool {
+        guard let claudeExplanationStore else { return false }
+        do {
+            try claudeExplanationStore.deleteAll()
+            claudeExplanationCatalog = .empty
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func deleteProjectAgentAttribution() async -> Bool {
         do {
             try await attributionEvidenceStore.deleteAllAttributionEvidence(now: Date())
@@ -265,6 +287,9 @@ final class LimitBarState {
         do {
             let analysis = try await quotaInsightsService.recordClaudeAnalysis(snapshot, now: now)
             publish(analysis, for: .claudeCode)
+            if let explanation = analysis.claudeExplanations.defaultSelection?.state {
+                try? claudeExplanationStore?.record(explanation, now: now)
+            }
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
@@ -309,7 +334,30 @@ final class LimitBarState {
         var anomalies = quotaAnalysis.anomalies.filter { $0.key.product != product }
         forecasts.merge(analysis.forecasts) { _, new in new }
         anomalies.merge(analysis.anomalies) { _, new in new }
-        quotaAnalysis = QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+        let explanations = product == .claudeCode ? analysis.claudeExplanations : quotaAnalysis.claudeExplanations
+        quotaAnalysis = QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies, claudeExplanations: explanations)
+        claudeExplanationCatalog = explanations
+    }
+
+    private static func catalog(restoring state: ClaudeQuotaExplanationState?) -> ClaudeQuotaExplanationCatalog {
+        guard let state else { return .empty }
+        let value: ClaudeQuotaExplanation
+        switch state {
+        case let .movement(explanation), let .flat(explanation): value = explanation
+        case .unavailable: return .empty
+        }
+        guard let identity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "retained", resetBoundary: value.quotaResetBoundary) else { return .empty }
+        let interval = ClaudeQuotaExplanationInterval(
+            id: value.observationIdentities.map(\.digest).joined(separator: ":"),
+            identity: identity,
+            intervalStart: value.intervalStart,
+            intervalEnd: value.intervalEnd,
+            lifecycle: value.lifecycle
+        )
+        return ClaudeQuotaExplanationCatalog(
+            selections: [ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: [])],
+            defaultSelectionID: interval.id
+        )
     }
 
 }
