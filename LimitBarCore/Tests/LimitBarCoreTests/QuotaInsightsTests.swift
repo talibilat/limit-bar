@@ -136,6 +136,8 @@ struct QuotaInsightsTests {
             return
         }
         #expect(finding.inputObservationIdentities == observations.map(\.stableIdentity))
+        #expect(finding.latestObservationIdentity == observations.last?.stableIdentity)
+        #expect(finding.latestObservationAt == observations.last?.observedAt)
         #expect(finding.createdAt == now)
         #expect(finding.evidenceAge == 60)
         #expect(QuotaInsightAnalytics.analyze(observations, now: now, maximumAge: 600).qualificationStatus == .qualified)

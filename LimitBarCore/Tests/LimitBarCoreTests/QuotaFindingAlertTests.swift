@@ -18,6 +18,7 @@ struct QuotaFindingAlertTests {
             identifier: "private-account/project/session/model/token-123",
             resetBoundary: now.addingTimeInterval(3_600)
         )
+        let inputs = try traceInputs(identity: identity, percentage: 10)
         let finding = QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: 4,
@@ -25,7 +26,9 @@ struct QuotaFindingAlertTests {
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
             createdAt: now,
             evidenceAge: 60,
-            inputObservationIdentities: try traceInputs(identity: identity, percentage: 10),
+            inputObservationIdentities: inputs,
+            latestObservationIdentity: inputs.last!,
+            latestObservationAt: now.addingTimeInterval(-60),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
             calculatedExhaustionRange: now.addingTimeInterval(1_200)...now.addingTimeInterval(1_800)
@@ -365,6 +368,7 @@ struct QuotaFindingAlertTests {
         let exhaustion: ClosedRange<Date>? = hasExhaustion
             ? createdAt.addingTimeInterval(600)...createdAt.addingTimeInterval(1_200)
             : nil
+        let inputs = try! traceInputs(identity: identity, percentage: inputPercentage)
         return .qualified(QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: 4,
@@ -372,7 +376,9 @@ struct QuotaFindingAlertTests {
             forecastMethod: .pairwisePositiveSlopeInterquartileV2,
             createdAt: createdAt,
             evidenceAge: evidenceAge,
-            inputObservationIdentities: try! traceInputs(identity: identity, percentage: inputPercentage),
+            inputObservationIdentities: inputs,
+            latestObservationIdentity: inputs.last!,
+            latestObservationAt: createdAt.addingTimeInterval(-evidenceAge),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
             calculatedExhaustionRange: exhaustion

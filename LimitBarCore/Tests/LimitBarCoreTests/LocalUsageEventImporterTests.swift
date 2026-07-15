@@ -347,10 +347,18 @@ struct LocalUsageEventImporterTests {
 
         let importTask = Task.detached {
             let taskStore = try SQLiteUsageMetricStore(path: databasePath)
-            return try LocalUsageEventImporter.importEvents(from: largeURL, to: taskStore, now: now, calendar: calendar)
+            return try LocalUsageEventImporter.importEvents(
+                from: largeURL,
+                to: taskStore,
+                now: now,
+                calendar: calendar,
+                onChunkRead: { bytesRead in
+                    guard bytesRead >= 2 * 64 * 1_024 else { return }
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    try Task.checkCancellation()
+                }
+            )
         }
-        try await Task.sleep(for: .milliseconds(5))
-        importTask.cancel()
 
         do {
             _ = try await importTask.value

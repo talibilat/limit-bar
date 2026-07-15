@@ -209,6 +209,8 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
     public let createdAt: Date
     public let evidenceAge: TimeInterval
     public let inputObservationIdentities: [QuotaObservationIdentity]
+    public let latestObservationIdentity: QuotaObservationIdentity
+    public let latestObservationAt: Date
     public let interpretationVersions: [QuotaObservationInterpretationVersion]
     public let calculatedBurnPercentPerHour: QuotaInsightRange
     public let calculatedExhaustionRange: ClosedRange<Date>?
@@ -221,6 +223,8 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
         createdAt: Date,
         evidenceAge: TimeInterval,
         inputObservationIdentities: [QuotaObservationIdentity],
+        latestObservationIdentity: QuotaObservationIdentity,
+        latestObservationAt: Date,
         interpretationVersions: [QuotaObservationInterpretationVersion],
         calculatedBurnPercentPerHour: QuotaInsightRange,
         calculatedExhaustionRange: ClosedRange<Date>?
@@ -232,6 +236,8 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
         self.createdAt = createdAt
         self.evidenceAge = evidenceAge
         self.inputObservationIdentities = inputObservationIdentities
+        self.latestObservationIdentity = latestObservationIdentity
+        self.latestObservationAt = latestObservationAt
         self.interpretationVersions = interpretationVersions
         self.calculatedBurnPercentPerHour = calculatedBurnPercentPerHour
         self.calculatedExhaustionRange = calculatedExhaustionRange
@@ -409,6 +415,8 @@ public enum QuotaInsightAnalytics {
             createdAt: now,
             evidenceAge: now.timeIntervalSince(latest.observedAt),
             inputObservationIdentities: distinct.map(\.stableIdentity),
+            latestObservationIdentity: latest.stableIdentity,
+            latestObservationAt: latest.observedAt,
             interpretationVersions: Array(Set(distinct.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue },
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: lowerBurn, upper: upperBurn),
             calculatedExhaustionRange: exhaustion

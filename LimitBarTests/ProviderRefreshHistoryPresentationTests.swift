@@ -3,6 +3,112 @@ import LimitBarCore
 @testable import LimitBar
 
 final class ProviderRefreshHistoryPresentationTests: XCTestCase {
+    @MainActor
+    func testPlanningEvidenceSelectsClaudeWhenBothProductsArePresent() throws {
+        let fixture = try PlanningCurrentEvidenceFixture()
+
+        let selected = LiveWorkloadPlanningData.currentEvidence(
+            for: fixture.support(.claudeCode),
+            codexSnapshot: fixture.codexSnapshot,
+            claudeSnapshot: fixture.claudeSnapshot,
+            forecasts: fixture.forecasts
+        )
+
+        XCTAssertEqual(selected?.latestObservation.identity.product, .claudeCode)
+        XCTAssertEqual(selected?.latestObservation.stableIdentity, fixture.claudeObservation.stableIdentity)
+    }
+
+    @MainActor
+    func testPlanningEvidenceReturnsNilWhenOnlyWrongProductIsPresent() throws {
+        let fixture = try PlanningCurrentEvidenceFixture()
+
+        let selected = LiveWorkloadPlanningData.currentEvidence(
+            for: fixture.support(.claudeCode),
+            codexSnapshot: fixture.codexSnapshot,
+            claudeSnapshot: nil,
+            forecasts: [fixture.codexObservation.identity: fixture.codexForecast]
+        )
+
+        XCTAssertNil(selected)
+    }
+
+    @MainActor
+    func testPlanningEvidenceSelectsMatchingCodexProduct() throws {
+        let fixture = try PlanningCurrentEvidenceFixture()
+
+        let selected = LiveWorkloadPlanningData.currentEvidence(
+            for: fixture.support(.codex),
+            codexSnapshot: fixture.codexSnapshot,
+            claudeSnapshot: fixture.claudeSnapshot,
+            forecasts: fixture.forecasts
+        )
+
+        XCTAssertEqual(selected?.latestObservation.identity.product, .codex)
+        XCTAssertEqual(selected?.latestObservation.stableIdentity, fixture.codexObservation.stableIdentity)
+    }
+
+    @MainActor
+    func testUnsupportedPlanningSelectsNoProductEvidenceOrReset() throws {
+        let fixture = try PlanningCurrentEvidenceFixture()
+        let selected = LiveWorkloadPlanningData.currentEvidence(
+            for: nil,
+            codexSnapshot: fixture.codexSnapshot,
+            claudeSnapshot: fixture.claudeSnapshot,
+            forecasts: fixture.forecasts
+        )
+        let result = WorkloadPlanningSurfaceResult(WorkloadPlanning.unavailableForUnsupportedAdapter(
+            currentEvidence: selected,
+            now: fixture.now
+        ))
+
+        XCTAssertNil(selected)
+        XCTAssertTrue(result.evidence.contains("No compatible current quota evidence"))
+        XCTAssertFalse(result.evidence.contains("exact reset"))
+        XCTAssertFalse(result.evidence.contains("Claude"))
+        XCTAssertFalse(result.evidence.contains("Codex"))
+    }
+
+    @MainActor
+    func testPlannedWorkloadViewRendersInjectedAvailableIndeterminateAndUnavailableStates() {
+        let cases: [(WorkloadPlanningSurfaceStatus, String)] = [
+            (.available, "Assessment available"),
+            (.indeterminate, "Assessment indeterminate"),
+            (.unavailable, "Assessment unavailable"),
+        ]
+
+        for (status, title) in cases {
+            let expected = WorkloadPlanningSurfaceResult(
+                status: status,
+                title: title,
+                summary: "Fixture summary",
+                evidence: "Fixture evidence"
+            )
+            let provider = InjectedWorkloadPlanningData(expected: expected)
+            let view = PlannedWorkloadView(data: provider)
+
+            XCTAssertEqual(view.renderedResult, expected)
+        }
+    }
+
+    @MainActor
+    func testUnsupportedProductionBoundaryHidesNoOpPlanningControls() {
+        let state = LimitBarState(
+            providerSettings: [],
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in nil }
+            ))
+        )
+        let provider = LiveWorkloadPlanningData(state: state)
+
+        XCTAssertNil(provider.inputSupport)
+        XCTAssertEqual(provider.result(workUnits: 10, concurrency: 1, now: Date()).status, .unavailable)
+    }
+
     func testOutcomesUseDistinctSafeCopy() {
         XCTAssertEqual(ProviderRefreshHistoryStatusText.outcome(.success), "Succeeded")
         XCTAssertEqual(ProviderRefreshHistoryStatusText.outcome(.partialFailure), "Partially failed")
@@ -262,6 +368,79 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
                 scanCodex: { _ in nil }
             )),
             attributionEvidenceStore: attributionStore
+        )
+    }
+}
+
+@MainActor
+private struct InjectedWorkloadPlanningData: WorkloadPlanningDataProviding {
+    let expected: WorkloadPlanningSurfaceResult
+    var inputSupport: WorkloadPlanningInputSupport? { nil }
+
+    func result(workUnits: Int, concurrency: Int, now: Date) -> WorkloadPlanningSurfaceResult {
+        expected
+    }
+}
+
+private struct PlanningCurrentEvidenceFixture {
+    let now = Date(timeIntervalSince1970: 1_900_000_000)
+    let codexSnapshot: CodexRateLimitSnapshot
+    let claudeSnapshot: ClaudeRateLimitSnapshot
+    let codexObservation: MeasuredQuotaObservation
+    let claudeObservation: MeasuredQuotaObservation
+    let codexForecast: QuotaInsightState
+    let claudeForecast: QuotaInsightState
+
+    var forecasts: [QuotaWindowIdentity: QuotaInsightState] {
+        [codexObservation.identity: codexForecast, claudeObservation.identity: claudeForecast]
+    }
+
+    init() throws {
+        codexSnapshot = CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: CodexRateLimitWindow(
+                percentUsed: 25,
+                windowMinutes: 300,
+                resetsAt: now.addingTimeInterval(3_600)
+            ),
+            secondary: nil,
+            credits: nil,
+            reportedAt: now
+        )
+        claudeSnapshot = ClaudeRateLimitSnapshot(
+            limits: [ClaudeRateLimit(
+                kind: "session",
+                group: .session,
+                percentUsed: 35,
+                severity: .normal,
+                resetsAt: now.addingTimeInterval(3_600),
+                scopeDisplayName: nil,
+                isActive: true
+            )],
+            fetchedAt: now
+        )
+        codexObservation = try XCTUnwrap(MeasuredQuotaObservationAdapter.codex(codexSnapshot).first)
+        claudeObservation = try XCTUnwrap(MeasuredQuotaObservationAdapter.claude(claudeSnapshot).first)
+        codexForecast = QuotaInsightAnalytics.analyze(
+            [], now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge,
+            expectedIdentity: codexObservation.identity
+        )
+        claudeForecast = QuotaInsightAnalytics.analyze(
+            [], now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge,
+            expectedIdentity: claudeObservation.identity
+        )
+    }
+
+    func support(_ product: ProviderProduct) -> CompletedWorkloadRunSupport {
+        CompletedWorkloadRunSupport(
+            product: product,
+            kind: .codingAgentOperations,
+            quotaWindowKind: .session,
+            executionMode: .interactive,
+            source: .normalizedCompletedRunAdapter,
+            adapterVersion: WorkloadAdapterVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!),
+            clientVersion: WorkloadClientVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
+            providerFormatVersion: WorkloadProviderFormatVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
         )
     }
 }
