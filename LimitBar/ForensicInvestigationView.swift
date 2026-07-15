@@ -457,7 +457,7 @@ enum ForensicInvestigationAssembler {
             forecast: ForensicInvestigationPresentation.forecast(identity.flatMap { forecasts[$0] }),
             anomaly: ForensicInvestigationPresentation.anomaly(identity.flatMap { anomalies[$0] }),
             version: "Explanation method \(CodexQuotaExplanationEngine.methodVersion); adapter \(value?.adapterVersion ?? CodexRolloutEvidenceAdapter.adapterVersion); client version unavailable - not captured.",
-            limitations: value.map { "Exact source traces: \($0.observationIdentityCount) Reported observations and \($0.evidenceIdentityCount) Measured evidence items; barriers \($0.barriers.map(\.rawValue).joined(separator: ", ")). Local token activity cannot be converted to provider quota percentage." } ?? "No comparable explanation interval. Local token activity cannot be converted to provider quota percentage.",
+            limitations: value.map { "Exact source traces: \($0.observationIdentityCount) Measured quota observations and \($0.evidenceIdentityCount) Measured evidence items; barriers \($0.barriers.map(\.rawValue).joined(separator: ", ")). Local token activity cannot be converted to provider quota percentage." } ?? "No comparable explanation interval. Local token activity cannot be converted to provider quota percentage.",
             traces: explanationTraces(observations: value?.observationIdentities ?? zero?.observationIdentities ?? [], evidence: value?.evidenceIdentities ?? zero?.evidenceIdentities ?? []),
             freshness: retained ? "Retained/stale explanation from an earlier publication; not fresh evidence for this generation." : "Fresh explanation from this coherent generation.",
             isGap: value == nil && zero == nil,
