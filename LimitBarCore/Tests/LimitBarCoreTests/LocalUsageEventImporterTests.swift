@@ -63,6 +63,9 @@ struct LocalUsageEventImporterTests {
         #expect(throws: LocalUsageEventError.self) {
             try LocalUsageEventParser.parseLine(#"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":1,"outputTokens":-2}"#)
         }
+        #expect(throws: LocalUsageEventError.self) {
+            try LocalUsageEventParser.parseLine(#"{"schemaVersion":3,"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-5","inputTokens":1,"outputTokens":2}"#)
+        }
     }
 
     @Test("trims labels and ignores unknown fields")
@@ -607,6 +610,52 @@ struct LocalUsageEventImporterTests {
         #expect(today.count == 2)
         #expect(today.contains { $0.provenance.source == .providerAPI && $0.modelLabel == "api" })
         #expect(today.contains { $0.provenance.source == .builtInLocalLog && $0.modelLabel == "local" })
+    }
+
+    @Test("v2 project and agent usage is an Observed Local Breakdown without double-counting parent totals")
+    func aggregatesV2AttributionSeparately() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: [
+            #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":10,"outputTokens":2,"projectID":"alpha","projectLabel":"Alpha","agentID":"reviewer","agentLabel":"Reviewer"}"#,
+            #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T11:00:00Z","model":"gpt-5","inputTokens":5,"outputTokens":1,"projectID":"beta","projectLabel":"Beta","agentID":"builder","agentLabel":"Builder"}"#,
+            #"{"schemaVersion":1,"eventID":"00000000-0000-0000-0000-000000000003","provider":"openAI","timestamp":"2026-07-10T12:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":1}"#
+        ].joined(separator: "\n"))
+
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let parent = try #require(store.metrics(for: .today).first { $0.provider == .openAI })
+        #expect(parent.tokenUsage == TokenUsage(inputTokens: 18, outputTokens: 4))
+        let today = result.attributionBreakdowns.filter { $0.window.timeWindow == .today }
+        #expect(today.count == 2)
+        #expect(today.allSatisfy { $0.evidenceKind == .observedLocalBreakdown })
+        #expect(today.allSatisfy { $0.source == .builtInLocalLog && $0.provider == .openAI && $0.model == "gpt-5" })
+        #expect(Set(today.compactMap(\.project?.id)) == ["alpha", "beta"])
+        #expect(Set(today.compactMap(\.agent?.id)) == ["reviewer", "builder"])
+        #expect(Set(today.flatMap(\.eventIDs)) == [
+            UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        ])
+        #expect(today.reduce(0) { $0 + $1.tokenUsage.totalTokens } == 18)
+        #expect(parent.tokenUsage.totalTokens == 22)
+    }
+
+    @Test("missing attribution remains unknown and deleting input deletes attribution evidence")
+    func missingAndDeletedAttribution() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1}"#)
+
+        let initial = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(initial.attributionBreakdowns.isEmpty)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let attributed = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(attributed.attributionBreakdowns.count == 2)
+        try FileManager.default.removeItem(at: fileURL)
+        let deleted = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(deleted.attributionBreakdowns.isEmpty)
     }
 
     private func temporaryFile(contents: String) throws -> URL {

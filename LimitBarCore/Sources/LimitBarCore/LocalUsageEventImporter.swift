@@ -1,12 +1,15 @@
 import Foundation
 
 public struct LocalUsageEvent: Equatable, Sendable {
+    public let eventID: UUID?
     public let provider: ProviderKind
     public let timestamp: Date
     public let model: String
     public let deployment: String?
     public let inputTokens: Int
     public let outputTokens: Int
+    public let project: CollectorAttribution?
+    public let agent: CollectorAttribution?
 }
 
 public enum LocalUsageEventError: Error, Equatable {
@@ -35,13 +38,14 @@ public struct LocalUsageImportResult: Equatable, Sendable {
     public let malformedEvents: [MalformedLocalUsageEvent]
     public let failureMessage: String?
     public let hasFutureTimestampRejection: Bool
+    public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
 
     public static func empty(fileURL: URL) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [])
     }
 
     public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [])
     }
 }
 
@@ -53,11 +57,34 @@ public enum LocalUsageEventParser {
         let inputTokens: Int?
         let outputTokens: Int?
         let deployment: String?
+        let schemaVersion: Int?
+        let eventID: UUID?
     }
 
     public static func parseLine(_ line: String) throws -> LocalUsageEvent {
         guard let data = line.data(using: .utf8),
               let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
+            throw LocalUsageEventError.malformedJSON
+        }
+
+        if raw.schemaVersion == CollectorEventV2.schemaVersion {
+            guard let event = try? CollectorSchemaV2.decode(data), case let .provider(provider) = event.identity,
+                  let normalizedProvider = ProviderKind(rawValue: provider.rawValue) else {
+                throw LocalUsageEventError.malformedJSON
+            }
+            return LocalUsageEvent(
+                eventID: event.eventID,
+                provider: normalizedProvider,
+                timestamp: event.timestamp,
+                model: event.model,
+                deployment: event.deployment,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                project: event.project,
+                agent: event.agent
+            )
+        }
+        guard raw.schemaVersion == nil || raw.schemaVersion == CollectorEventV1.schemaVersion else {
             throw LocalUsageEventError.malformedJSON
         }
 
@@ -103,12 +130,15 @@ public enum LocalUsageEventParser {
         }
 
         return LocalUsageEvent(
+            eventID: raw.schemaVersion == CollectorEventV1.schemaVersion ? raw.eventID : nil,
             provider: provider,
             timestamp: timestamp,
             model: model,
             deployment: deployment,
             inputTokens: inputTokens,
-            outputTokens: outputTokens
+            outputTokens: outputTokens,
+            project: nil,
+            agent: nil
         )
     }
 
@@ -136,6 +166,21 @@ public enum LocalUsageEventImporter {
         var inputTokens: Int
         var outputTokens: Int
         var latestTimestamp: Date
+    }
+
+    private struct AttributionKey: Hashable {
+        let provider: ProviderKind
+        let window: ExactUsageWindow
+        let model: String
+        let deployment: String?
+        let project: CollectorAttribution?
+        let agent: CollectorAttribution?
+    }
+
+    private struct AttributionValue {
+        var inputTokens: Int
+        var outputTokens: Int
+        var eventIDs: [UUID]
     }
 
     // This importer only ever handles the shared usage-events.jsonl file and
@@ -206,6 +251,7 @@ public enum LocalUsageEventImporter {
         }
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
+        var attributionAggregates: [AttributionKey: AttributionValue] = [:]
         var validEventCount = 0
         var malformedEventCount = 0
         var malformed: [MalformedLocalUsageEvent] = []
@@ -235,6 +281,7 @@ public enum LocalUsageEventImporter {
                         lineNumber: lineNumber,
                         windows: importedWindows,
                         aggregates: &aggregates,
+                        attributionAggregates: &attributionAggregates,
                         validEventCount: &validEventCount,
                         malformedEventCount: &malformedEventCount,
                         malformed: &malformed,
@@ -258,6 +305,7 @@ public enum LocalUsageEventImporter {
                 lineNumber: lineNumber,
                 windows: importedWindows,
                 aggregates: &aggregates,
+                attributionAggregates: &attributionAggregates,
                 validEventCount: &validEventCount,
                 malformedEventCount: &malformedEventCount,
                 malformed: &malformed,
@@ -275,7 +323,8 @@ public enum LocalUsageEventImporter {
             malformedEventCount: malformedEventCount,
             malformedEvents: malformed,
             failureMessage: nil,
-            hasFutureTimestampRejection: hasFutureTimestampRejection
+            hasFutureTimestampRejection: hasFutureTimestampRejection,
+            attributionBreakdowns: breakdowns(from: attributionAggregates)
         )
     }
 
@@ -300,6 +349,7 @@ public enum LocalUsageEventImporter {
         lineNumber: Int,
         windows: [ExactUsageWindow],
         aggregates: inout [AggregateKey: AggregateValue],
+        attributionAggregates: inout [AttributionKey: AttributionValue],
         validEventCount: inout Int,
         malformedEventCount: inout Int,
         malformed: inout [MalformedLocalUsageEvent],
@@ -327,7 +377,7 @@ public enum LocalUsageEventImporter {
             return
         }
         validEventCount += 1
-        try add(event, windows: windows, to: &aggregates)
+        try add(event, windows: windows, to: &aggregates, attributionAggregates: &attributionAggregates)
     }
 
     private static func recordMalformed(
@@ -345,7 +395,8 @@ public enum LocalUsageEventImporter {
     private static func add(
         _ event: LocalUsageEvent,
         windows: [ExactUsageWindow],
-        to aggregates: inout [AggregateKey: AggregateValue]
+        to aggregates: inout [AggregateKey: AggregateValue],
+        attributionAggregates: inout [AttributionKey: AttributionValue]
     ) throws {
         for window in windows {
             try Task.checkCancellation()
@@ -362,6 +413,44 @@ public enum LocalUsageEventImporter {
             _ = try checkedSum(value.inputTokens, value.outputTokens)
             value.latestTimestamp = max(value.latestTimestamp, event.timestamp)
             aggregates[key] = value
+
+            guard event.project != nil || event.agent != nil, let eventID = event.eventID else { continue }
+            let attributionKey = AttributionKey(
+                provider: event.provider,
+                window: window,
+                model: event.model,
+                deployment: event.deployment,
+                project: event.project,
+                agent: event.agent
+            )
+            if attributionAggregates[attributionKey] == nil, aggregates.count + attributionAggregates.count >= maximumAggregateKeys {
+                throw LocalUsageEventError.tooManyAggregates
+            }
+            var attribution = attributionAggregates[attributionKey] ?? AttributionValue(inputTokens: 0, outputTokens: 0, eventIDs: [])
+            attribution.inputTokens = try checkedSum(attribution.inputTokens, event.inputTokens)
+            attribution.outputTokens = try checkedSum(attribution.outputTokens, event.outputTokens)
+            _ = try checkedSum(attribution.inputTokens, attribution.outputTokens)
+            attribution.eventIDs.append(eventID)
+            attributionAggregates[attributionKey] = attribution
+        }
+    }
+
+    private static func breakdowns(from aggregates: [AttributionKey: AttributionValue]) -> [ObservedLocalAttributionBreakdown] {
+        aggregates.map { key, value in
+            ObservedLocalAttributionBreakdown(
+                source: .builtInLocalLog,
+                provider: key.provider,
+                window: key.window,
+                model: key.model,
+                deployment: key.deployment,
+                project: key.project,
+                agent: key.agent,
+                tokenUsage: TokenUsage(inputTokens: value.inputTokens, outputTokens: value.outputTokens),
+                eventIDs: value.eventIDs.sorted { $0.uuidString < $1.uuidString }
+            )
+        }.sorted {
+            ($0.window.start, $0.provider.rawValue, $0.model, $0.project?.id ?? "", $0.agent?.id ?? "")
+                < ($1.window.start, $1.provider.rawValue, $1.model, $1.project?.id ?? "", $1.agent?.id ?? "")
         }
     }
 

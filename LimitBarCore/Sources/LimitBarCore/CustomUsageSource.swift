@@ -32,10 +32,14 @@ public struct CustomUsageSource: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct CustomUsageEvent: Equatable, Sendable {
+    public let eventID: UUID?
+    public let customSourceID: UUID?
     public let timestamp: Date
     public let model: String
     public let inputTokens: Int
     public let outputTokens: Int
+    public let project: CollectorAttribution?
+    public let agent: CollectorAttribution?
 }
 
 public enum CustomUsageEventError: Error, Equatable {
@@ -74,17 +78,20 @@ public struct CustomUsageLoadDiagnostic: Equatable, Sendable {
 
 public struct CustomUsageLoadResult: Equatable, Sendable {
     public let metrics: [UsageMetric]
+    public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
     public let diagnostics: [CustomUsageLoadDiagnostic]
     public let rejectedLineCount: Int
     public let hasFutureTimestampRejection: Bool
 
     public init(
         metrics: [UsageMetric],
+        attributionBreakdowns: [ObservedLocalAttributionBreakdown] = [],
         diagnostics: [CustomUsageLoadDiagnostic],
         rejectedLineCount: Int,
         hasFutureTimestampRejection: Bool = false
     ) {
         self.metrics = metrics
+        self.attributionBreakdowns = attributionBreakdowns
         self.diagnostics = diagnostics
         self.rejectedLineCount = rejectedLineCount
         self.hasFutureTimestampRejection = hasFutureTimestampRejection
@@ -97,11 +104,30 @@ public enum CustomUsageEventParser {
         let model: String?
         let inputTokens: Int?
         let outputTokens: Int?
+        let schemaVersion: Int?
     }
 
     public static func parseLine(_ line: String) throws -> CustomUsageEvent {
         guard let data = line.data(using: .utf8),
               let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
+            throw CustomUsageEventError.malformedJSON
+        }
+        if raw.schemaVersion == CollectorEventV2.schemaVersion {
+            guard let event = try? CollectorSchemaV2.decode(data), case let .customSource(sourceID) = event.identity else {
+                throw CustomUsageEventError.malformedJSON
+            }
+            return CustomUsageEvent(
+                eventID: event.eventID,
+                customSourceID: sourceID,
+                timestamp: event.timestamp,
+                model: event.model,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                project: event.project,
+                agent: event.agent
+            )
+        }
+        guard raw.schemaVersion == nil || raw.schemaVersion == CollectorEventV1.schemaVersion else {
             throw CustomUsageEventError.malformedJSON
         }
         guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
@@ -123,7 +149,10 @@ public enum CustomUsageEventParser {
         guard inputTokens >= 0, outputTokens >= 0 else {
             throw CustomUsageEventError.negativeTokenCount
         }
-        return CustomUsageEvent(timestamp: timestamp, model: model, inputTokens: inputTokens, outputTokens: outputTokens)
+        return CustomUsageEvent(
+            eventID: nil, customSourceID: nil, timestamp: timestamp, model: model,
+            inputTokens: inputTokens, outputTokens: outputTokens, project: nil, agent: nil
+        )
     }
 
     private static func parseTimestamp(_ text: String) -> Date? {
@@ -143,6 +172,19 @@ public enum CustomUsageAggregator {
         var inputTokens: Int
         var outputTokens: Int
         var latestTimestamp: Date
+    }
+
+    private struct AttributionKey: Hashable {
+        let window: ExactUsageWindow
+        let model: String
+        let project: CollectorAttribution?
+        let agent: CollectorAttribution?
+    }
+
+    private struct AttributionValue {
+        var inputTokens: Int
+        var outputTokens: Int
+        var eventIDs: [UUID]
     }
 
     private static let maximumFileBytes = 100 * 1_024 * 1_024
@@ -201,6 +243,7 @@ public enum CustomUsageAggregator {
         defer { try? handle.close() }
 
         var aggregates: [AggregateKey: AggregateValue] = [:]
+        var attributionAggregates: [AttributionKey: AttributionValue] = [:]
         var diagnostics: [CustomUsageLoadDiagnostic] = []
         var rejectedLineCount = 0
         var hasFutureTimestampRejection = false
@@ -240,6 +283,10 @@ public enum CustomUsageAggregator {
                 reject(.malformedEvent)
                 return
             }
+            guard event.customSourceID == nil || event.customSourceID == source.id else {
+                reject(.malformedEvent)
+                return
+            }
             guard event.timestamp <= now.addingTimeInterval(futureTolerance) else {
                 reject(.futureTimestamp)
                 return
@@ -256,6 +303,18 @@ public enum CustomUsageAggregator {
                 _ = try checkedSum(value.inputTokens, value.outputTokens)
                 value.latestTimestamp = max(value.latestTimestamp, event.timestamp)
                 aggregates[key] = value
+
+                guard event.project != nil || event.agent != nil, let eventID = event.eventID else { continue }
+                let attributionKey = AttributionKey(window: window, model: event.model, project: event.project, agent: event.agent)
+                if attributionAggregates[attributionKey] == nil, aggregates.count + attributionAggregates.count >= maximumAggregateKeys {
+                    throw CustomUsageLoadError.tooManyAggregates
+                }
+                var attribution = attributionAggregates[attributionKey] ?? AttributionValue(inputTokens: 0, outputTokens: 0, eventIDs: [])
+                attribution.inputTokens = try checkedSum(attribution.inputTokens, event.inputTokens)
+                attribution.outputTokens = try checkedSum(attribution.outputTokens, event.outputTokens)
+                _ = try checkedSum(attribution.inputTokens, attribution.outputTokens)
+                attribution.eventIDs.append(eventID)
+                attributionAggregates[attributionKey] = attribution
             }
         }
 
@@ -322,6 +381,17 @@ public enum CustomUsageAggregator {
 
         return CustomUsageLoadResult(
             metrics: metrics,
+            attributionBreakdowns: attributionAggregates.map { key, value in
+                ObservedLocalAttributionBreakdown(
+                    source: .custom(source.id), provider: .custom, window: key.window, model: key.model, deployment: nil,
+                    project: key.project, agent: key.agent,
+                    tokenUsage: TokenUsage(inputTokens: value.inputTokens, outputTokens: value.outputTokens),
+                    eventIDs: value.eventIDs.sorted { $0.uuidString < $1.uuidString }
+                )
+            }.sorted {
+                ($0.window.start, $0.model, $0.project?.id ?? "", $0.agent?.id ?? "")
+                    < ($1.window.start, $1.model, $1.project?.id ?? "", $1.agent?.id ?? "")
+            },
             diagnostics: diagnostics,
             rejectedLineCount: rejectedLineCount,
             hasFutureTimestampRejection: hasFutureTimestampRejection

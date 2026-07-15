@@ -19,6 +19,28 @@ struct CollectorCommandTests {
         #expect(try Data(contentsOf: output).split(separator: 0x0A).count == 1)
     }
 
+    @Test("writes explicit schema v2 attribution")
+    func writesV2Attribution() throws {
+        let output = temporaryOutput()
+        let arguments = providerArguments(output: output) + [
+            "--schema-version", "2", "--project-id", "project-one", "--project-label", "Project One",
+            "--agent-id", "agent-one", "--agent-label", "Agent One"
+        ]
+
+        #expect(try CollectorCommand.run(arguments) == "accepted")
+        let line = try #require(Data(contentsOf: output).split(separator: 0x0A).first)
+        let event = try CollectorSchemaV2.decode(Data(line))
+        #expect(event.project == CollectorAttribution(id: "project-one", label: "Project One"))
+        #expect(event.agent == CollectorAttribution(id: "agent-one", label: "Agent One"))
+    }
+
+    @Test("requires explicit schema v2 negotiation for attribution")
+    func attributionRequiresV2() {
+        #expect(throws: CollectorCommandError.usage("Attribution options require --schema-version 2")) {
+            try CollectorCommand.run(providerArguments(output: temporaryOutput()) + ["--project-id", "project-one"])
+        }
+    }
+
     @Test("rejects unknown, duplicate, and incomplete options")
     func rejectsInvalidArguments() {
         #expect(throws: CollectorCommandError.self) { try CollectorCommand.run(["--private", "value"]) }

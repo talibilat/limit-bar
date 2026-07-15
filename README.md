@@ -222,7 +222,8 @@ Successfully imported custom aggregates are persisted in `usage-metrics.sqlite` 
 ### Normalized Usage Events
 
 LimitBar does not read native Anthropic, Azure OpenAI, or OpenAI CLI log formats for usage totals.
-New producers should use the supported [`limitbar-collect` CLI or reusable Swift collector](docs/CollectorSchemaV1.md).
+New producers should use the supported `limitbar-collect` CLI or reusable Swift collector.
+Use [schema v1](docs/CollectorSchemaV1.md) for normalized usage only or [schema v2](docs/CollectorSchemaV2.md) for explicit bounded project and agent attribution.
 The collector validates explicit schema v1, coordinates cooperating concurrent writers, rejects unknown fields, enforces resource limits, and rotates bounded local files.
 Its token values are immutable per-operation deltas rather than cumulative counters.
 

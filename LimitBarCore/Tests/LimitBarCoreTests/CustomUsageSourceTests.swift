@@ -78,6 +78,9 @@ struct CustomUsageSourceTests {
         #expect(throws: CustomUsageEventError.self) {
             try CustomUsageEventParser.parseLine(#"{"timestamp":"2026-07-12T10:00:00Z","model":"x","inputTokens":-1,"outputTokens":2}"#)
         }
+        #expect(throws: CustomUsageEventError.self) {
+            try CustomUsageEventParser.parseLine(#"{"schemaVersion":3,"timestamp":"2026-07-12T10:00:00Z","model":"x","inputTokens":1,"outputTokens":1}"#)
+        }
     }
 
     @Test("aggregates events per model and time window under the source's name")
@@ -161,6 +164,21 @@ struct CustomUsageSourceTests {
         #expect(result.metrics.allSatisfy { $0.modelLabel == "valid" })
         #expect(result.rejectedLineCount == 27)
         #expect(result.diagnostics.count == 20)
+    }
+
+    @Test("custom-source v2 attribution retains its source identity")
+    func customV2Attribution() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar()
+        )
+
+        #expect(result.attributionBreakdowns.count == 2)
+        #expect(result.attributionBreakdowns.allSatisfy { $0.source == .custom(sourceID) && $0.provider == .custom })
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" && $0.agent?.id == "builder" })
     }
 
     @Test("load rejects sparse oversized files, directories, and special files without leaking paths")
