@@ -124,7 +124,7 @@ Claude scoped model limits, Codex business credit pools, account labels, prompts
 
 Observations are keyed by the existing provider product, stable window identifier, and exact provider-reported reset boundary.
 Identical Codex reports encountered by repeated local scans are deduplicated rather than counted as new evidence.
-The dedicated `quota-observations.sqlite` database retains at most 30 days and 500 observations per exact quota window.
+The dedicated `quota-observations.sqlite` database retains at most 30 days and 500 observations per Quota window with one Exact boundary.
 Settings can delete this history explicitly without changing current rate limits, usage, alert rules, alert delivery state, settings, or credentials.
 Deletion does not alter current Claude provider reports or Codex session reports, so a report that remains available can be measured again on a later refresh.
 
@@ -170,7 +170,7 @@ Unchanged snapshots count no activity.
 Cached input and reasoning output remain subsets of input and output and are not added again to total tokens.
 Estimated or full-context synthetic token shapes, malformed lines, unsupported variants, counter decreases, inconsistent totals, mismatched last-token deltas, unsafe timestamps, source discontinuities, archives outside `sessions`, and `.jsonl.zst` compressed rollouts produce explicit unavailable or partial coverage rather than inferred activity.
 
-The explanation engine requires two compatible measured Codex quota observations in the same exact quota window and validated local evidence strictly inside their interval.
+The explanation engine requires two compatible measured Codex quota observations in the same Quota window with one Exact boundary and validated local evidence strictly inside their interval.
 It keeps the measured quota percentage movement separate from the Observed Local Breakdown by privacy-safe session identity and token categories.
 It does not calculate token-to-percentage allocation, inferred percentage, model attribution, project attribution, agent attribution, tool attribution, or provider weighting.
 If coverage is incomplete or unsafe, the Codex row shows a factual partial or unavailable reason instead of pretending the local evidence is complete.

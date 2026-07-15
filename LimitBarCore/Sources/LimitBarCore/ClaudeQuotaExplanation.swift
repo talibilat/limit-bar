@@ -14,9 +14,9 @@ public enum ClaudeQuotaExplanationUnavailableReason: String, Codable, Equatable,
     public var displayText: String {
         switch self {
         case .insufficientObservations: "Collecting two measured Claude Code reports."
-        case .incompatibleQuotaWindow: "Measured reports do not belong to one exact Claude Code quota window."
+        case .incompatibleQuotaWindow: "Measured reports do not belong to one Claude Code Quota window and Exact boundary."
         case .incompatibleTimestamps: "Measured report times cannot be compared safely."
-        case .counterDecreased: "Reported quota usage decreased within the exact window."
+        case .counterDecreased: "Reported quota usage decreased within the Quota window and Exact boundary."
         case .staleObservations: "Measured Claude Code reports are outside retained coverage."
         case .quotaAccountScopeUnavailable: "Retained quota observations have no trustworthy account binding, so movement is not calculated."
         case .accountTransitionUnverified: "The selected observations cross an unverified account transition."
@@ -204,7 +204,7 @@ public enum ClaudeQuotaExplanationState: Equatable, Sendable {
     }
 
     private func explanationText(_ value: ClaudeQuotaExplanation, movement: String) -> String {
-        let lifecycle = value.lifecycle == .active ? "Active exact window" : "Completed exact window"
+        let lifecycle = value.lifecycle == .active ? "Active Quota window" : "Completed Quota window"
         return "Reported Claude Code percentages; Calculated movement: \(movement). \(lifecycle), reset \(value.quotaResetBoundary.formatted(date: .abbreviated, time: .shortened)). \(attributionText(value.attribution)) Movement remains unattributed."
     }
 

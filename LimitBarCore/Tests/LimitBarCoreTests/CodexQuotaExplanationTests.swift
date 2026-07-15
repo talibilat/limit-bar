@@ -126,7 +126,7 @@ struct CodexQuotaExplanationTests {
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, changedWindow], evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .unavailable(.incompatibleQuotaWindow))
     }
 
-    @Test("counter decrease anywhere in the exact quota window rejects that window")
+    @Test("counter decrease anywhere in a Quota window and Exact boundary rejects that window")
     func adjacentCounterDecreaseRejectsWindow() throws {
         let identity = try QuotaWindowIdentity(product: .codex, identifier: "codex:primary:300", resetBoundary: date(600))
         let decreaseAfterIncrease = try [10.0, 12, 11].enumerated().map { index, percent in
@@ -157,7 +157,7 @@ struct CodexQuotaExplanationTests {
         #expect(CodexQuotaExplanationEngine.explain(observations: staleObservations, evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: [], now: date(500), maximumObservationAge: 100) == .unavailable(.insufficientObservations))
     }
 
-    @Test("selects the latest compatible pair within one exact quota window")
+    @Test("selects the latest compatible pair within one Quota window and Exact boundary")
     func latestCompatiblePairWithinWindow() throws {
         let primary = try QuotaWindowIdentity(product: .codex, identifier: "codex:primary:300", resetBoundary: date(600))
         let secondary = try QuotaWindowIdentity(product: .codex, identifier: "codex:secondary:10080", resetBoundary: date(700))

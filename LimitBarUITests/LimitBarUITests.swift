@@ -108,7 +108,7 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.popUpButtons["diagnostic-export-product"].exists)
         XCTAssertTrue(app.datePickers["diagnostic-export-range-start"].exists)
         XCTAssertTrue(app.datePickers["diagnostic-export-range-end"].exists)
-        XCTAssertTrue(text(of: app.staticTexts["diagnostic-export-range-basis"]).contains("half-open"))
+        XCTAssertTrue(text(of: app.staticTexts["diagnostic-export-range-basis"]).contains("Half-open"))
         XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
         previewButton.click()
 
@@ -378,6 +378,9 @@ final class LimitBarUITests: XCTestCase {
     }
 
     private func text(of element: XCUIElement) -> String {
-        (element.value as? String) ?? element.label
+        [element.label, element.value as? String]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }

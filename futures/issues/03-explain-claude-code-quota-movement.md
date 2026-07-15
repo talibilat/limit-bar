@@ -30,7 +30,7 @@ No confirmed fact establishes a provider weighting formula that converts local t
 
 - Define a Claude Code explanation interval as a bounded portion of one exact active or completed Claude Code quota window.
 - Select quota observations by the Claude Code provider-product identity and exact quota-window identity, not merely by company name or overlapping timestamps.
-- Calculate quota movement only between compatible measured observations from the same exact quota window.
+- Calculate quota movement only between compatible measured observations from the same Quota window and Exact boundary.
 - Treat resets, counter decreases, expired windows, stale observations, out-of-order observations, and incompatible observation units as explicit explanation states.
 - Associate supporting evidence only when its source explicitly identifies the activity as Claude Code activity and its timestamp falls within the explanation interval.
 - Keep generic Anthropic API evidence outside the Claude Code explanation even when models, credentials, timestamps, or account ownership appear related.

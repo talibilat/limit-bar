@@ -258,6 +258,52 @@ struct CodexRolloutEvidenceTests {
             )
         }
     }
+
+    @Test("reader never follows a file symlink outside the configured sessions boundary")
+    func rejectsFileSymlinkOutsideBoundary() throws {
+        let fileManager = FileManager.default
+        let parent = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sessions = parent.appendingPathComponent("sessions", isDirectory: true)
+        let outside = parent.appendingPathComponent("outside.jsonl")
+        try fileManager.createDirectory(at: sessions, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: parent) }
+        try rollout([
+            #"{"timestamp":"2026-07-15T10:00:00Z","type":"session_meta","payload":{"session_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","cli_version":"0.144.4"}}"#,
+            tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_783_716_600))
+        ]).write(to: outside)
+        try fileManager.createSymbolicLink(at: sessions.appendingPathComponent("linked.jsonl"), withDestinationURL: outside)
+
+        #expect(throws: CodexRateLimitFailure.notFound) {
+            try CodexSessionEvidenceReader.scan(
+                sessionsDirectory: sessions,
+                now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+                identityKey: Data("key".utf8),
+                fileManager: fileManager
+            )
+        }
+    }
+
+    @Test("reader recursively consumes a regular JSONL file in any in-boundary subdirectory")
+    func consumesNestedInBoundaryFileWithoutArchiveSemantics() throws {
+        let fileManager = FileManager.default
+        let sessions = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let nested = sessions.appendingPathComponent("archived_sessions", isDirectory: true)
+        try fileManager.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: sessions) }
+        try rollout([
+            #"{"timestamp":"2026-07-15T10:00:00Z","type":"session_meta","payload":{"session_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","cli_version":"0.144.4"}}"#,
+            tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_784_109_600))
+        ]).write(to: nested.appendingPathComponent("rollout.jsonl"))
+
+        let publication = try CodexSessionEvidenceReader.scan(
+            sessionsDirectory: sessions,
+            now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+            identityKey: Data("key".utf8),
+            fileManager: fileManager
+        )
+
+        #expect(publication.snapshot?.primary?.percentUsed == 5)
+    }
 }
 
 private func rollout(_ lines: [String]) -> Data {

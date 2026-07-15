@@ -12,8 +12,8 @@ public enum CodexQuotaExplanationUnavailableReason: String, Codable, Equatable, 
 
     public var displayText: String {
         switch self {
-        case .insufficientObservations: "Collecting two measured reports from this exact quota window."
-        case .incompatibleQuotaWindow: "Measured reports cross a quota reset or exact window boundary."
+        case .insufficientObservations: "Collecting two measured reports from this Quota window and Exact boundary."
+        case .incompatibleQuotaWindow: "Measured reports cross a quota reset or Exact boundary."
         case .incompatibleTimestamps: "Measured report times cannot be compared safely."
         case .counterDecreased: "Measured local quota usage decreased; this interval cannot be explained."
         case .expiredQuotaWindow: "The measured quota window has reset or expired."

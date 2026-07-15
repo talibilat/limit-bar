@@ -27,7 +27,7 @@ No universal denominator, anomaly method, threshold, baseline duration, or minim
 ## Scope
 
 - Define a deterministic baseline-construction contract for observations that are compatible by provider product, quota-window kind, reported unit, source interpretation, and other evidence dimensions proven necessary by fixtures.
-- Keep observations from different exact quota windows separate unless the selected baseline method explicitly compares equivalent positions or intervals across completed compatible windows.
+- Keep observations from different Quota windows or Exact boundaries separate unless the selected baseline method explicitly compares equivalent positions or intervals across completed compatible windows.
 - Exclude evidence across a provider-reported reset when that evidence cannot be normalized into comparable periods without inventing a boundary.
 - Treat a missing provider-reported reset boundary as missing evidence when an exact boundary is required for the comparison.
 - Define the current comparison period and trailing baseline period with exact timestamps and a documented inclusion rule.

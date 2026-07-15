@@ -133,7 +133,7 @@ struct ForensicInvestigationSnapshot: Equatable {
 enum ForensicInvestigationPresentation {
     static func forecast(_ state: QuotaInsightState?) -> InvestigationFindingPresentation {
         guard let state else {
-            return InvestigationFindingPresentation(status: "Unavailable", summary: "Forecast unavailable", details: "No forecast finding was published for this exact quota window.")
+            return InvestigationFindingPresentation(status: "Unavailable", summary: "Forecast unavailable", details: "No forecast finding was published for this Quota window and Exact boundary.")
         }
         switch state {
         case let .qualified(value):
@@ -156,7 +156,7 @@ enum ForensicInvestigationPresentation {
 
     static func anomaly(_ state: QuotaAnomalyState?) -> InvestigationFindingPresentation {
         guard let state else {
-            return InvestigationFindingPresentation(status: "Unavailable", summary: "Anomaly analysis unavailable", details: "No anomaly result was published for this exact quota window.")
+            return InvestigationFindingPresentation(status: "Unavailable", summary: "Anomaly analysis unavailable", details: "No anomaly result was published for this Quota window and Exact boundary.")
         }
         switch state {
         case let .finding(value):
@@ -429,7 +429,7 @@ enum ForensicInvestigationAssembler {
             version: "Explanation method \(value?.methodVersion ?? ClaudeQuotaExplanationEngine.methodVersion); source adapter \(value?.sourceAdapterVersion ?? ClaudeCodeOTLPEvidenceAdapter.adapterVersion); source/client version \(value?.sourceVersion ?? "unavailable - not captured").",
             limitations: "Limitations: \(limitations.isEmpty ? "none recorded" : limitations). Exact source traces: \(value?.observationIdentityCount ?? 0) Reported observations and \(value?.evidenceIdentityCount ?? 0) Measured evidence items; observation span \(value.map { ForensicInvestigationPresentation.duration($0.observationSpan) } ?? "unavailable"); evidence age \(value.map { ForensicInvestigationPresentation.duration($0.evidenceAge) } ?? "unavailable").",
             traces: explanationTraces(observations: value?.observationIdentities ?? [], evidence: value?.evidenceIdentities ?? []),
-            freshness: value.map { "Source evidence age \(ForensicInvestigationPresentation.duration($0.evidenceAge)); \($0.lifecycle.rawValue) exact window." } ?? "Source freshness unavailable.",
+            freshness: value.map { "Source evidence age \(ForensicInvestigationPresentation.duration($0.evidenceAge)); \($0.lifecycle.rawValue) Quota window with an Exact boundary." } ?? "Source freshness unavailable.",
             isGap: value == nil || value.map { if case .unavailable = $0.attribution { true } else { false } } == true,
             isObservedZero: observedZero
         )

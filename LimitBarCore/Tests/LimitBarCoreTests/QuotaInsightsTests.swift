@@ -166,7 +166,7 @@ struct QuotaInsightsTests {
         #expect(try store.observations(for: decomposed, now: Date(timeIntervalSince1970: 0)).map(\.stableIdentity) == [first.stableIdentity])
     }
 
-    @Test("unavailable analytics is versioned, traceable, and isolates exact quota windows")
+    @Test("unavailable analytics is versioned, traceable, and isolates Quota windows and Exact boundaries")
     func unavailableTraceAndWindowIsolation() throws {
         let firstWindow = try window(reset: base.addingTimeInterval(4 * 3_600))
         let secondWindow = try window(reset: base.addingTimeInterval(5 * 3_600))
