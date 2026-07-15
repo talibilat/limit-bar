@@ -38,7 +38,7 @@ public enum MigrationFixtureValidator {
     }
 
     private static func validate(_ fixture: Fixture, in directory: URL) throws {
-        guard ["usage-metrics", "quota-observations", "provider-refresh-history"].contains(fixture.store),
+        guard ["usage-metrics", "quota-observations", "provider-refresh-history", "codex-explanations"].contains(fixture.store),
               fixture.origin == "synthetic" else {
             throw ValidationError.invalidManifest
         }
@@ -99,6 +99,7 @@ public enum MigrationFixtureValidator {
         case "usage-metrics": try SQLiteUsageMetricStore(path: path)
         case "quota-observations": try SQLiteQuotaObservationStore(path: path)
         case "provider-refresh-history": try SQLiteProviderRefreshHistoryStore(path: path)
+        case "codex-explanations": try SQLiteCodexExplanationStore(path: path)
         default: throw ValidationError.invalidManifest
         }
     }
@@ -108,6 +109,7 @@ public enum MigrationFixtureValidator {
         case "usage-metrics": "usage_metrics"
         case "quota-observations": "quota_observations"
         case "provider-refresh-history": "provider_refresh_history"
+        case "codex-explanations": "codex_explanation_findings"
         default: throw ValidationError.invalidManifest
         }
         return try withDatabase(at: path) { database in
@@ -139,6 +141,9 @@ public enum MigrationFixtureValidator {
         case "provider-refresh-history":
             expectedTables = ["provider_refresh_history", "provider_refresh_windows"]
             expectedIndexes = ["provider_refresh_history_product_started": ["product", "started_at"]]
+        case "codex-explanations":
+            expectedTables = ["codex_explanation_findings"]
+            expectedIndexes = ["codex_explanation_findings_recorded": ["recorded_at"]]
         default:
             throw ValidationError.invalidManifest
         }
@@ -180,6 +185,7 @@ public enum MigrationFixtureValidator {
         case "usage-metrics": try usageRecordDigest(in: database)
         case "quota-observations": try quotaObservationRecordDigest(in: database)
         case "provider-refresh-history": try providerRefreshHistoryRecordDigest(in: database)
+        case "codex-explanations": try codexExplanationRecordDigest(in: database)
         default: throw ValidationError.invalidManifest
         }
     }
@@ -244,6 +250,22 @@ public enum MigrationFixtureValidator {
             """
             SELECT entry_id, ordinal, window_kind, window_start, window_end, calendar_basis, aggregation_version
             FROM provider_refresh_windows ORDER BY entry_id, ordinal;
+            """,
+            in: database,
+            to: &data
+        )
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func codexExplanationRecordDigest(in database: OpaquePointer?) throws -> String {
+        var data = Data("codex_explanation_findings".utf8)
+        try appendRows(
+            """
+            SELECT id, recorded_at, status, reason, adapter_version, interval_start, interval_end,
+                   quota_reset_boundary, coverage_start, coverage_end, quota_movement_percent, input_tokens, cached_input_tokens,
+                   output_tokens, reasoning_output_tokens, session_count, evidence_count, observation_count,
+                   barrier_categories
+            FROM codex_explanation_findings ORDER BY id;
             """,
             in: database,
             to: &data

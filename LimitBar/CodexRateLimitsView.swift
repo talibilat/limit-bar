@@ -7,6 +7,7 @@ struct CodexRateLimitsView: View {
     let pricingTable: PricingTable
     let insights: [QuotaWindowIdentity: QuotaInsightState]
     let insightsStorageAvailable: Bool
+    let explanation: CodexQuotaExplanationState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -19,6 +20,20 @@ struct CodexRateLimitsView: View {
             } else {
                 individualPlanSection(snapshot)
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Latest measured interval")
+                    .font(.caption.weight(.semibold))
+                Text(explanation.displayText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("codex-quota-explanation")
+                Text("Method: \(CodexQuotaExplanationEngine.methodVersion); adapter: \(CodexRolloutEvidenceAdapter.adapterVersion). Local evidence cannot allocate provider-reported percentage movement.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             Text("As of \(snapshot.reportedAt.formatted(date: .omitted, time: .shortened))")
                 .font(.caption)
@@ -93,7 +108,8 @@ private struct CreditsUsageRowView: View {
         metrics: [],
         pricingTable: .empty,
         insights: [:],
-        insightsStorageAvailable: true
+        insightsStorageAvailable: true,
+        explanation: .unavailable(.insufficientObservations)
     )
         .padding(20)
         .frame(width: 440, height: 300)

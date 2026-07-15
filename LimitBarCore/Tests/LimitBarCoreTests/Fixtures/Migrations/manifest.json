@@ -84,6 +84,34 @@
         "rowCount": 2,
         "recordSHA256": "2b528da9dc998972189c993d11104b7867230a0df39c1d9ee5fe724984517248"
       }
+    },
+    {
+      "id": "codex-explanations-pre-release-v1",
+      "store": "codex-explanations",
+      "logicalSchema": "codex-explanation-findings",
+      "sqliteUserVersion": 1,
+      "releaseRange": "source builds before the first public release",
+      "origin": "synthetic",
+      "file": "codex-explanations-pre-release-v1.sql",
+      "expected": {
+        "resultUserVersion": 1,
+        "rowCount": 1,
+        "recordSHA256": "37c3e386e87ea3b9f735758d5c042556efb877cd356fff2671d2299149874281"
+      }
+    },
+    {
+      "id": "codex-explanations-first-release-v1",
+      "store": "codex-explanations",
+      "logicalSchema": "codex-explanation-findings",
+      "sqliteUserVersion": 1,
+      "releaseRange": "first public release baseline",
+      "origin": "synthetic",
+      "file": "codex-explanations-first-release-v1.sql",
+      "expected": {
+        "resultUserVersion": 1,
+        "rowCount": 1,
+        "recordSHA256": "5008bd74cb522672db9b9ebee45f9fd879e237197bb4b7a7d4daa8d44dd488a0"
+      }
     }
   ]
 }

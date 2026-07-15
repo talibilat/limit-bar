@@ -25,7 +25,8 @@ struct RateLimitView: View {
                         metrics: state.local.metrics,
                         pricingTable: pricingTable,
                         insights: state.quotaInsights,
-                        insightsStorageAvailable: state.quotaInsightsStorageAvailable
+                        insightsStorageAvailable: state.quotaInsightsStorageAvailable,
+                        explanation: state.local.codexExplanation
                     )
                 }
 

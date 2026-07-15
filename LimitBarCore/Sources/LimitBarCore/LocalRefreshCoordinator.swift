@@ -20,14 +20,38 @@ public struct LocalUsageRefresh: Equatable, Sendable {
 
 public struct LocalRefreshDependencies: Sendable {
     public let refreshUsage: @Sendable (Date, Calendar) async throws -> LocalUsageRefresh
-    public let scanCodex: @Sendable (Date) async throws -> CodexRateLimitSnapshot?
+    public let scanCodex: @Sendable (Date) async throws -> CodexSessionScanPublication?
+    public let loadRetainedCodexExplanation: @Sendable (Date) async -> CodexQuotaExplanationState?
 
     public init(
         refreshUsage: @escaping @Sendable (Date, Calendar) async throws -> LocalUsageRefresh,
         scanCodex: @escaping @Sendable (Date) async throws -> CodexRateLimitSnapshot?
     ) {
         self.refreshUsage = refreshUsage
-        self.scanCodex = scanCodex
+        loadRetainedCodexExplanation = { _ in nil }
+        self.scanCodex = { now in
+            let snapshot = try await scanCodex(now)
+            return snapshot.map {
+                CodexSessionScanPublication(
+                    snapshot: $0,
+                    explanation: .unavailable(.insufficientObservations),
+                    evidence: [],
+                    barriers: [],
+                    coverageStart: nil,
+                    coverageEnd: nil
+                )
+            }
+        }
+    }
+
+    public init(
+        refreshUsage: @escaping @Sendable (Date, Calendar) async throws -> LocalUsageRefresh,
+        scanCodexPublication: @escaping @Sendable (Date) async throws -> CodexSessionScanPublication?,
+        loadRetainedCodexExplanation: @escaping @Sendable (Date) async -> CodexQuotaExplanationState? = { _ in nil }
+    ) {
+        self.refreshUsage = refreshUsage
+        scanCodex = scanCodexPublication
+        self.loadRetainedCodexExplanation = loadRetainedCodexExplanation
     }
 }
 
@@ -37,6 +61,11 @@ public protocol LocalUsageRefreshing: Sendable {
 
 public protocol LocalCodexScanning: Sendable {
     func scan(now: Date) async throws -> CodexRateLimitSnapshot?
+}
+
+public protocol LocalCodexEvidenceScanning: Sendable {
+    func scanPublication(now: Date) async throws -> CodexSessionScanPublication?
+    func retainedExplanation(now: Date) async -> CodexQuotaExplanationState?
 }
 
 public extension LocalRefreshDependencies {
@@ -49,21 +78,50 @@ public extension LocalRefreshDependencies {
             scanCodex: { now in try await codex.scan(now: now) }
         )
     }
+
+    static func live(
+        usage: any LocalUsageRefreshing,
+        codexEvidence: any LocalCodexEvidenceScanning
+    ) -> LocalRefreshDependencies {
+        LocalRefreshDependencies(
+            refreshUsage: { now, calendar in try await usage.refresh(now: now, calendar: calendar) },
+            scanCodexPublication: { now in try await codexEvidence.scanPublication(now: now) },
+            loadRetainedCodexExplanation: { now in await codexEvidence.retainedExplanation(now: now) }
+        )
+    }
 }
 
-public struct CodexSessionScanner: LocalCodexScanning {
+public struct CodexSessionScanner: LocalCodexScanning, LocalCodexEvidenceScanning {
     private let sessionsDirectory: URL
+    private let identityKey: Data
+    private let explanationStore: SQLiteCodexExplanationStore?
 
-    public init(sessionsDirectory: URL) {
+    public init(
+        sessionsDirectory: URL,
+        identityKey: Data = Data("LimitBar-Codex-local-identity-v1".utf8),
+        explanationStore: SQLiteCodexExplanationStore? = nil
+    ) {
         self.sessionsDirectory = sessionsDirectory
+        self.identityKey = identityKey
+        self.explanationStore = explanationStore
     }
 
     public func scan(now: Date) throws -> CodexRateLimitSnapshot? {
+        try scanPublication(now: now)?.snapshot
+    }
+
+    public func scanPublication(now: Date) throws -> CodexSessionScanPublication? {
         do {
-            return try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: sessionsDirectory, now: now)
+            let publication = try CodexSessionEvidenceReader.scan(sessionsDirectory: sessionsDirectory, now: now, identityKey: identityKey)
+            try? explanationStore?.record(publication.explanation, now: now)
+            return publication
         } catch CodexRateLimitFailure.notFound {
             return nil
         }
+    }
+
+    public func retainedExplanation(now: Date) -> CodexQuotaExplanationState? {
+        try? explanationStore?.latest(now: now)
     }
 }
 
@@ -87,6 +145,8 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
     public let sequence: UInt64
     public let usage: LocalUsageRefresh?
     public let codex: CodexRateLimitSnapshot?
+    public let codexExplanation: CodexQuotaExplanationState
+    public let codexExplanationRetained: Bool
     public let refreshedAt: Date
     public let triggeredAt: ContinuousClock.Instant
     public let usageRefreshed: Bool
@@ -96,6 +156,8 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
         sequence: UInt64,
         usage: LocalUsageRefresh?,
         codex: CodexRateLimitSnapshot?,
+        codexExplanation: CodexQuotaExplanationState = .unavailable(.insufficientObservations),
+        codexExplanationRetained: Bool = false,
         refreshedAt: Date,
         triggeredAt: ContinuousClock.Instant = .now,
         usageRefreshed: Bool = true,
@@ -104,6 +166,8 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
         self.sequence = sequence
         self.usage = usage
         self.codex = codex
+        self.codexExplanation = codexExplanation
+        self.codexExplanationRetained = codexExplanationRetained
         self.refreshedAt = refreshedAt
         self.triggeredAt = triggeredAt
         self.usageRefreshed = usageRefreshed
@@ -121,6 +185,8 @@ public final class LimitBarLocalStateProjection {
     public private(set) var customImportFailures = 0
     public private(set) var customRejectedLines = 0
     public private(set) var codexSnapshot: CodexRateLimitSnapshot?
+    public private(set) var codexExplanation: CodexQuotaExplanationState = .unavailable(.insufficientObservations)
+    public private(set) var codexExplanationRetained = false
     public private(set) var history = HistoricalUsageSnapshot.loading
 
     public init() {}
@@ -136,6 +202,18 @@ public final class LimitBarLocalStateProjection {
             status = AppStatus.from(menuBarStatus: MenuBarStatus.from(metrics: metrics))
         }
         codexSnapshot = refresh.codex
+        codexExplanation = refresh.codexExplanation
+        codexExplanationRetained = refresh.codexExplanationRetained
+    }
+
+    public func restoreCodexExplanation(_ state: CodexQuotaExplanationState?) {
+        codexExplanation = state ?? .unavailable(.insufficientObservations)
+        codexExplanationRetained = state != nil
+    }
+
+    public func clearCodexExplanation() {
+        codexExplanation = .unavailable(.insufficientObservations)
+        codexExplanationRetained = false
     }
 
     public func clearHistory() {
@@ -174,7 +252,7 @@ public actor LocalRefreshCoordinator {
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
     private var lastUsage: LocalUsageRefresh?
-    private var lastCodex: CodexRateLimitSnapshot?
+    private var lastCodex: CodexSessionScanPublication?
 
     public init(
         dependencies: LocalRefreshDependencies,
@@ -303,6 +381,7 @@ public actor LocalRefreshCoordinator {
 
         let resolvedUsage = await usageResult
         let resolvedCodex = await codexResult
+        let retainedCodexExplanation = await dependencies.loadRetainedCodexExplanation(refreshDate)
         if case let .success(usage) = resolvedUsage {
             guard refreshGeneration == generation, !Task.isCancelled else { return }
             lastUsage = usage
@@ -318,12 +397,37 @@ public actor LocalRefreshCoordinator {
         continuation.yield(LocalRefreshSnapshot(
             sequence: sequence,
             usage: lastUsage,
-            codex: lastCodex,
+            codex: lastCodex?.snapshot,
+            codexExplanation: codexExplanation(
+                resolvedCodex: resolvedCodex,
+                retained: retainedCodexExplanation
+            ),
+            codexExplanationRetained: codexExplanationIsRetained(
+                resolvedCodex: resolvedCodex,
+                retained: retainedCodexExplanation
+            ),
             refreshedAt: refreshDate,
             triggeredAt: triggeredAt,
             usageRefreshed: resolvedUsage.isSuccess,
             codexRefreshed: resolvedCodex.isSuccess
         ))
+    }
+
+    private func codexExplanation(
+        resolvedCodex: Result<CodexSessionScanPublication?, any Error>,
+        retained: CodexQuotaExplanationState?
+    ) -> CodexQuotaExplanationState {
+        if resolvedCodex.isSuccess {
+            return lastCodex?.explanation ?? retained ?? .unavailable(.gap)
+        }
+        return retained ?? .unavailable(.unsupportedEvidence)
+    }
+
+    private func codexExplanationIsRetained(
+        resolvedCodex: Result<CodexSessionScanPublication?, any Error>,
+        retained: CodexQuotaExplanationState?
+    ) -> Bool {
+        retained != nil && (resolvedCodex.isSuccess ? lastCodex == nil : true)
     }
 }
 

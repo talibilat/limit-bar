@@ -1,14 +1,29 @@
 import Foundation
+import CryptoKit
 
 public struct CodexRateLimitWindow: Equatable, Sendable {
+    public let limitID: String
     public let percentUsed: Double
     public let windowMinutes: Int
     public let resetsAt: Date?
 
-    public init(percentUsed: Double, windowMinutes: Int, resetsAt: Date?) {
+    public init(limitID: String = "codex", percentUsed: Double, windowMinutes: Int, resetsAt: Date?) {
+        self.limitID = Self.normalizedLimitID(limitID)
         self.percentUsed = percentUsed
         self.windowMinutes = windowMinutes
         self.resetsAt = resetsAt
+    }
+
+    public static func normalizedLimitID(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping ?? ""
+        guard !trimmed.isEmpty else { return "codex" }
+        let scalars = Array(trimmed.unicodeScalars)
+        let isSafe = scalars.allSatisfy {
+            CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
+        }
+        if isSafe, trimmed.utf8.count <= 32 { return trimmed.lowercased() }
+        let digest = SHA256.hash(data: Data(trimmed.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "id_\(digest)"
     }
 
     public var displayLabel: String {
@@ -96,6 +111,7 @@ public enum CodexRateLimitMapper {
             }
 
             struct RawRateLimits: Decodable {
+                let limit_id: String?
                 let primary: RawWindow?
                 let secondary: RawWindow?
                 let credits: RawCredits?
@@ -122,8 +138,8 @@ public enum CodexRateLimitMapper {
 
         let snapshot = CodexRateLimitSnapshot(
             planType: rateLimits.plan_type,
-            primary: window(from: rateLimits.primary),
-            secondary: window(from: rateLimits.secondary),
+            primary: window(from: rateLimits.primary, limitID: rateLimits.limit_id),
+            secondary: window(from: rateLimits.secondary, limitID: rateLimits.limit_id),
             credits: credits(from: rateLimits.credits),
             reportedAt: reportedAt
         )
@@ -133,17 +149,22 @@ public enum CodexRateLimitMapper {
         return snapshot
     }
 
-    private static func window(from raw: RawEntry.RawPayload.RawWindow?) -> CodexRateLimitWindow? {
+    private static func window(from raw: RawEntry.RawPayload.RawWindow?, limitID: String?) -> CodexRateLimitWindow? {
         guard let raw, let percent = raw.used_percent, let minutes = raw.window_minutes,
               percent.isFinite, (0...100).contains(percent),
               (1...525_600).contains(minutes) else {
             return nil
         }
         return CodexRateLimitWindow(
+            limitID: normalizedLimitID(limitID),
             percentUsed: percent,
             windowMinutes: minutes,
             resetsAt: raw.resets_at.map { Date(timeIntervalSince1970: $0) }
         )
+    }
+
+    private static func normalizedLimitID(_ value: String?) -> String {
+        CodexRateLimitWindow.normalizedLimitID(value)
     }
 
     private static func credits(from raw: RawEntry.RawPayload.RawCredits?) -> CodexCredits? {

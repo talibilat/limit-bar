@@ -159,9 +159,17 @@ public extension QuotaWindowIdentity {
             }
         case .codex:
             let components = identifier.split(separator: ":", omittingEmptySubsequences: false)
-            guard components.count == 2,
-                  components[0] == "primary" || components[0] == "secondary",
-                  let minutes = Int(components[1]), String(minutes) == components[1] else { return .other }
+            let windowComponents: ArraySlice<Substring>
+            if components.count == 2 {
+                windowComponents = components[0...1]
+            } else if components.count == 3, !components[0].isEmpty {
+                windowComponents = components[1...2]
+            } else {
+                return .other
+            }
+            guard windowComponents.first == "primary" || windowComponents.first == "secondary",
+                  let minutesText = windowComponents.last,
+                  let minutes = Int(minutesText), String(minutes) == minutesText else { return .other }
             return switch minutes {
             case 300: .session
             case 10_080: .weekly
