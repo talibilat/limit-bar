@@ -137,6 +137,18 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "codex-rollout-observed-0.144.4")).firstMatch.exists)
     }
 
+    func testClaudeExplanationShowsMeasuredMovementWhenAttributionIsUnavailable() {
+        launch(screen: "claude-explanation")
+
+        let explanation = app.staticTexts["claude-quota-explanation"]
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5))
+        let text = (explanation.value as? String) ?? explanation.label
+        XCTAssertTrue(text.contains("Claude Code measured quota movement: +4%"))
+        XCTAssertTrue(text.contains("Local attribution unavailable"))
+        XCTAssertTrue(text.contains("Movement remains unattributed"))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "claude-code-quota-explanation-v1")).firstMatch.exists)
+    }
+
     func testPlanningSurfaceAcceptsBoundedInputAndExplainsUnavailableHistory() {
         launch(screen: "popover")
 

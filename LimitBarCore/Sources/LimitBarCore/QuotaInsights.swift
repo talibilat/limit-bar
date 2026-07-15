@@ -913,6 +913,20 @@ public actor QuotaInsightsService {
         try reevaluateAnomalies(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
     }
 
+    public func claudeExplanation(now: Date) throws -> ClaudeQuotaExplanationState {
+        let observations = try store.identities(for: .claudeCode, now: now).flatMap {
+            try store.observations(for: $0, now: now)
+        }
+        return ClaudeQuotaExplanationEngine.explain(
+            observations: observations,
+            evidence: [],
+            expectedAccountIdentity: nil,
+            sourceConfigured: false,
+            now: now,
+            maximumObservationAge: QuotaObservationAdapter.claudeMaximumAge
+        )
+    }
+
     public func reevaluateCodexAnomalies(now: Date) throws -> [QuotaWindowIdentity: QuotaAnomalyState] {
         try reevaluateAnomalies(product: .codex, now: now, maximumAge: QuotaObservationAdapter.codexMaximumAge)
     }

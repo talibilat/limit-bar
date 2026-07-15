@@ -23,6 +23,7 @@ Click it for two tabs:
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
 - **Quota insights** retain privacy-safe measured Claude Code and Codex percentages locally and calculate qualified recent burn and exhaustion ranges without project, agent, model, or token attribution.
 - **Codex quota explanations** correlate the latest compatible measured Codex quota interval with validated local rollout token transitions, while keeping quota movement unattributed.
+- **Claude Code quota explanations** show deterministic movement between compatible exact provider observations and explicitly report local attribution as unavailable until supported account-bound Claude Code telemetry is supplied.
 - **Planned workload assessment** accepts bounded coding-agent operation counts and fails closed until a supported adapter supplies enough comparable measured completed runs.
 - **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
@@ -168,6 +169,25 @@ Deleting Codex explanations does not alter current usage, quota observations, se
 Diagnostic export includes only coarse Codex explanation status, coverage category, counts, barrier categories, adapter version, and unavailable reason.
 It does not export exact session IDs, digests, exact window IDs, exact reset times, token values, paths, names, or raw payloads.
 
+## Claude Code Quota Explanations
+
+LimitBar shows the latest deterministic percentage movement between compatible measured Claude Code observations in one exact provider-reported quota window.
+Movement remains visible and unattributed when no qualifying local activity exists.
+Flat movement does not claim that no Claude Code work occurred, and counter decreases, resets, stale observations, and incompatible windows remain explicit unavailable states.
+
+First-party Claude Code documentation defines the opt-in `claude_code.token.usage` OpenTelemetry metric as an explicit structured Claude Code activity source.
+The strict verification adapter supports OTLP HTTP/JSON from exactly Claude Code `2.1.207` when version, account UUID, and session ID metric attributes are enabled.
+It accepts only documented token type, model, timestamp, token count, version, account, session, service, and metric fields.
+Generic Anthropic API usage is never accepted as Claude Code evidence.
+
+The production application does not currently run an OTLP receiver or configure Claude Code telemetry.
+Its attribution outcome therefore remains unavailable, rather than inferred from Anthropic API usage or private Claude Code session content.
+The adapter and explanation engine provide a strict verification seam for user-owned telemetry, but synthetic fixtures are not proof of real-account behavior.
+
+Normalized findings are retained locally in `claude-explanations.sqlite` for at most 30 days and 100 records and can be deleted independently in Settings.
+Raw OTLP payloads, account and session UUIDs, prompts, code, responses, tool details, terminal output, credentials, private paths, and account labels are never persisted.
+See [`docs/CLAUDE_CODE_OTLP_EVIDENCE.md`](docs/CLAUDE_CODE_OTLP_EVIDENCE.md) for source ownership, supported fields and version, authentication, privacy omissions, confidence, verification, and manual limitations.
+
 ### Claude Authorization
 
 Opening the Claude rate-limit view and pressing **Check Again** or **Refresh** performs a passive Keychain read.
@@ -227,6 +247,7 @@ The default local paths are:
 - `~/Library/Application Support/LimitBar/quota-observations.sqlite` for bounded measured quota observations.
 - `~/Library/Application Support/LimitBar/provider-refresh-history.sqlite` for bounded privacy-safe provider refresh outcomes and affected windows.
 - `~/Library/Application Support/LimitBar/codex-explanations.sqlite` for bounded privacy-safe Codex explanation findings.
+- `~/Library/Application Support/LimitBar/claude-explanations.sqlite` for bounded privacy-safe Claude Code explanation findings.
 
 The app is intentionally not App Sandbox constrained.
 This is a deliberate file boundary because Codex data is outside the app container and custom sources may point to an arbitrary user-selected path.

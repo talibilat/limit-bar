@@ -32,6 +32,8 @@ struct LimitBarSettingsView: View {
     @State private var quotaDeletionMessage: String?
     @State private var showsDeleteCodexExplanationsConfirmation = false
     @State private var codexExplanationDeletionMessage: String?
+    @State private var showsDeleteClaudeExplanationsConfirmation = false
+    @State private var claudeExplanationDeletionMessage: String?
     @State private var showsDeleteAttributionConfirmation = false
     @State private var attributionDeletionMessage: String?
 
@@ -155,6 +157,24 @@ struct LimitBarSettingsView: View {
                     Text(codexExplanationDeletionMessage)
                         .font(.caption)
                         .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Claude Code Explanations") {
+                Text("Claude Code explanation findings retain only normalized measured movement, provenance, method metadata, and privacy-safe Observed Local Breakdown totals. Raw OTLP payloads, account labels, prompts, code, responses, terminal output, credentials, and paths are never retained.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting these findings does not alter quota observations, current provider reports, settings, credentials, alert rules, or notification delivery history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Claude Code Explanations", role: .destructive) {
+                    showsDeleteClaudeExplanationsConfirmation = true
+                }
+                .accessibilityIdentifier("delete-claude-explanations")
+                if let claudeExplanationDeletionMessage {
+                    Text(claudeExplanationDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(claudeExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
                 }
             }
 
@@ -342,6 +362,22 @@ struct LimitBarSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes retained Codex explanation findings only. It does not remove current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
+        }
+        .confirmationDialog(
+            "Delete retained Claude Code explanations?",
+            isPresented: $showsDeleteClaudeExplanationsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Claude Code Explanations", role: .destructive) {
+                Task {
+                    claudeExplanationDeletionMessage = await state.deleteClaudeExplanations()
+                        ? "Claude Code explanation findings deleted. Quota observations, reports, settings, credentials, alert rules, and delivery history were not changed."
+                        : "Could not delete Claude Code explanation findings."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained Claude Code explanation findings only. It does not remove quota observations, current reports, settings, credentials, alert rules, or notification delivery history.")
         }
         .confirmationDialog(
             "Delete retained project and agent attribution?",

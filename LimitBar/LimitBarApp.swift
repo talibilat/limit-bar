@@ -7,7 +7,14 @@ protocol QuotaInsightsServing: Sendable {
     func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) async throws -> QuotaFindingAnalysisSnapshot
     func reevaluateClaudeAnalysis(now: Date) async throws -> QuotaFindingAnalysisSnapshot
     func reevaluateCodexAnalysis(now: Date) async throws -> QuotaFindingAnalysisSnapshot
+    func claudeExplanation(now: Date) async throws -> ClaudeQuotaExplanationState
     func deleteAll() async throws
+}
+
+extension QuotaInsightsServing {
+    func claudeExplanation(now: Date) async throws -> ClaudeQuotaExplanationState {
+        .unavailable(.insufficientObservations)
+    }
 }
 
 protocol AttributionEvidenceDeleting: Sendable {
@@ -71,10 +78,12 @@ final class LimitBarState {
     var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] { quotaAnalysis.forecasts }
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
     private(set) var quotaInsightsStorageAvailable: Bool
+    private(set) var claudeExplanation: ClaudeQuotaExplanationState = .unavailable(.insufficientObservations)
 
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
+    private let claudeExplanationStore: SQLiteClaudeExplanationStore?
     private let attributionEvidenceStore: any AttributionEvidenceDeleting
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
@@ -88,7 +97,9 @@ final class LimitBarState {
         let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
         let codexExplanationStore = try? SQLiteCodexExplanationStore.applicationSupportStore()
+        let claudeExplanationStore = try? SQLiteClaudeExplanationStore.applicationSupportStore()
         self.codexExplanationStore = codexExplanationStore
+        self.claudeExplanationStore = claudeExplanationStore
         attributionEvidenceStore = UsageDatabase.shared
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
@@ -107,6 +118,7 @@ final class LimitBarState {
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
+        claudeExplanation = (try? claudeExplanationStore?.latest()) ?? .unavailable(.insufficientObservations)
     }
 
     init(
@@ -115,6 +127,7 @@ final class LimitBarState {
         coordinator: LocalRefreshCoordinator,
         quotaInsightsService: (any QuotaInsightsServing)? = nil,
         codexExplanationStore: SQLiteCodexExplanationStore? = nil,
+        claudeExplanationStore: SQLiteClaudeExplanationStore? = nil,
         attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared
     ) {
         self.providerSettings = providerSettings
@@ -122,6 +135,7 @@ final class LimitBarState {
         self.coordinator = coordinator
         self.quotaInsightsService = quotaInsightsService
         self.codexExplanationStore = codexExplanationStore
+        self.claudeExplanationStore = claudeExplanationStore
         self.attributionEvidenceStore = attributionEvidenceStore
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
@@ -129,6 +143,7 @@ final class LimitBarState {
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
+        claudeExplanation = (try? claudeExplanationStore?.latest()) ?? .unavailable(.insufficientObservations)
     }
 
     func start() {
@@ -203,6 +218,17 @@ final class LimitBarState {
         }
     }
 
+    func deleteClaudeExplanations() async -> Bool {
+        guard let claudeExplanationStore else { return false }
+        do {
+            try claudeExplanationStore.deleteAll()
+            claudeExplanation = .unavailable(.insufficientObservations)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func deleteProjectAgentAttribution() async -> Bool {
         do {
             try await attributionEvidenceStore.deleteAllAttributionEvidence(now: Date())
@@ -265,6 +291,9 @@ final class LimitBarState {
         do {
             let analysis = try await quotaInsightsService.recordClaudeAnalysis(snapshot, now: now)
             publish(analysis, for: .claudeCode)
+            let explanation = try await quotaInsightsService.claudeExplanation(now: now)
+            claudeExplanation = explanation
+            try? claudeExplanationStore?.record(explanation, now: now)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
@@ -276,6 +305,7 @@ final class LimitBarState {
         do {
             let analysis = try await quotaInsightsService.reevaluateClaudeAnalysis(now: now)
             publish(analysis, for: .claudeCode)
+            claudeExplanation = try await quotaInsightsService.claudeExplanation(now: now)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false

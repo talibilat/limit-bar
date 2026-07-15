@@ -144,11 +144,65 @@ private struct LimitBarUITestHostView: View {
             QuotaInsightUITestView()
         case "codex-explanation":
             CodexExplanationUITestView()
+        case "claude-explanation":
+            ClaudeExplanationUITestView()
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
     }
+}
+
+private struct ClaudeExplanationUITestView: View {
+    private let reset = Date(timeIntervalSince1970: 2_000_000_000)
+
+    var body: some View {
+        ClaudeRateLimitsView(
+            model: ClaudeRateLimitsModel(
+                credentials: ClaudeExplanationCredentials(),
+                client: AppUITestClaudeRateLimitsClient(),
+                state: .loaded(ClaudeRateLimitSnapshot(
+                    limits: [ClaudeRateLimit(kind: "session", group: .session, percentUsed: 14, severity: .normal, resetsAt: reset, scopeDisplayName: nil, isActive: true)],
+                    fetchedAt: Date(timeIntervalSince1970: 1_900_000_100)
+                ), subscription: "max")
+            ),
+            insights: [:],
+            anomalies: [:],
+            insightsStorageAvailable: true,
+            explanation: .movement(ClaudeQuotaExplanation(
+                providerProduct: .claudeCode,
+                intervalStart: Date(timeIntervalSince1970: 1_900_000_000),
+                intervalEnd: Date(timeIntervalSince1970: 1_900_000_100),
+                quotaResetBoundary: reset,
+                reportedQuotaMovementPercent: 4,
+                attribution: .unavailable(.sourceNotConfigured),
+                unattributed: true,
+                inferredAllocationPercent: nil,
+                observationIdentities: [],
+                observationIdentityCount: 2,
+                observationSpan: 100,
+                evidenceAge: 0,
+                methodVersion: ClaudeQuotaExplanationEngine.methodVersion,
+                sourceAdapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
+                sourceVersion: nil
+            )),
+            onActionCompleted: {}
+        )
+        .padding(20)
+        .frame(width: 620, height: 420)
+    }
+}
+
+private actor ClaudeExplanationCredentials: ClaudeCredentialProviding {
+    func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
+        .credential(ClaudeCodeOAuthCredential(
+            accessToken: "fixture",
+            expiresAt: Date(timeIntervalSince1970: 2_100_000_000),
+            subscriptionType: "max"
+        ))
+    }
+
+    func invalidate() {}
 }
 
 private struct CodexExplanationUITestView: View {

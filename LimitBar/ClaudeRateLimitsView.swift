@@ -6,6 +6,7 @@ struct ClaudeRateLimitsView: View {
     let insights: [QuotaWindowIdentity: QuotaInsightState]
     let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
     let insightsStorageAvailable: Bool
+    let explanation: ClaudeQuotaExplanationState
     let onActionCompleted: () -> Void
 
     var body: some View {
@@ -88,6 +89,25 @@ struct ClaudeRateLimitsView: View {
                 }
                 .accessibilityIdentifier("claude-loaded-state")
 
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Latest measured interval")
+                        .font(.caption.weight(.semibold))
+                    Text(explanation.displayText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("claude-quota-explanation")
+                    Text("Method: \(ClaudeQuotaExplanationEngine.methodVersion); source adapter: \(ClaudeCodeOTLPEvidenceAdapter.adapterVersion). Tokens are never converted to quota percentage.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let metadata = explanationMetadata {
+                        Text(metadata)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(10)
+                .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
                 HStack {
                     if let subscription {
                         Text("Plan: \(subscription.capitalized)")
@@ -114,6 +134,23 @@ struct ClaudeRateLimitsView: View {
         guard let identity = QuotaWindowIdentity.claudeCode(limit) else { return nil }
         return anomalies[identity]
     }
+
+    private var explanationMetadata: String? {
+        let value: ClaudeQuotaExplanation
+        switch explanation {
+        case let .movement(explanation), let .flat(explanation): value = explanation
+        case .unavailable: return nil
+        }
+        let source = value.sourceVersion.map { "source \($0)" } ?? "source not configured"
+        return "\(value.observationIdentityCount) measured observations over \(duration(value.observationSpan)); evidence age \(duration(value.evidenceAge)); \(source); source last verified \(ClaudeCodeOTLPEvidenceAdapter.lastVerified)."
+    }
+
+    private func duration(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval.rounded()))
+        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+        return "\(seconds)s"
+    }
 }
 
 enum ClaudeLoginHelp {
@@ -129,6 +166,7 @@ enum ClaudeLoginHelp {
         insights: [:],
         anomalies: [:],
         insightsStorageAvailable: true,
+        explanation: .unavailable(.insufficientObservations),
         onActionCompleted: {}
     )
         .padding(20)
