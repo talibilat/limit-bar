@@ -169,27 +169,26 @@ private struct ClaudeExplanationUITestView: View {
             insights: [:],
             anomalies: [:],
             insightsStorageAvailable: true,
-            explanation: .movement(ClaudeQuotaExplanation(
-                providerProduct: .claudeCode,
-                intervalStart: Date(timeIntervalSince1970: 1_900_000_000),
-                intervalEnd: Date(timeIntervalSince1970: 1_900_000_100),
-                quotaResetBoundary: reset,
-                reportedQuotaMovementPercent: 4,
-                attribution: .unavailable(.sourceNotConfigured),
-                unattributed: true,
-                inferredAllocationPercent: nil,
-                observationIdentities: [],
-                observationIdentityCount: 2,
-                observationSpan: 100,
-                evidenceAge: 0,
-                methodVersion: ClaudeQuotaExplanationEngine.methodVersion,
-                sourceAdapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
-                sourceVersion: nil
-            )),
+            explanationCatalog: explanationCatalog,
             onActionCompleted: {}
         )
         .padding(20)
         .frame(width: 620, height: 420)
+    }
+
+    private var explanationCatalog: ClaudeQuotaExplanationCatalog {
+        guard let identity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset) else { return .empty }
+        let interval = ClaudeQuotaExplanationInterval(id: "fixture", identity: identity, intervalStart: Date(timeIntervalSince1970: 1_900_000_000), intervalEnd: Date(timeIntervalSince1970: 1_900_000_100), lifecycle: .active)
+        let state = ClaudeQuotaExplanationState.unavailable(.quotaAccountScopeUnavailable)
+        guard let completedIdentity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: Date(timeIntervalSince1970: 1_800_000_200)) else { return .empty }
+        let completed = ClaudeQuotaExplanationInterval(id: "completed-fixture", identity: completedIdentity, intervalStart: Date(timeIntervalSince1970: 1_800_000_000), intervalEnd: Date(timeIntervalSince1970: 1_800_000_100), lifecycle: .completed)
+        return ClaudeQuotaExplanationCatalog(
+            selections: [
+                ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable]),
+                ClaudeQuotaExplanationSelection(interval: completed, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
+            ],
+            defaultSelectionID: interval.id
+        )
     }
 }
 

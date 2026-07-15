@@ -26,7 +26,7 @@ struct RateLimitView: View {
                         insights: state.quotaInsights,
                         anomalies: state.quotaAnomalies,
                         insightsStorageAvailable: state.quotaInsightsStorageAvailable,
-                        explanation: state.claudeExplanation,
+                        explanationCatalog: state.claudeExplanationCatalog,
                         onActionCompleted: state.claudeActionCompleted
                     )
                 }

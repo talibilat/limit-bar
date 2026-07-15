@@ -841,13 +841,16 @@ public final class SQLiteQuotaObservationStore {
 public struct QuotaFindingAnalysisSnapshot: Equatable, Sendable {
     public let forecasts: [QuotaWindowIdentity: QuotaInsightState]
     public let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+    public let claudeExplanations: ClaudeQuotaExplanationCatalog
 
     public init(
         forecasts: [QuotaWindowIdentity: QuotaInsightState],
-        anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+        anomalies: [QuotaWindowIdentity: QuotaAnomalyState],
+        claudeExplanations: ClaudeQuotaExplanationCatalog = .empty
     ) {
         self.forecasts = forecasts
         self.anomalies = anomalies
+        self.claudeExplanations = claudeExplanations
     }
 
     public static let empty = QuotaFindingAnalysisSnapshot(forecasts: [:], anomalies: [:])
@@ -875,7 +878,7 @@ public actor QuotaInsightsService {
         _ = try recordClaude(snapshot, now: now)
         let forecasts = try reevaluateClaude(now: now)
         let anomalies = try reevaluateClaudeAnomalies(now: now)
-        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies, claudeExplanations: try claudeExplanationCatalog(now: now))
     }
 
     public func recordCodex(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
@@ -896,7 +899,7 @@ public actor QuotaInsightsService {
     public func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot {
         let forecasts = try reevaluateClaude(now: now)
         let anomalies = try reevaluateClaudeAnomalies(now: now)
-        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies)
+        return QuotaFindingAnalysisSnapshot(forecasts: forecasts, anomalies: anomalies, claudeExplanations: try claudeExplanationCatalog(now: now))
     }
 
     public func reevaluateCodex(now: Date) throws -> [QuotaWindowIdentity: QuotaInsightState] {
@@ -913,17 +916,18 @@ public actor QuotaInsightsService {
         try reevaluateAnomalies(product: .claudeCode, now: now, maximumAge: QuotaObservationAdapter.claudeMaximumAge)
     }
 
-    public func claudeExplanation(now: Date) throws -> ClaudeQuotaExplanationState {
+    public func claudeExplanationCatalog(now: Date) throws -> ClaudeQuotaExplanationCatalog {
         let observations = try store.identities(for: .claudeCode, now: now).flatMap {
             try store.observations(for: $0, now: now)
         }
-        return ClaudeQuotaExplanationEngine.explain(
-            observations: observations,
+        return ClaudeQuotaExplanationEngine.catalog(
+            observations: observations.map {
+                ClaudeScopedQuotaObservation(observation: $0, accountIdentity: nil, unit: .percentageUsed)
+            },
             evidence: [],
-            expectedAccountIdentity: nil,
-            sourceConfigured: false,
-            now: now,
-            maximumObservationAge: QuotaObservationAdapter.claudeMaximumAge
+            source: .unavailable([.receiverNotConfigured, .accountBindingUnavailable]),
+            evidenceLimitations: [],
+            now: now
         )
     }
 

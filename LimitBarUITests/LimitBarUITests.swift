@@ -137,16 +137,16 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "codex-rollout-observed-0.144.4")).firstMatch.exists)
     }
 
-    func testClaudeExplanationShowsMeasuredMovementWhenAttributionIsUnavailable() {
+    func testClaudeExplanationOffersIntervalsAndShowsConservativeProductionBoundary() {
         launch(screen: "claude-explanation")
 
         let explanation = app.staticTexts["claude-quota-explanation"]
         XCTAssertTrue(explanation.waitForExistence(timeout: 5))
         let text = (explanation.value as? String) ?? explanation.label
-        XCTAssertTrue(text.contains("Claude Code measured quota movement: +4%"))
-        XCTAssertTrue(text.contains("Local attribution unavailable"))
-        XCTAssertTrue(text.contains("Movement remains unattributed"))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "claude-code-quota-explanation-v1")).firstMatch.exists)
+        XCTAssertTrue(text.contains("Retained quota observations have no trustworthy account binding"))
+        XCTAssertTrue(app.popUpButtons["claude-explanation-interval"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "receiver_not_configured")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "manual signed acceptance unavailable")).firstMatch.exists)
     }
 
     func testPlanningSurfaceAcceptsBoundedInputAndExplainsUnavailableHistory() {

@@ -22,7 +22,7 @@ struct ClaudeQuotaExplanationTests {
         }
         #expect(explanation.providerProduct == .claudeCode)
         #expect(explanation.reportedQuotaMovementPercent == 4)
-        #expect(explanation.attribution == .unavailable(.sourceNotConfigured))
+        #expect(explanation.attribution == .unavailable(.receiverNotConfigured))
         #expect(explanation.unattributed)
         #expect(explanation.observationIdentities.count == 2)
         #expect(explanation.methodVersion == ClaudeQuotaExplanationEngine.methodVersion)
@@ -122,7 +122,11 @@ struct ClaudeQuotaExplanationTests {
         )
         #expect(ClaudeQuotaExplanationEngine.explain(observations: [first, changed], evidence: [], expectedAccountIdentity: nil, sourceConfigured: false, now: date(250)) == .unavailable(.incompatibleQuotaWindow))
         #expect(ClaudeQuotaExplanationEngine.explain(observations: [first], evidence: [], expectedAccountIdentity: nil, sourceConfigured: false, now: date(250)) == .unavailable(.insufficientObservations))
-        #expect(ClaudeQuotaExplanationEngine.explain(observations: try observations(10, 11), evidence: [], expectedAccountIdentity: nil, sourceConfigured: false, now: date(1_000)) == .unavailable(.expiredQuotaWindow))
+        guard case let .movement(completed) = ClaudeQuotaExplanationEngine.explain(observations: try observations(10, 11), evidence: [], expectedAccountIdentity: nil, sourceConfigured: false, now: date(1_000)) else {
+            Issue.record("Expected completed historical movement")
+            return
+        }
+        #expect(completed.lifecycle == .completed)
     }
 
     @Test("local activity beside flat movement makes no zero-quota claim")

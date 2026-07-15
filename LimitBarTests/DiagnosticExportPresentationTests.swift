@@ -57,6 +57,28 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             identifier: privateQuotaIdentifier,
             resetBoundary: Date(timeIntervalSince1970: 1_700_007_200)
         )
+        let explanationInterval = ClaudeQuotaExplanationInterval(id: "RAW_PAYLOAD_SENTINEL", identity: quotaIdentity, intervalStart: Date(timeIntervalSince1970: 1_700_000_000), intervalEnd: Date(timeIntervalSince1970: 1_700_000_100), lifecycle: .active)
+        let explanation = ClaudeQuotaExplanation(
+            providerProduct: .claudeCode,
+            intervalStart: explanationInterval.intervalStart,
+            intervalEnd: explanationInterval.intervalEnd,
+            quotaResetBoundary: quotaIdentity.resetBoundary,
+            reportedQuotaMovementPercent: 1,
+            attribution: .partial(ClaudeObservedLocalBreakdown(inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, modelCounts: ["CODE_SENTINEL": 1], sessionCount: 1, evidenceCount: 1)),
+            unattributed: true,
+            inferredAllocationPercent: nil,
+            observationIdentities: [],
+            evidenceIdentities: ["CREDENTIAL_SENTINEL", "PRIVATE_PATH_SENTINEL", "ACCOUNT_LABEL_SENTINEL", "RESPONSE_SENTINEL", "TERMINAL_SENTINEL"],
+            observationSpan: 100,
+            evidenceAge: 0,
+            methodVersion: ClaudeQuotaExplanationEngine.methodVersion,
+            sourceAdapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
+            sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion
+        )
+        let explanationCatalog = ClaudeQuotaExplanationCatalog(
+            selections: [ClaudeQuotaExplanationSelection(interval: explanationInterval, state: .movement(explanation), limitations: [])],
+            defaultSelectionID: explanationInterval.id
+        )
 
         let input = try DiagnosticExportInputBuilder.make(
             generatedAt: Date(timeIntervalSince1970: 1_700_000_123),
@@ -71,7 +93,8 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             customImportFailures: 0,
             customRejectedLines: 3,
             refreshHistory: [.openAIAPI: ProviderRefreshHistorySummary(latest: history, lastFullSuccess: nil)],
-            quotaInsights: [quotaIdentity: unavailable(.insufficientObservations, identity: quotaIdentity, count: 3, span: 600)]
+            quotaInsights: [quotaIdentity: unavailable(.insufficientObservations, identity: quotaIdentity, count: 3, span: 600)],
+            claudeExplanations: explanationCatalog
         )
         let artifact = try DiagnosticExport.make(from: input)
         let preview = try artifact.preview
@@ -93,6 +116,9 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertTrue(preview.contains(#""forecastMethod" : "pairwise_positive_slope_interquartile_v2""#))
         XCTAssertTrue(preview.contains(#""qualification" : "unavailable""#))
         XCTAssertFalse(preview.contains(privateQuotaIdentifier))
+        for prohibited in ["RAW_PAYLOAD_SENTINEL", "CODE_SENTINEL", "CREDENTIAL_SENTINEL", "PRIVATE_PATH_SENTINEL", "ACCOUNT_LABEL_SENTINEL", "RESPONSE_SENTINEL", "TERMINAL_SENTINEL"] {
+            XCTAssertFalse(preview.contains(prohibited))
+        }
         XCTAssertFalse(preview.contains("resetBoundary"))
     }
 

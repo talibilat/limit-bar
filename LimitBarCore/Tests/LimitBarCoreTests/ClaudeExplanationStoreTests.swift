@@ -17,7 +17,7 @@ struct ClaudeExplanationStoreTests {
             intervalEnd: now.addingTimeInterval(60),
             quotaResetBoundary: now.addingTimeInterval(600),
             reportedQuotaMovementPercent: 2,
-            attribution: .unavailable(.sourceNotConfigured),
+            attribution: .unavailable(.receiverNotConfigured),
             unattributed: true,
             inferredAllocationPercent: nil,
             observationIdentities: [],
@@ -39,6 +39,12 @@ struct ClaudeExplanationStoreTests {
         #expect(restored.reportedQuotaMovementPercent == 2)
         #expect(restored.observationIdentityCount == 2)
         #expect(restored.observationIdentities.isEmpty)
+        guard case let .movement(aged) = try reopened.latest(now: now.addingTimeInterval(700)) else {
+            Issue.record("Expected completed retained movement")
+            return
+        }
+        #expect(aged.evidenceAge == 640)
+        #expect(aged.lifecycle == .completed)
         try reopened.deleteAll()
         #expect(try reopened.latest(now: now) == nil)
     }

@@ -17,8 +17,19 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(result.evidence.map(\.tokenCount) == [120, 30])
         #expect(result.evidence.allSatisfy { $0.model == "claude-sonnet-4-5" })
         #expect(result.evidence.allSatisfy { $0.sourceVersion == "2.1.207" })
+        #expect(result.evidence.map(\.intervalStart) == [Date(timeIntervalSince1970: 120), Date(timeIntervalSince1970: 150)])
+        #expect(result.evidence.map(\.intervalEnd) == [Date(timeIntervalSince1970: 150), Date(timeIntervalSince1970: 160)])
         #expect(result.omittedFieldCategories.contains(.contentBearing))
         #expect(result.omittedFieldCategories.contains(.accountLabel))
+    }
+
+    @Test("requires documented datapoint identity and complete delta boundaries")
+    func requiresDatapointAttributesAndBoundaries() throws {
+        let result = ClaudeCodeOTLPEvidenceAdapter.scan(data: try fixture("missing-datapoint-boundary"), identityKey: Data("key".utf8))
+
+        #expect(result.evidence.isEmpty)
+        #expect(result.limitations.contains(.missingEvidenceBoundary))
+        #expect(result.sourceStatus == .unsupportedMetric)
     }
 
     @Test("fails closed for unsupported versions and non-Claude metrics")
@@ -49,6 +60,9 @@ struct ClaudeCodeOTLPEvidenceTests {
 
         #expect(!String(decoding: encoded, as: UTF8.self).contains(sentinel))
         #expect(!String(decoding: encoded, as: UTF8.self).contains("/Users/alice"))
+        for prohibited in ["CODE_SENTINEL", "RESPONSE_SENTINEL", "TERMINAL_SENTINEL", "CREDENTIAL_SENTINEL", "RAW_PAYLOAD_SENTINEL", "ACCOUNT_LABEL_SENTINEL", "PRIVATE_PATH_SENTINEL"] {
+            #expect(!String(decoding: encoded, as: UTF8.self).contains(prohibited))
+        }
     }
 
     @Test("raw account identity and prohibited fields do not enter explanation persistence")
@@ -77,6 +91,9 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(!persisted.contains(rawAccount))
         #expect(!persisted.contains("PRIVATE_SENTINEL"))
         #expect(!persisted.contains("workspace.host_paths"))
+        for prohibited in ["CODE_SENTINEL", "RESPONSE_SENTINEL", "TERMINAL_SENTINEL", "CREDENTIAL_SENTINEL", "RAW_PAYLOAD_SENTINEL", "ACCOUNT_LABEL_SENTINEL", "PRIVATE_PATH_SENTINEL"] {
+            #expect(!persisted.contains(prohibited))
+        }
     }
 
     private func fixture(_ name: String) throws -> Data {

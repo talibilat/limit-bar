@@ -211,24 +211,7 @@ private struct StoredClaudeExplanation: Codable {
     func state(now: Date) -> ClaudeQuotaExplanationState {
         guard let value else { return .unavailable(reason ?? .insufficientObservations) }
         guard value.sourceAdapterVersion == ClaudeCodeOTLPEvidenceAdapter.adapterVersion else { return .unavailable(.incompatibleQuotaWindow) }
-        guard value.quotaResetBoundary > now else { return .unavailable(.expiredQuotaWindow) }
-        let normalized = ClaudeQuotaExplanation(
-            providerProduct: value.providerProduct,
-            intervalStart: value.intervalStart,
-            intervalEnd: value.intervalEnd,
-            quotaResetBoundary: value.quotaResetBoundary,
-            reportedQuotaMovementPercent: value.reportedQuotaMovementPercent,
-            attribution: value.attribution,
-            unattributed: true,
-            inferredAllocationPercent: nil,
-            observationIdentities: value.observationIdentities,
-            observationIdentityCount: value.observationIdentityCount,
-            observationSpan: value.observationSpan,
-            evidenceAge: value.evidenceAge,
-            methodVersion: value.methodVersion,
-            sourceAdapterVersion: value.sourceAdapterVersion,
-            sourceVersion: value.sourceVersion
-        )
+        let normalized = value.read(at: now)
         return kind == "flat" ? .flat(normalized) : .movement(normalized)
     }
 }

@@ -5,8 +5,10 @@ public enum ClaudeQuotaExplanationUnavailableReason: String, Codable, Equatable,
     case incompatibleQuotaWindow = "incompatible_quota_window"
     case incompatibleTimestamps = "incompatible_timestamps"
     case counterDecreased = "counter_decreased"
-    case expiredQuotaWindow = "expired_quota_window"
     case staleObservations = "stale_observations"
+    case quotaAccountScopeUnavailable = "quota_account_scope_unavailable"
+    case accountTransitionUnverified = "account_transition_unverified"
+    case incompatibleUnit = "incompatible_unit"
 
     public var displayText: String {
         switch self {
@@ -14,17 +16,61 @@ public enum ClaudeQuotaExplanationUnavailableReason: String, Codable, Equatable,
         case .incompatibleQuotaWindow: "Measured reports do not belong to one exact Claude Code quota window."
         case .incompatibleTimestamps: "Measured report times cannot be compared safely."
         case .counterDecreased: "Reported quota usage decreased within the exact window."
-        case .expiredQuotaWindow: "The exact provider-reported quota window has expired."
-        case .staleObservations: "Measured Claude Code reports are stale."
+        case .staleObservations: "Measured Claude Code reports are outside retained coverage."
+        case .quotaAccountScopeUnavailable: "Retained quota observations have no trustworthy account binding, so movement is not calculated."
+        case .accountTransitionUnverified: "The selected observations cross an unverified account transition."
+        case .incompatibleUnit: "The selected observations use incompatible quota units."
         }
     }
 }
 
 public enum ClaudeAttributionUnavailableReason: String, Codable, Equatable, Sendable {
-    case sourceNotConfigured = "source_not_configured"
-    case noQualifyingEvidence = "no_qualifying_evidence"
-    case accountUnverified = "account_unverified"
+    case receiverNotConfigured = "receiver_not_configured"
+    case accountBindingUnavailable = "account_binding_unavailable"
+    case gap
+    case partialCoverage = "partial_coverage"
     case unsupportedEvidence = "unsupported_evidence"
+}
+
+public enum ClaudeQuotaObservationUnit: String, Codable, Equatable, Sendable {
+    case percentageUsed = "percentage_used"
+    case requests
+}
+
+public struct ClaudeScopedQuotaObservation: Equatable, Sendable {
+    public let observation: MeasuredQuotaObservation
+    public let accountIdentity: String?
+    public let unit: ClaudeQuotaObservationUnit
+
+    public init(observation: MeasuredQuotaObservation, accountIdentity: String?, unit: ClaudeQuotaObservationUnit) {
+        self.observation = observation
+        self.accountIdentity = accountIdentity
+        self.unit = unit
+    }
+}
+
+public enum ClaudeExplanationLifecycle: String, Codable, Equatable, Sendable {
+    case active
+    case completed
+}
+
+public enum ClaudeExplanationProvenanceKind: String, Codable, Equatable, Sendable {
+    case reported
+    case calculated
+    case measured
+    case unavailable
+}
+
+public struct ClaudeExplanationProvenance: Codable, Equatable, Sendable {
+    public let reportedQuota: ClaudeExplanationProvenanceKind
+    public let movement: ClaudeExplanationProvenanceKind
+    public let localBreakdown: ClaudeExplanationProvenanceKind
+
+    public init(localBreakdown: ClaudeExplanationProvenanceKind) {
+        reportedQuota = .reported
+        movement = .calculated
+        self.localBreakdown = localBreakdown
+    }
 }
 
 public struct ClaudeObservedLocalBreakdown: Codable, Equatable, Sendable {
@@ -35,6 +81,16 @@ public struct ClaudeObservedLocalBreakdown: Codable, Equatable, Sendable {
     public let modelCounts: [String: Int]
     public let sessionCount: Int
     public let evidenceCount: Int
+
+    public init(inputTokens: Int64, outputTokens: Int64, cacheReadTokens: Int64, cacheCreationTokens: Int64, modelCounts: [String: Int], sessionCount: Int, evidenceCount: Int) {
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheCreationTokens = cacheCreationTokens
+        self.modelCounts = modelCounts
+        self.sessionCount = sessionCount
+        self.evidenceCount = evidenceCount
+    }
 }
 
 public enum ClaudeQuotaAttribution: Codable, Equatable, Sendable {
@@ -48,50 +104,86 @@ public struct ClaudeQuotaExplanation: Codable, Equatable, Sendable {
     public let intervalStart: Date
     public let intervalEnd: Date
     public let quotaResetBoundary: Date
+    public let lifecycle: ClaudeExplanationLifecycle
     public let reportedQuotaMovementPercent: Double
     public let attribution: ClaudeQuotaAttribution
     public let unattributed: Bool
     public let inferredAllocationPercent: Double?
     public let observationIdentities: [QuotaObservationIdentity]
+    public let evidenceIdentities: [String]
     public let observationIdentityCount: Int
+    public let evidenceIdentityCount: Int
     public let observationSpan: TimeInterval
     public let evidenceAge: TimeInterval
     public let methodVersion: String
     public let sourceAdapterVersion: String
     public let sourceVersion: String?
+    public let provenance: ClaudeExplanationProvenance
 
     public init(
         providerProduct: ProviderProduct,
         intervalStart: Date,
         intervalEnd: Date,
         quotaResetBoundary: Date,
+        lifecycle: ClaudeExplanationLifecycle = .active,
         reportedQuotaMovementPercent: Double,
         attribution: ClaudeQuotaAttribution,
         unattributed: Bool,
         inferredAllocationPercent: Double?,
         observationIdentities: [QuotaObservationIdentity],
+        evidenceIdentities: [String] = [],
         observationIdentityCount: Int? = nil,
+        evidenceIdentityCount: Int? = nil,
         observationSpan: TimeInterval,
         evidenceAge: TimeInterval,
         methodVersion: String,
         sourceAdapterVersion: String,
-        sourceVersion: String?
+        sourceVersion: String?,
+        provenance: ClaudeExplanationProvenance? = nil
     ) {
         self.providerProduct = providerProduct
         self.intervalStart = intervalStart
         self.intervalEnd = intervalEnd
         self.quotaResetBoundary = quotaResetBoundary
+        self.lifecycle = lifecycle
         self.reportedQuotaMovementPercent = reportedQuotaMovementPercent
         self.attribution = attribution
         self.unattributed = unattributed
         self.inferredAllocationPercent = inferredAllocationPercent
         self.observationIdentities = observationIdentities
+        self.evidenceIdentities = evidenceIdentities
         self.observationIdentityCount = observationIdentityCount ?? observationIdentities.count
+        self.evidenceIdentityCount = evidenceIdentityCount ?? evidenceIdentities.count
         self.observationSpan = observationSpan
         self.evidenceAge = evidenceAge
         self.methodVersion = methodVersion
         self.sourceAdapterVersion = sourceAdapterVersion
         self.sourceVersion = sourceVersion
+        self.provenance = provenance ?? ClaudeExplanationProvenance(localBreakdown: .unavailable)
+    }
+
+    public func read(at now: Date) -> Self {
+        Self(
+            providerProduct: providerProduct,
+            intervalStart: intervalStart,
+            intervalEnd: intervalEnd,
+            quotaResetBoundary: quotaResetBoundary,
+            lifecycle: quotaResetBoundary > now ? .active : .completed,
+            reportedQuotaMovementPercent: reportedQuotaMovementPercent,
+            attribution: attribution,
+            unattributed: unattributed,
+            inferredAllocationPercent: inferredAllocationPercent,
+            observationIdentities: observationIdentities,
+            evidenceIdentities: evidenceIdentities,
+            observationIdentityCount: observationIdentityCount,
+            evidenceIdentityCount: evidenceIdentityCount,
+            observationSpan: observationSpan,
+            evidenceAge: max(0, now.timeIntervalSince(intervalEnd)),
+            methodVersion: methodVersion,
+            sourceAdapterVersion: sourceAdapterVersion,
+            sourceVersion: sourceVersion,
+            provenance: provenance
+        )
     }
 }
 
@@ -100,31 +192,87 @@ public enum ClaudeQuotaExplanationState: Equatable, Sendable {
     case flat(ClaudeQuotaExplanation)
     case unavailable(ClaudeQuotaExplanationUnavailableReason)
 
+    public var isMovement: Bool { if case .movement = self { true } else { false } }
+
     public var displayText: String {
         switch self {
-        case let .movement(value):
-            "Claude Code measured quota movement: +\(value.reportedQuotaMovementPercent.formatted())%. Interval: \(value.intervalStart.formatted(date: .omitted, time: .shortened))-\(value.intervalEnd.formatted(date: .omitted, time: .shortened)). \(attributionText(value.attribution)) Movement remains unattributed. Exact reset: \(value.quotaResetBoundary.formatted(date: .abbreviated, time: .shortened))."
-        case let .flat(value):
-            "Claude Code measured quota movement: 0%. Interval: \(value.intervalStart.formatted(date: .omitted, time: .shortened))-\(value.intervalEnd.formatted(date: .omitted, time: .shortened)). This does not prove that no Claude Code activity occurred. \(attributionText(value.attribution)) Exact reset: \(value.quotaResetBoundary.formatted(date: .abbreviated, time: .shortened))."
-        case let .unavailable(reason):
-            "Claude Code explanation unavailable: \(reason.displayText)"
+        case let .movement(value): explanationText(value, movement: "+\(value.reportedQuotaMovementPercent.formatted())%")
+        case let .flat(value): explanationText(value, movement: "0%") + " Flat movement does not prove that no Claude Code activity occurred."
+        case let .unavailable(reason): "Claude Code explanation unavailable: \(reason.displayText)"
         }
+    }
+
+    private func explanationText(_ value: ClaudeQuotaExplanation, movement: String) -> String {
+        let lifecycle = value.lifecycle == .active ? "Active exact window" : "Completed exact window"
+        return "Reported Claude Code percentages; Calculated movement: \(movement). \(lifecycle), reset \(value.quotaResetBoundary.formatted(date: .abbreviated, time: .shortened)). \(attributionText(value.attribution)) Movement remains unattributed."
     }
 
     private func attributionText(_ attribution: ClaudeQuotaAttribution) -> String {
         switch attribution {
-        case let .partial(value):
-            "Observed Local Breakdown: \(value.inputTokens) input, \(value.outputTokens) output, \(value.cacheReadTokens) cache-read, and \(value.cacheCreationTokens) cache-creation tokens across \(value.sessionCount) sessions."
-        case .observedZero:
-            "Observed Zero applies only to the configured telemetry coverage."
-        case let .unavailable(reason):
-            "Local attribution unavailable (\(reason.rawValue))."
+        case let .partial(value): "Measured Observed Local Breakdown: \(value.inputTokens) input and \(value.outputTokens) output tokens."
+        case .observedZero: "Measured Observed Zero within complete configured evidence coverage."
+        case let .unavailable(reason): "Measured local breakdown unavailable (\(reason.rawValue))."
         }
     }
 }
 
+public struct ClaudeQuotaExplanationInterval: Codable, Equatable, Hashable, Sendable {
+    public let id: String
+    public let identity: QuotaWindowIdentity
+    public let intervalStart: Date
+    public let intervalEnd: Date
+    public let lifecycle: ClaudeExplanationLifecycle
+
+    public init(id: String, identity: QuotaWindowIdentity, intervalStart: Date, intervalEnd: Date, lifecycle: ClaudeExplanationLifecycle) {
+        self.id = id
+        self.identity = identity
+        self.intervalStart = intervalStart
+        self.intervalEnd = intervalEnd
+        self.lifecycle = lifecycle
+    }
+}
+
+public struct ClaudeQuotaExplanationSelection: Equatable, Sendable {
+    public let interval: ClaudeQuotaExplanationInterval
+    public let state: ClaudeQuotaExplanationState
+    public let limitations: [ClaudeEvidenceLimitation]
+
+    public init(interval: ClaudeQuotaExplanationInterval, state: ClaudeQuotaExplanationState, limitations: [ClaudeEvidenceLimitation]) {
+        self.interval = interval
+        self.state = state
+        self.limitations = limitations
+    }
+}
+
+public struct ClaudeQuotaExplanationCatalog: Equatable, Sendable {
+    public let selections: [ClaudeQuotaExplanationSelection]
+    public let defaultSelectionID: String?
+    public let limitations: [ClaudeEvidenceLimitation]
+
+    public init(selections: [ClaudeQuotaExplanationSelection], defaultSelectionID: String?, limitations: [ClaudeEvidenceLimitation] = []) {
+        self.selections = selections
+        self.defaultSelectionID = defaultSelectionID
+        self.limitations = limitations
+    }
+
+    public var intervals: [ClaudeQuotaExplanationInterval] { selections.map(\.interval) }
+    public var defaultSelection: ClaudeQuotaExplanationSelection? { selection(id: defaultSelectionID) }
+    public func selection(id: String?) -> ClaudeQuotaExplanationSelection? {
+        guard let id else { return nil }
+        return selections.first { $0.interval.id == id }
+    }
+
+    public static let empty = Self(selections: [], defaultSelectionID: nil)
+}
+
+public enum ClaudeEvidenceSourceAvailability: Equatable, Sendable {
+    case available(expectedAccountIdentity: String)
+    case unavailable([ClaudeEvidenceLimitation])
+}
+
 public enum ClaudeQuotaExplanationEngine {
-    public static let methodVersion = "claude-code-quota-explanation-v1"
+    public static let methodVersion = "claude-code-quota-explanation-v2"
+    public static let maximumIntervals = 100
 
     public static func explain(
         observations: [MeasuredQuotaObservation],
@@ -134,75 +282,163 @@ public enum ClaudeQuotaExplanationEngine {
         now: Date,
         maximumObservationAge: TimeInterval = 9 * 24 * 60 * 60
     ) -> ClaudeQuotaExplanationState {
-        let unique = Dictionary(observations.map { ($0.stableIdentity, $0) }, uniquingKeysWith: { first, _ in first }).values
-            .filter { $0.identity.product == .claudeCode && now.timeIntervalSince($0.observedAt) <= maximumObservationAge }
-        let groups = Dictionary(grouping: unique, by: \.identity)
-        var candidates: [(MeasuredQuotaObservation, MeasuredQuotaObservation)] = []
-        var sawDecrease = false
-        for group in groups.values {
-            let ordered = group.sorted { ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest) }
-            let pairs = zip(ordered, ordered.dropFirst()).filter { $0.0.observedAt < $0.1.observedAt }
-            if pairs.contains(where: { $0.1.percentageUsed < $0.0.percentageUsed }) {
-                sawDecrease = true
-                continue
-            }
-            if let latest = pairs.last {
-                candidates.append(latest)
-            }
+        let account = expectedAccountIdentity ?? "explicit-test-scope"
+        let scoped = observations
+            .filter { now.timeIntervalSince($0.observedAt) <= maximumObservationAge }
+            .map { ClaudeScopedQuotaObservation(observation: $0, accountIdentity: account, unit: .percentageUsed) }
+        let source: ClaudeEvidenceSourceAvailability = sourceConfigured && expectedAccountIdentity != nil
+            ? .available(expectedAccountIdentity: account)
+            : .unavailable([.receiverNotConfigured, .accountBindingUnavailable])
+        let result = catalog(observations: scoped, evidence: evidence, source: source, evidenceLimitations: [], now: now).defaultSelection?.state
+        if let result { return result }
+        if Set(observations.map(\.identity)).count > 1 { return .unavailable(.incompatibleQuotaWindow) }
+        return .unavailable(observations.count >= 2 ? .staleObservations : .insufficientObservations)
+    }
+
+    public static func catalog(
+        observations: [ClaudeScopedQuotaObservation],
+        evidence: [ClaudeCodeOTLPEvidence],
+        source: ClaudeEvidenceSourceAvailability,
+        evidenceLimitations: [ClaudeEvidenceLimitation],
+        now: Date
+    ) -> ClaudeQuotaExplanationCatalog {
+        let unique = Dictionary(observations.map { ($0.observation.stableIdentity, $0) }, uniquingKeysWith: { first, _ in first }).values
+            .filter { $0.observation.identity.product == .claudeCode }
+        var pairs: [(ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation)] = []
+        for group in Dictionary(grouping: unique, by: { $0.observation.identity }).values {
+            let ordered = group.sorted { ($0.observation.observedAt, $0.observation.stableIdentity.digest) < ($1.observation.observedAt, $1.observation.stableIdentity.digest) }
+            pairs.append(contentsOf: zip(ordered, ordered.dropFirst()).filter { $0.0.observation.observedAt < $0.1.observation.observedAt })
         }
-        guard let pair = candidates.max(by: { pairSortKey($0) < pairSortKey($1) }) else {
-            if sawDecrease { return .unavailable(.counterDecreased) }
-            let all = Array(unique).sorted { $0.observedAt < $1.observedAt }
-            if observations.count >= 2 && all.count < 2 { return .unavailable(.staleObservations) }
-            if all.count >= 2, all[all.count - 2].identity != all.last?.identity { return .unavailable(.incompatibleQuotaWindow) }
-            return .unavailable(.insufficientObservations)
-        }
+        pairs.sort { pairSortKey($0, now: now) > pairSortKey($1, now: now) }
+        let selections = pairs.prefix(maximumIntervals).map { evaluate($0, evidence: evidence, source: source, evidenceLimitations: evidenceLimitations, now: now) }
+        let preferred = selections.first { $0.interval.lifecycle == .active } ?? selections.first
+        var catalogLimitations = Set(evidenceLimitations)
+        if case let .unavailable(values) = source { catalogLimitations.formUnion(values) }
+        return ClaudeQuotaExplanationCatalog(selections: selections, defaultSelectionID: preferred?.interval.id, limitations: catalogLimitations.sorted { $0.rawValue < $1.rawValue })
+    }
+
+    private static func evaluate(
+        _ pair: (ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation),
+        evidence: [ClaudeCodeOTLPEvidence],
+        source: ClaudeEvidenceSourceAvailability,
+        evidenceLimitations: [ClaudeEvidenceLimitation],
+        now: Date
+    ) -> ClaudeQuotaExplanationSelection {
         let lower = pair.0
         let upper = pair.1
-        guard upper.identity.resetBoundary > now else { return .unavailable(.expiredQuotaWindow) }
-        guard upper.percentageUsed >= lower.percentageUsed else { return .unavailable(.counterDecreased) }
+        let lifecycle: ClaudeExplanationLifecycle = upper.observation.identity.resetBoundary > now ? .active : .completed
+        let interval = ClaudeQuotaExplanationInterval(
+            id: "\(lower.observation.stableIdentity.digest):\(upper.observation.stableIdentity.digest)",
+            identity: upper.observation.identity,
+            intervalStart: lower.observation.observedAt,
+            intervalEnd: upper.observation.observedAt,
+            lifecycle: lifecycle
+        )
+        var limitations = Set(evidenceLimitations)
+        if case let .unavailable(sourceLimitations) = source { limitations.formUnion(sourceLimitations) }
+        guard lower.unit == upper.unit, lower.unit == .percentageUsed else {
+            limitations.insert(.incompatibleUnit)
+            return selection(interval, .unavailable(.incompatibleUnit), limitations)
+        }
+        guard let lowerAccount = lower.accountIdentity, let upperAccount = upper.accountIdentity else {
+            limitations.insert(.quotaAccountScopeUnavailable)
+            return selection(interval, .unavailable(.quotaAccountScopeUnavailable), limitations)
+        }
+        guard lowerAccount == upperAccount else {
+            limitations.insert(.accountTransitionUnverified)
+            return selection(interval, .unavailable(.accountTransitionUnverified), limitations)
+        }
+        guard upper.observation.percentageUsed >= lower.observation.percentageUsed else {
+            return selection(interval, .unavailable(.counterDecreased), limitations)
+        }
 
-        let intervalEvidence = evidence.filter { $0.observedAt > lower.observedAt && $0.observedAt <= upper.observedAt }
+        let overlapping = evidence.filter { $0.intervalEnd > interval.intervalStart && $0.intervalStart < interval.intervalEnd }
+        let contained = overlapping.filter { $0.intervalStart >= interval.intervalStart && $0.intervalEnd <= interval.intervalEnd }
+        if overlapping.count != contained.count { limitations.insert(.partialCoverage) }
+        if contained.contains(where: { $0.adapterVersion != ClaudeCodeOTLPEvidenceAdapter.adapterVersion || $0.sourceVersion != ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion }) {
+            limitations.insert(.unsupportedEvidence)
+        }
+        let matching: [ClaudeCodeOTLPEvidence]
         let attribution: ClaudeQuotaAttribution
-        if !sourceConfigured {
-            attribution = .unavailable(.sourceNotConfigured)
-        } else if intervalEvidence.contains(where: { $0.adapterVersion != ClaudeCodeOTLPEvidenceAdapter.adapterVersion || $0.sourceVersion != ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion }) {
-            attribution = .unavailable(.unsupportedEvidence)
-        } else if expectedAccountIdentity == nil {
-            attribution = .unavailable(.accountUnverified)
-        } else {
-            let matching = Dictionary(
-                intervalEvidence.filter { $0.accountIdentity == expectedAccountIdentity }.map { ($0.identity, $0) },
-                uniquingKeysWith: { first, _ in first }
-            ).values
-            if matching.isEmpty {
-                attribution = .unavailable(.noQualifyingEvidence)
-            } else if let breakdown = breakdown(Array(matching)) {
-                let total = breakdown.inputTokens + breakdown.outputTokens + breakdown.cacheReadTokens + breakdown.cacheCreationTokens
-                attribution = total == 0 ? .observedZero(breakdown) : .partial(breakdown)
+        switch source {
+        case let .available(expectedAccountIdentity):
+            if limitations.contains(.unsupportedEvidence) {
+                return selection(interval, .movement(unavailableEvidenceValue(interval: interval, lower: lower, upper: upper, lifecycle: lifecycle, attribution: .unsupportedEvidence, now: now)), limitations)
+            }
+            guard expectedAccountIdentity == lowerAccount else {
+                limitations.insert(.accountTransitionUnverified)
+                return selection(interval, .unavailable(.accountTransitionUnverified), limitations)
+            }
+            matching = Array(Dictionary(contained.filter { $0.accountIdentity == expectedAccountIdentity }.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first }).values)
+            if limitations.contains(.partialCoverage) {
+                attribution = .unavailable(.partialCoverage)
+            } else if matching.isEmpty {
+                limitations.insert(.evidenceGap)
+                attribution = .unavailable(.gap)
+            } else if let value = breakdown(matching) {
+                let total = value.inputTokens + value.outputTokens + value.cacheReadTokens + value.cacheCreationTokens
+                attribution = total == 0 ? .observedZero(value) : .partial(value)
             } else {
+                limitations.insert(.unsupportedEvidence)
                 attribution = .unavailable(.unsupportedEvidence)
             }
+        case let .unavailable(sourceLimitations):
+            matching = []
+            attribution = .unavailable(sourceLimitations.contains(.receiverNotConfigured) ? .receiverNotConfigured : .accountBindingUnavailable)
         }
-        let movement = upper.percentageUsed - lower.percentageUsed
-        let sourceVersions = Set(intervalEvidence.map(\.sourceVersion))
+
+        let movement = upper.observation.percentageUsed - lower.observation.percentageUsed
         let value = ClaudeQuotaExplanation(
             providerProduct: .claudeCode,
-            intervalStart: lower.observedAt,
-            intervalEnd: upper.observedAt,
-            quotaResetBoundary: upper.identity.resetBoundary,
+            intervalStart: interval.intervalStart,
+            intervalEnd: interval.intervalEnd,
+            quotaResetBoundary: interval.identity.resetBoundary,
+            lifecycle: lifecycle,
             reportedQuotaMovementPercent: movement,
             attribution: attribution,
             unattributed: true,
             inferredAllocationPercent: nil,
-            observationIdentities: [lower.stableIdentity, upper.stableIdentity],
-            observationSpan: upper.observedAt.timeIntervalSince(lower.observedAt),
-            evidenceAge: max(0, now.timeIntervalSince(upper.observedAt)),
+            observationIdentities: [lower.observation.stableIdentity, upper.observation.stableIdentity],
+            evidenceIdentities: matching.map(\.identity).sorted(),
+            observationSpan: interval.intervalEnd.timeIntervalSince(interval.intervalStart),
+            evidenceAge: max(0, now.timeIntervalSince(interval.intervalEnd)),
             methodVersion: methodVersion,
             sourceAdapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
-            sourceVersion: sourceVersions.count == 1 ? sourceVersions.first : nil
+            sourceVersion: Set(matching.map(\.sourceVersion)).count == 1 ? matching.first?.sourceVersion : nil,
+            provenance: ClaudeExplanationProvenance(localBreakdown: matching.isEmpty ? .unavailable : .measured)
         )
-        return movement == 0 ? .flat(value) : .movement(value)
+        return selection(interval, movement == 0 ? .flat(value) : .movement(value), limitations)
+    }
+
+    private static func unavailableEvidenceValue(
+        interval: ClaudeQuotaExplanationInterval,
+        lower: ClaudeScopedQuotaObservation,
+        upper: ClaudeScopedQuotaObservation,
+        lifecycle: ClaudeExplanationLifecycle,
+        attribution: ClaudeAttributionUnavailableReason,
+        now: Date
+    ) -> ClaudeQuotaExplanation {
+        ClaudeQuotaExplanation(
+            providerProduct: .claudeCode,
+            intervalStart: interval.intervalStart,
+            intervalEnd: interval.intervalEnd,
+            quotaResetBoundary: interval.identity.resetBoundary,
+            lifecycle: lifecycle,
+            reportedQuotaMovementPercent: upper.observation.percentageUsed - lower.observation.percentageUsed,
+            attribution: .unavailable(attribution),
+            unattributed: true,
+            inferredAllocationPercent: nil,
+            observationIdentities: [lower.observation.stableIdentity, upper.observation.stableIdentity],
+            observationSpan: interval.intervalEnd.timeIntervalSince(interval.intervalStart),
+            evidenceAge: max(0, now.timeIntervalSince(interval.intervalEnd)),
+            methodVersion: methodVersion,
+            sourceAdapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
+            sourceVersion: nil
+        )
+    }
+
+    private static func selection(_ interval: ClaudeQuotaExplanationInterval, _ state: ClaudeQuotaExplanationState, _ limitations: Set<ClaudeEvidenceLimitation>) -> ClaudeQuotaExplanationSelection {
+        ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: limitations.sorted { $0.rawValue < $1.rawValue })
     }
 
     private static func breakdown(_ evidence: [ClaudeCodeOTLPEvidence]) -> ClaudeObservedLocalBreakdown? {
@@ -214,23 +450,11 @@ public enum ClaudeQuotaExplanationEngine {
             totals[item.tokenType] = sum.partialValue
             models[item.model, default: 0] += 1
         }
-        return ClaudeObservedLocalBreakdown(
-            inputTokens: totals[.input] ?? 0,
-            outputTokens: totals[.output] ?? 0,
-            cacheReadTokens: totals[.cacheRead] ?? 0,
-            cacheCreationTokens: totals[.cacheCreation] ?? 0,
-            modelCounts: models,
-            sessionCount: Set(evidence.map(\.sessionIdentity)).count,
-            evidenceCount: evidence.count
-        )
+        return ClaudeObservedLocalBreakdown(inputTokens: totals[.input] ?? 0, outputTokens: totals[.output] ?? 0, cacheReadTokens: totals[.cacheRead] ?? 0, cacheCreationTokens: totals[.cacheCreation] ?? 0, modelCounts: models, sessionCount: Set(evidence.map(\.sessionIdentity)).count, evidenceCount: evidence.count)
     }
 
-    private static func pairSortKey(_ pair: (MeasuredQuotaObservation, MeasuredQuotaObservation)) -> String {
-        let priority = switch pair.1.identity.insightWindowKind {
-        case .session: "2"
-        case .weekly: "1"
-        case .other: "0"
-        }
-        return String(format: "%020.6f:%@:%@", pair.1.observedAt.timeIntervalSince1970, priority, pair.1.stableIdentity.digest)
+    private static func pairSortKey(_ pair: (ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation), now: Date) -> String {
+        let active = pair.1.observation.identity.resetBoundary > now ? "1" : "0"
+        return "\(active):\(String(format: "%020.6f", pair.1.observation.observedAt.timeIntervalSince1970)):\(pair.1.observation.stableIdentity.digest)"
     }
 }

@@ -23,7 +23,7 @@ Click it for two tabs:
 - **Local alerts** can notify at configurable Claude Code and Codex quota thresholds or exact-period API cost-budget thresholds.
 - **Quota insights** retain privacy-safe measured Claude Code and Codex percentages locally and calculate qualified recent burn and exhaustion ranges without project, agent, model, or token attribution.
 - **Codex quota explanations** correlate the latest compatible measured Codex quota interval with validated local rollout token transitions, while keeping quota movement unattributed.
-- **Claude Code quota explanations** show deterministic movement between compatible exact provider observations and explicitly report local attribution as unavailable until supported account-bound Claude Code telemetry is supplied.
+- **Claude Code quota explanations** enumerate exact retained observation intervals but conservatively report production movement unavailable because quota observations have no trustworthy account scope and no supported telemetry receiver or account binding exists.
 - **Planned workload assessment** accepts bounded coding-agent operation counts and fails closed until a supported adapter supplies enough comparable measured completed runs.
 - **Diagnostic export** creates a reviewable, privacy-safe JSON artifact and saves it only after an explicit destination choice.
 - **Privacy-first storage** keeps configured secrets in macOS Keychain and normalized metrics in local SQLite without storing prompts, code, responses, or raw provider payloads.
@@ -171,18 +171,19 @@ It does not export exact session IDs, digests, exact window IDs, exact reset tim
 
 ## Claude Code Quota Explanations
 
-LimitBar shows the latest deterministic percentage movement between compatible measured Claude Code observations in one exact provider-reported quota window.
-Movement remains visible and unattributed when no qualifying local activity exists.
-Flat movement does not claim that no Claude Code work occurred, and counter decreases, resets, stale observations, and incompatible windows remain explicit unavailable states.
+LimitBar enumerates bounded adjacent intervals from retained measured Claude Code observations in one exact provider-reported quota window.
+The UI permits explicit selection across active and completed retained windows and preserves that selection while it remains available.
+Active intervals are preferred only when choosing a default.
+Completed intervals are historical explanations and are not fresh or alert-eligible.
 
 First-party Claude Code documentation defines the opt-in `claude_code.token.usage` OpenTelemetry metric as an explicit structured Claude Code activity source.
 The strict verification adapter supports OTLP HTTP/JSON from exactly Claude Code `2.1.207` when version, account UUID, and session ID metric attributes are enabled.
 It accepts only documented token type, model, timestamp, token count, version, account, session, service, and metric fields.
 Generic Anthropic API usage is never accepted as Claude Code evidence.
 
-The production application does not currently run an OTLP receiver or configure Claude Code telemetry.
-Its attribution outcome therefore remains unavailable, rather than inferred from Anthropic API usage or private Claude Code session content.
-The adapter and explanation engine provide a strict verification seam for user-owned telemetry, but synthetic fixtures are not proof of real-account behavior.
+The production application does not currently run an OTLP receiver or configure Claude Code telemetry, and it has no trustworthy binding from quota observations to telemetry account identity.
+Current quota observation storage has no account identity, so production movement and attribution both remain unavailable rather than crossing an unverified account transition.
+The adapter and explanation engine provide a documented-compatible verification seam for user-owned telemetry, but synthetic fixtures are not proof of real-account behavior and signed/manual acceptance remains unavailable.
 
 Normalized findings are retained locally in `claude-explanations.sqlite` for at most 30 days and 100 records and can be deleted independently in Settings.
 Raw OTLP payloads, account and session UUIDs, prompts, code, responses, tool details, terminal output, credentials, private paths, and account labels are never persisted.

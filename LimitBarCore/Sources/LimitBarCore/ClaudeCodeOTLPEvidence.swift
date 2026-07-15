@@ -23,16 +23,53 @@ public enum ClaudeCodeOmittedFieldCategory: String, Codable, Equatable, Sendable
     case arbitraryAttribute = "arbitrary_attribute"
 }
 
+public enum ClaudeEvidenceLimitation: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case receiverNotConfigured = "receiver_not_configured"
+    case accountBindingUnavailable = "account_binding_unavailable"
+    case quotaAccountScopeUnavailable = "quota_account_scope_unavailable"
+    case accountTransitionUnverified = "account_transition_unverified"
+    case missingEvidenceBoundary = "missing_evidence_boundary"
+    case partialCoverage = "partial_coverage"
+    case evidenceGap = "evidence_gap"
+    case incompatibleUnit = "incompatible_unit"
+    case unsupportedEvidence = "unsupported_evidence"
+}
+
 public struct ClaudeCodeOTLPEvidence: Codable, Equatable, Sendable {
     public let identity: String
     public let accountIdentity: String
     public let sessionIdentity: String
-    public let observedAt: Date
+    public let intervalStart: Date
+    public let intervalEnd: Date
     public let model: String
     public let tokenType: ClaudeCodeTokenType
     public let tokenCount: Int64
     public let sourceVersion: String
     public let adapterVersion: String
+
+    public init(
+        identity: String,
+        accountIdentity: String,
+        sessionIdentity: String,
+        intervalStart: Date,
+        intervalEnd: Date,
+        model: String,
+        tokenType: ClaudeCodeTokenType,
+        tokenCount: Int64,
+        sourceVersion: String,
+        adapterVersion: String
+    ) {
+        self.identity = identity
+        self.accountIdentity = accountIdentity
+        self.sessionIdentity = sessionIdentity
+        self.intervalStart = intervalStart
+        self.intervalEnd = intervalEnd
+        self.model = model
+        self.tokenType = tokenType
+        self.tokenCount = tokenCount
+        self.sourceVersion = sourceVersion
+        self.adapterVersion = adapterVersion
+    }
 
     public init(
         identity: String,
@@ -45,15 +82,18 @@ public struct ClaudeCodeOTLPEvidence: Codable, Equatable, Sendable {
         sourceVersion: String,
         adapterVersion: String
     ) {
-        self.identity = identity
-        self.accountIdentity = accountIdentity
-        self.sessionIdentity = sessionIdentity
-        self.observedAt = observedAt
-        self.model = model
-        self.tokenType = tokenType
-        self.tokenCount = tokenCount
-        self.sourceVersion = sourceVersion
-        self.adapterVersion = adapterVersion
+        self.init(
+            identity: identity,
+            accountIdentity: accountIdentity,
+            sessionIdentity: sessionIdentity,
+            intervalStart: observedAt.addingTimeInterval(-0.001),
+            intervalEnd: observedAt,
+            model: model,
+            tokenType: tokenType,
+            tokenCount: tokenCount,
+            sourceVersion: sourceVersion,
+            adapterVersion: adapterVersion
+        )
     }
 }
 
@@ -61,6 +101,7 @@ public struct ClaudeCodeOTLPScanResult: Equatable, Sendable {
     public let sourceStatus: ClaudeCodeOTLPSourceStatus
     public let evidence: [ClaudeCodeOTLPEvidence]
     public let omittedFieldCategories: [ClaudeCodeOmittedFieldCategory]
+    public let limitations: [ClaudeEvidenceLimitation]
     public let lastVerified: String
 }
 
@@ -79,16 +120,6 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
         var foundUnsupported = false
         var evidence: [ClaudeCodeOTLPEvidence] = []
         for resourceMetrics in request.resourceMetrics {
-            let resource = attributes(resourceMetrics.resource?.attributes ?? [])
-            guard let sourceVersion = resource["app.version"], sourceVersion == supportedSourceVersion else {
-                foundUnsupported = true
-                continue
-            }
-            guard let rawAccount = resource["user.account_uuid"], UUID(uuidString: rawAccount) != nil else {
-                foundUnsupported = true
-                continue
-            }
-            let accountIdentity = keyedDigest(rawAccount, key: identityKey)
             for scope in resourceMetrics.scopeMetrics {
                 for metric in scope.metrics where metric.name == "claude_code.token.usage" {
                     foundClaudeMetric = true
@@ -96,29 +127,38 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                         foundUnsupported = true
                         continue
                     }
+                    var limitations: [ClaudeEvidenceLimitation] = []
                     for point in sum.dataPoints {
                         let pointAttributes = attributes(point.attributes)
                         guard let count = Int64(point.asInt), count >= 0,
-                              let nanos = UInt64(point.timeUnixNano), nanos > 0,
+                              let startNanosText = point.startTimeUnixNano,
+                              let startNanos = UInt64(startNanosText), startNanos > 0,
+                              let endNanos = UInt64(point.timeUnixNano), endNanos > startNanos,
                               let tokenTypeText = pointAttributes["type"],
                               let tokenType = ClaudeCodeTokenType(rawValue: tokenTypeText),
                               let model = pointAttributes["model"], validModel(model),
+                              let sourceVersion = pointAttributes["app.version"], sourceVersion == supportedSourceVersion,
+                              let rawAccount = pointAttributes["user.account_uuid"], UUID(uuidString: rawAccount) != nil,
                               let rawSession = pointAttributes["session.id"], UUID(uuidString: rawSession) != nil else {
                             foundUnsupported = true
+                            if point.startTimeUnixNano == nil { limitations.append(.missingEvidenceBoundary) }
                             continue
                         }
-                        let observedAt = Date(timeIntervalSince1970: Double(nanos) / 1_000_000_000)
-                        guard observedAt.timeIntervalSince1970.isFinite else {
+                        let intervalStart = Date(timeIntervalSince1970: Double(startNanos) / 1_000_000_000)
+                        let intervalEnd = Date(timeIntervalSince1970: Double(endNanos) / 1_000_000_000)
+                        guard intervalStart.timeIntervalSince1970.isFinite, intervalEnd.timeIntervalSince1970.isFinite else {
                             foundUnsupported = true
                             continue
                         }
+                        let accountIdentity = keyedDigest(rawAccount, key: identityKey)
                         let sessionIdentity = keyedDigest(rawSession, key: identityKey)
-                        let identityMaterial = "\(accountIdentity):\(sessionIdentity):\(point.timeUnixNano):\(tokenType.rawValue):\(count):\(model)"
+                        let identityMaterial = "\(accountIdentity):\(sessionIdentity):\(startNanosText):\(point.timeUnixNano):\(tokenType.rawValue):\(count):\(model)"
                         evidence.append(ClaudeCodeOTLPEvidence(
                             identity: keyedDigest(identityMaterial, key: identityKey),
                             accountIdentity: accountIdentity,
                             sessionIdentity: sessionIdentity,
-                            observedAt: observedAt,
+                            intervalStart: intervalStart,
+                            intervalEnd: intervalEnd,
                             model: model,
                             tokenType: tokenType,
                             tokenCount: count,
@@ -126,6 +166,7 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                             adapterVersion: adapterVersion
                         ))
                     }
+                    if !limitations.isEmpty { return result(.unsupportedMetric, evidence: evidence, limitations: limitations) }
                 }
             }
         }
@@ -145,12 +186,14 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
 
     private static func result(
         _ status: ClaudeCodeOTLPSourceStatus,
-        evidence: [ClaudeCodeOTLPEvidence] = []
+        evidence: [ClaudeCodeOTLPEvidence] = [],
+        limitations: [ClaudeEvidenceLimitation] = []
     ) -> ClaudeCodeOTLPScanResult {
         ClaudeCodeOTLPScanResult(
             sourceStatus: status,
             evidence: evidence,
             omittedFieldCategories: [.contentBearing, .accountLabel, .privatePath, .arbitraryAttribute],
+            limitations: Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue },
             lastVerified: lastVerified
         )
     }
@@ -213,6 +256,7 @@ private struct OTLPSum: Decodable {
 
 private struct OTLPNumberDataPoint: Decodable {
     let attributes: [OTLPAttribute]
+    let startTimeUnixNano: String?
     let timeUnixNano: String
     let asInt: String
 }
