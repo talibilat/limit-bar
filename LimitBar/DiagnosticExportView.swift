@@ -266,15 +266,15 @@ enum DiagnosticExportInputBuilder {
                 barrierCategories: explanation.barriers,
                 retention: retention
             )
-        case let .observedZero(_, _, observationCount, evidenceCount):
+        case let .observedZero(value):
             return try DiagnosticCodexExplanationFinding(
                 status: .observedZero,
                 adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
                 coverage: .complete,
                 tokenEvidence: .observedZero,
                 sessionCount: 0,
-                evidenceCount: evidenceCount,
-                observationCount: observationCount,
+                evidenceCount: value.evidenceIdentityCount,
+                observationCount: value.observationIdentityCount,
                 barrierCategories: [],
                 retention: retention
             )

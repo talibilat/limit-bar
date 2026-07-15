@@ -143,6 +143,92 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         XCTAssertFalse(state.quotaInsightsStorageAvailable)
     }
 
+    func testInvestigationPublicationCommitsOneGenerationAndPreservesItOnFailure() async throws {
+        let initial = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 0)
+        let service = FailingQuotaInsightsService(initial: initial, attempted: initial)
+        let state = LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(credentials: ClaudeCredentialBroker.shared, client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(refreshUsage: { _, _ in throw CancellationError() }, scanCodex: { _ in nil })),
+            quotaInsightsService: service
+        )
+        let codex = CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: CodexRateLimitWindow(percentUsed: 75, windowMinutes: 300, resetsAt: now.addingTimeInterval(3_600)),
+            secondary: nil,
+            credits: nil,
+            reportedAt: now
+        )
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 1, usage: nil, codex: codex, refreshedAt: now))
+        let coherent = state.investigationPublication
+        XCTAssertEqual(coherent.generation, 1)
+        XCTAssertFalse(coherent.products.isEmpty)
+
+        await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 2, usage: nil, codex: codex, refreshedAt: now.addingTimeInterval(60)))
+
+        XCTAssertEqual(state.investigationPublication.publicationState, .error)
+        XCTAssertEqual(state.investigationPublication.generation, 1)
+        XCTAssertEqual(state.investigationPublication.products, coherent.products)
+        XCTAssertEqual(state.investigationPublication.pendingGeneration, 2)
+    }
+
+    func testPreSequenceRefreshBarrierBlocksProviderActionPublication() async throws {
+        let initial = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 0)
+        let changed = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 1)
+        let service = SequenceQuotaInsightsService(recordResults: [initial, changed])
+        let state = makeState(quotaService: service)
+        let codex = codexSnapshot()
+
+        await state.recordCodexInsights(codex, now: now)
+        let coherent = state.investigationPublication
+        state.beginInvestigationRefreshRequest()
+        await state.recordCodexInsights(codex, now: now.addingTimeInterval(1))
+
+        XCTAssertEqual(state.investigationPublication.publicationState, .loading)
+        XCTAssertEqual(state.investigationPublication.generation, coherent.generation)
+        XCTAssertEqual(state.investigationPublication.products, coherent.products)
+    }
+
+    func testConcurrentProviderActionCannotReplacePendingGeneration() async throws {
+        let providerAnalysis = try analysisSnapshot(identifier: "provider-action:primary:300", percentageOffset: 0)
+        let refreshAnalysis = try analysisSnapshot(identifier: "refresh:primary:300", percentageOffset: 0)
+        let service = GatedQuotaInsightsService(providerAnalysis: providerAnalysis, refreshAnalysis: refreshAnalysis)
+        let state = makeState(quotaService: service)
+        let codex = codexSnapshot()
+
+        let refresh = Task {
+            await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 2, usage: nil, codex: codex, refreshedAt: now))
+        }
+        await service.waitUntilRefreshStarted()
+        await state.recordCodexInsights(codex, now: now.addingTimeInterval(1))
+
+        XCTAssertEqual(state.investigationPublication.publicationState, .loading)
+        XCTAssertTrue(state.investigationPublication.products.isEmpty)
+
+        await service.releaseRefresh()
+        await refresh.value
+        XCTAssertEqual(state.investigationPublication.generation, 2)
+        XCTAssertEqual(state.investigationPublication.products.first?.records.first?.identity?.identifier, "refresh:primary:300")
+    }
+
+    func testSupersededGenerationCannotReplaceNewerPreSequenceRequest() async throws {
+        let refreshAnalysis = try analysisSnapshot(identifier: "old-refresh:primary:300", percentageOffset: 0)
+        let service = GatedQuotaInsightsService(providerAnalysis: refreshAnalysis, refreshAnalysis: refreshAnalysis)
+        let state = makeState(quotaService: service)
+        let refresh = Task {
+            await state.refreshQuotaInsights(for: LocalRefreshSnapshot(sequence: 2, usage: nil, codex: codexSnapshot(), refreshedAt: now))
+        }
+        await service.waitUntilRefreshStarted()
+        state.beginInvestigationRefreshRequest()
+        await service.releaseRefresh()
+        await refresh.value
+
+        XCTAssertEqual(state.investigationPublication.publicationState, .loading)
+        XCTAssertEqual(state.investigationPublication.generation, 1)
+        XCTAssertTrue(state.investigationPublication.products.isEmpty)
+    }
+
     func testRateLimitSurfaceExplainsQualifiedAnomalyMethodAndLimitations() throws {
         let identity = try QuotaWindowIdentity(
             product: .codex,
@@ -234,6 +320,26 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         )
     }
 
+    private func codexSnapshot() -> CodexRateLimitSnapshot {
+        CodexRateLimitSnapshot(
+            planType: "plus",
+            primary: CodexRateLimitWindow(percentUsed: 75, windowMinutes: 300, resetsAt: now.addingTimeInterval(3_600)),
+            secondary: nil,
+            credits: nil,
+            reportedAt: now
+        )
+    }
+
+    private func makeState(quotaService: any QuotaInsightsServing) -> LimitBarState {
+        LimitBarState(
+            providerSettings: ProviderSettings.defaultSettings,
+            claudeModel: ClaudeRateLimitsModel(credentials: ClaudeCredentialBroker.shared, client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(refreshUsage: { _, _ in throw CancellationError() }, scanCodex: { _ in nil })),
+            quotaInsightsService: quotaService,
+            investigationPublication: .empty(publishedAt: now, generation: 1)
+        )
+    }
+
     private func anomaly(identity: QuotaWindowIdentity) throws -> QuotaAnomalyState {
         var percentage = 10.0
         let observations = try [0.0, 2, 2, 2, 2, 2, 8].enumerated().map { index, movement in
@@ -269,6 +375,60 @@ private actor FailingQuotaInsightsService: QuotaInsightsServing {
     func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { initial }
     func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { throw FixtureError.analysisFailed }
     func deleteAll() throws {}
+}
+
+private actor SequenceQuotaInsightsService: QuotaInsightsServing {
+    private var recordResults: [QuotaFindingAnalysisSnapshot]
+
+    init(recordResults: [QuotaFindingAnalysisSnapshot]) {
+        self.recordResults = recordResults
+    }
+
+    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot {
+        recordResults.removeFirst()
+    }
+
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
+    func deleteAll() throws {}
+}
+
+private actor GatedQuotaInsightsService: QuotaInsightsServing {
+    private let providerAnalysis: QuotaFindingAnalysisSnapshot
+    private let refreshAnalysis: QuotaFindingAnalysisSnapshot
+    private var refreshStarted = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var codexCalls = 0
+
+    init(providerAnalysis: QuotaFindingAnalysisSnapshot, refreshAnalysis: QuotaFindingAnalysisSnapshot) {
+        self.providerAnalysis = providerAnalysis
+        self.refreshAnalysis = refreshAnalysis
+    }
+
+    func reevaluateClaudeAnalysis(now: Date) async -> QuotaFindingAnalysisSnapshot {
+        refreshStarted = true
+        await withCheckedContinuation { continuation = $0 }
+        return .empty
+    }
+
+    func waitUntilRefreshStarted() async {
+        while !refreshStarted { await Task.yield() }
+    }
+
+    func releaseRefresh() {
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot {
+        codexCalls += 1
+        return codexCalls == 1 ? providerAnalysis : refreshAnalysis
+    }
+
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateCodexAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func deleteAll() {}
 }
 
 @MainActor

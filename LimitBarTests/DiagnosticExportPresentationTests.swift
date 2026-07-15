@@ -66,7 +66,7 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             reportedQuotaMovementPercent: 1,
             attribution: .partial(ClaudeObservedLocalBreakdown(inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, modelCounts: ["CODE_SENTINEL": 1], sessionCount: 1, evidenceCount: 1)),
             unattributed: true,
-            inferredAllocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [],
             evidenceIdentities: ["CREDENTIAL_SENTINEL", "PRIVATE_PATH_SENTINEL", "ACCOUNT_LABEL_SENTINEL", "RESPONSE_SENTINEL", "TERMINAL_SENTINEL"],
             observationSpan: 100,

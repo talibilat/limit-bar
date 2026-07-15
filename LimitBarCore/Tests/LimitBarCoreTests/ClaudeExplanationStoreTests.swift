@@ -19,7 +19,7 @@ struct ClaudeExplanationStoreTests {
             reportedQuotaMovementPercent: 2,
             attribution: .unavailable(.receiverNotConfigured),
             unattributed: true,
-            inferredAllocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [],
             observationIdentityCount: 2,
             observationSpan: 60,

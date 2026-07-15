@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Codex quota explanation")
 struct CodexQuotaExplanationTests {
-    @Test("separates reported quota movement from measured local token breakdown")
+    @Test("separates Calculated quota movement from Measured local token breakdown")
     func completeExplanation() throws {
         let identity = try QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: date(600))
         let observations = try [
@@ -25,11 +25,11 @@ struct CodexQuotaExplanationTests {
             Issue.record("Expected available explanation")
             return
         }
-        #expect(explanation.reportedQuotaMovementPercent == 3.5)
+        #expect(explanation.calculatedQuotaMovementPercent == 3.5)
         #expect(explanation.observedLocalBreakdown.tokens.total == 10)
         #expect(explanation.observedLocalBreakdown.tokens.cachedInput == 2)
         #expect(explanation.unattributed)
-        #expect(explanation.allocationPercent == nil)
+        #expect(explanation.inferredAllocation == nil)
         #expect(explanation.observationIdentities.count == 2)
         #expect(explanation.evidenceIdentities.count == 1)
         #expect(result.displayText.contains("input 7, cached input 2, output 3, reasoning output 1"))
@@ -99,7 +99,7 @@ struct CodexQuotaExplanationTests {
             return
         }
         #expect(explanation.barriers == [.malformedRecord])
-        #expect(explanation.reportedQuotaMovementPercent == 2)
+        #expect(explanation.calculatedQuotaMovementPercent == 2)
     }
 
     @Test("distinguishes missing evidence, observed zero, counter decrease, and reset")
@@ -113,7 +113,15 @@ struct CodexQuotaExplanationTests {
 
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [], coverageStart: nil, coverageEnd: nil, barriers: []) == .unavailable(.gap))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [], coverageStart: nil, coverageEnd: nil, barriers: [.evidenceLimitExceeded]) == .unavailable(.unsupportedEvidence))
-        #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [evidence(at: 150, input: 0, output: 0)], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .observedZero(reportedQuotaMovementPercent: 2, quotaResetBoundary: date(600), observationIdentityCount: 2, evidenceIdentityCount: 1))
+        #expect(CodexQuotaExplanationEngine.explain(observations: [lower, upper], evidence: [evidence(at: 150, input: 0, output: 0)], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .observedZero(CodexQuotaObservedZero(
+            intervalStart: date(100),
+            intervalEnd: date(200),
+            calculatedQuotaMovementPercent: 2,
+            quotaResetBoundary: date(600),
+            observationIdentities: [lower.stableIdentity, upper.stableIdentity],
+            evidenceIdentities: ["\(String(repeating: "a", count: 64)):3:\(String(repeating: "b", count: 64))"],
+            quotaWindowIdentity: first
+        )))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, decreased], evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .unavailable(.counterDecreased))
         #expect(CodexQuotaExplanationEngine.explain(observations: [lower, changedWindow], evidence: [], coverageStart: date(90), coverageEnd: date(210), barriers: []) == .unavailable(.incompatibleQuotaWindow))
     }
@@ -172,7 +180,7 @@ struct CodexQuotaExplanationTests {
             Issue.record("Expected primary explanation despite simultaneous secondary decrease")
             return
         }
-        #expect(explanation.reportedQuotaMovementPercent == 2)
+        #expect(explanation.calculatedQuotaMovementPercent == 2)
         #expect(explanation.observationIdentities.count == 2)
     }
 
@@ -199,7 +207,7 @@ struct CodexQuotaExplanationTests {
             Issue.record("Expected available explanation")
             return
         }
-        #expect(explanation.reportedQuotaMovementPercent == 2)
+        #expect(explanation.calculatedQuotaMovementPercent == 2)
     }
 
     @Test("evidence identities include privacy-safe session identity to avoid ordinal digest collisions")

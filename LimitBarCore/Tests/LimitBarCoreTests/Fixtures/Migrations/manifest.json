@@ -94,7 +94,7 @@
       "origin": "synthetic",
       "file": "codex-explanations-pre-release-v1.sql",
       "expected": {
-        "resultUserVersion": 1,
+        "resultUserVersion": 2,
         "rowCount": 1,
         "recordSHA256": "37c3e386e87ea3b9f735758d5c042556efb877cd356fff2671d2299149874281"
       }
@@ -108,7 +108,7 @@
       "origin": "synthetic",
       "file": "codex-explanations-first-release-v1.sql",
       "expected": {
-        "resultUserVersion": 1,
+        "resultUserVersion": 2,
         "rowCount": 1,
         "recordSHA256": "5008bd74cb522672db9b9ebee45f9fd879e237197bb4b7a7d4daa8d44dd488a0"
       }

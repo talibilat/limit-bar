@@ -15,9 +15,9 @@ public enum CodexQuotaExplanationUnavailableReason: String, Codable, Equatable, 
         case .insufficientObservations: "Collecting two measured reports from this exact quota window."
         case .incompatibleQuotaWindow: "Measured reports cross a quota reset or exact window boundary."
         case .incompatibleTimestamps: "Measured report times cannot be compared safely."
-        case .counterDecreased: "Reported quota usage decreased; this interval cannot be explained."
+        case .counterDecreased: "Measured local quota usage decreased; this interval cannot be explained."
         case .expiredQuotaWindow: "The measured quota window has reset or expired."
-        case .noPositiveQuotaMovement: "No positive reported quota movement was measured."
+        case .noPositiveQuotaMovement: "No positive Calculated movement exists between the Measured local quota observations."
         case .gap: "No trustworthy local evidence covers this measured interval."
         case .unsupportedEvidence: "The local Codex evidence format is unsupported or incomplete."
         }
@@ -35,15 +35,16 @@ public struct CodexObservedLocalBreakdown: Codable, Equatable, Sendable {
 }
 
 public struct CodexQuotaExplanation: Codable, Equatable, Sendable {
+    public let quotaWindowIdentity: QuotaWindowIdentity?
     public let intervalStart: Date
     public let intervalEnd: Date
     public let quotaResetBoundary: Date
     public let coverageStart: Date
     public let coverageEnd: Date
-    public let reportedQuotaMovementPercent: Double
+    public let calculatedQuotaMovementPercent: Double
     public let observedLocalBreakdown: CodexObservedLocalBreakdown
     public let unattributed: Bool
-    public let allocationPercent: Double?
+    public let inferredAllocation: InferredQuotaAllocation?
     public let observationIdentities: [QuotaObservationIdentity]
     public let evidenceIdentities: [String]
     public let adapterVersion: String
@@ -55,26 +56,28 @@ public struct CodexQuotaExplanation: Codable, Equatable, Sendable {
         quotaResetBoundary: Date,
         coverageStart: Date,
         coverageEnd: Date,
-        reportedQuotaMovementPercent: Double,
+        calculatedQuotaMovementPercent: Double,
         observedLocalBreakdown: CodexObservedLocalBreakdown,
         unattributed: Bool,
-        allocationPercent: Double?,
+        inferredAllocation: InferredQuotaAllocation?,
         observationIdentities: [QuotaObservationIdentity],
         evidenceIdentities: [String],
         observationIdentityCount: Int? = nil,
         evidenceIdentityCount: Int? = nil,
         adapterVersion: String,
-        barriers: [CodexEvidenceBarrier]
+        barriers: [CodexEvidenceBarrier],
+        quotaWindowIdentity: QuotaWindowIdentity? = nil
     ) {
         self.intervalStart = intervalStart
+        self.quotaWindowIdentity = quotaWindowIdentity
         self.intervalEnd = intervalEnd
         self.quotaResetBoundary = quotaResetBoundary
         self.coverageStart = coverageStart
         self.coverageEnd = coverageEnd
-        self.reportedQuotaMovementPercent = reportedQuotaMovementPercent
+        self.calculatedQuotaMovementPercent = calculatedQuotaMovementPercent
         self.observedLocalBreakdown = observedLocalBreakdown
         self.unattributed = unattributed
-        self.allocationPercent = allocationPercent
+        self.inferredAllocation = inferredAllocation
         self.observationIdentities = observationIdentities
         self.evidenceIdentities = evidenceIdentities
         self.observationIdentityCount = observationIdentityCount ?? observationIdentities.count
@@ -87,20 +90,54 @@ public struct CodexQuotaExplanation: Codable, Equatable, Sendable {
     public let evidenceIdentityCount: Int
 }
 
+public struct CodexQuotaObservedZero: Equatable, Sendable {
+    public let quotaWindowIdentity: QuotaWindowIdentity?
+    public let intervalStart: Date
+    public let intervalEnd: Date
+    public let calculatedQuotaMovementPercent: Double
+    public let quotaResetBoundary: Date
+    public let observationIdentities: [QuotaObservationIdentity]
+    public let evidenceIdentities: [String]
+    public let observationIdentityCount: Int
+    public let evidenceIdentityCount: Int
+
+    public init(
+        intervalStart: Date,
+        intervalEnd: Date,
+        calculatedQuotaMovementPercent: Double,
+        quotaResetBoundary: Date,
+        observationIdentities: [QuotaObservationIdentity],
+        evidenceIdentities: [String],
+        quotaWindowIdentity: QuotaWindowIdentity? = nil,
+        observationIdentityCount: Int? = nil,
+        evidenceIdentityCount: Int? = nil
+    ) {
+        self.intervalStart = intervalStart
+        self.quotaWindowIdentity = quotaWindowIdentity
+        self.intervalEnd = intervalEnd
+        self.calculatedQuotaMovementPercent = calculatedQuotaMovementPercent
+        self.quotaResetBoundary = quotaResetBoundary
+        self.observationIdentities = observationIdentities
+        self.evidenceIdentities = evidenceIdentities
+        self.observationIdentityCount = observationIdentityCount ?? observationIdentities.count
+        self.evidenceIdentityCount = evidenceIdentityCount ?? evidenceIdentities.count
+    }
+}
+
 public enum CodexQuotaExplanationState: Equatable, Sendable {
     case available(CodexQuotaExplanation)
     case partial(CodexQuotaExplanation)
-    case observedZero(reportedQuotaMovementPercent: Double, quotaResetBoundary: Date, observationIdentityCount: Int, evidenceIdentityCount: Int)
+    case observedZero(CodexQuotaObservedZero)
     case unavailable(CodexQuotaExplanationUnavailableReason)
 
     public var displayText: String {
         switch self {
         case let .available(value):
-            "Measured quota change: +\(value.reportedQuotaMovementPercent.formatted())%. Observed Local Breakdown: \(tokenBreakdownText(value.observedLocalBreakdown)). Complete local coverage. Quota movement remains unattributed."
+            "Measured local quota observations; Calculated movement: +\(value.calculatedQuotaMovementPercent.formatted())%. Observed Local Breakdown: \(tokenBreakdownText(value.observedLocalBreakdown)). Complete local coverage. Quota movement remains unattributed."
         case let .partial(value):
-            "Measured quota change: +\(value.reportedQuotaMovementPercent.formatted())%. Observed Local Breakdown: \(tokenBreakdownText(value.observedLocalBreakdown)) with incomplete local coverage. Quota movement remains unattributed."
-        case let .observedZero(movement, _, _, _):
-            "Measured quota change: +\(movement.formatted())%. Observed Zero local activity for the covered interval. Quota movement remains unattributed."
+            "Measured local quota observations; Calculated movement: +\(value.calculatedQuotaMovementPercent.formatted())%. Observed Local Breakdown: \(tokenBreakdownText(value.observedLocalBreakdown)) with incomplete local coverage. Quota movement remains unattributed."
+        case let .observedZero(value):
+            "Calculated quota movement: +\(value.calculatedQuotaMovementPercent.formatted())% from Measured local quota observations. Observed Zero local activity for the covered interval. Quota movement remains unattributed."
         case let .unavailable(reason):
             "Explanation unavailable: \(reason.displayText)"
         }
@@ -175,30 +212,34 @@ public enum CodexQuotaExplanationEngine {
             reasoning = nextReasoning
         }
         let explanation = CodexQuotaExplanation(
-                intervalStart: lower.observedAt,
-                intervalEnd: upper.observedAt,
-                quotaResetBoundary: upper.identity.resetBoundary,
-                coverageStart: effectiveCoverageStart,
-                coverageEnd: effectiveCoverageEnd,
-            reportedQuotaMovementPercent: movement,
+            intervalStart: lower.observedAt,
+            intervalEnd: upper.observedAt,
+            quotaResetBoundary: upper.identity.resetBoundary,
+            coverageStart: effectiveCoverageStart,
+            coverageEnd: effectiveCoverageEnd,
+            calculatedQuotaMovementPercent: movement,
             observedLocalBreakdown: CodexObservedLocalBreakdown(
                 tokens: CodexMeasuredTokens(input: input, cachedInput: cached, output: output, reasoningOutput: reasoning),
                 sessionCount: Set(intervalEvidence.map(\.sessionIdentity)).count
             ),
             unattributed: true,
-            allocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [lower.stableIdentity, upper.stableIdentity],
             evidenceIdentities: intervalEvidence.map { "\($0.sessionIdentity):\($0.lineOrdinal):\($0.lineSHA256)" },
             adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
-            barriers: Array(Set(barriers)).sorted { $0.rawValue < $1.rawValue }
+            barriers: Array(Set(barriers)).sorted { $0.rawValue < $1.rawValue },
+            quotaWindowIdentity: upper.identity
         )
         if explanation.observedLocalBreakdown.tokens.total == 0, completeCoverage && barriers.isEmpty {
-            return .observedZero(
-                reportedQuotaMovementPercent: movement,
+            return .observedZero(CodexQuotaObservedZero(
+                intervalStart: lower.observedAt,
+                intervalEnd: upper.observedAt,
+                calculatedQuotaMovementPercent: movement,
                 quotaResetBoundary: upper.identity.resetBoundary,
-                observationIdentityCount: explanation.observationIdentityCount,
-                evidenceIdentityCount: explanation.evidenceIdentityCount
-            )
+                observationIdentities: explanation.observationIdentities,
+                evidenceIdentities: explanation.evidenceIdentities,
+                quotaWindowIdentity: upper.identity
+            ))
         }
         return completeCoverage && barriers.isEmpty ? .available(explanation) : .partial(explanation)
     }
