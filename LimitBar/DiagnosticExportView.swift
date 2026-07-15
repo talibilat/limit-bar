@@ -390,6 +390,17 @@ final class DiagnosticExportModel {
     }
 
     init(
+        selection: DiagnosticExportSelection,
+        makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact,
+        localEffects: any DiagnosticExportLocalEffects
+    ) {
+        self.selection = selection
+        self.makeSelectedArtifact = makeArtifact
+        self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
+        self.localEffects = localEffects
+    }
+
+    init(
         makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact,
         localEffects: any DiagnosticExportLocalEffects
     ) {
@@ -497,6 +508,13 @@ struct DiagnosticExportSection: View {
     }
 
     init(state: LimitBarState, chooseDestination: @escaping @MainActor () -> URL?) {
+        self.init(
+            state: state,
+            localEffects: ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
+        )
+    }
+
+    init(state: LimitBarState, localEffects: any DiagnosticExportLocalEffects) {
         let snapshot = state.investigationPublication
         self.snapshot = snapshot
         if let selection = Self.defaultSelection(snapshot: snapshot) {
@@ -505,12 +523,12 @@ struct DiagnosticExportSection: View {
                 makeArtifact: { selection in
                     try DiagnosticExport.make(from: await DiagnosticExportInputBuilder.live(state: state, selection: selection))
                 },
-                chooseDestination: chooseDestination
+                localEffects: localEffects
             ))
         } else {
             _model = State(initialValue: DiagnosticExportModel(
                 makeArtifact: { try DiagnosticExport.make(from: await DiagnosticExportInputBuilder.live(state: state)) },
-                chooseDestination: chooseDestination
+                localEffects: localEffects
             ))
         }
     }

@@ -700,7 +700,7 @@ enum ForensicInvestigationAssembler {
     }
 
     private static func traceReferences(_ identities: [QuotaObservationIdentity]) -> [String] {
-        Array(Set(identities.map { String($0.digest.prefix(12)) })).sorted().prefix(DiagnosticExport.maximumFindingTraceReferences).map { $0 }
+        Array(Set(identities.map { String($0.digest.prefix(12)) })).sorted()
     }
 
     private static func median(_ values: [Double]) -> Double? {

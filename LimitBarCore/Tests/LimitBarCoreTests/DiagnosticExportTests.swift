@@ -114,8 +114,51 @@ struct DiagnosticExportTests {
             try DiagnosticEvidenceAnomaly(status: .unavailable, method: .trailingMedianRatioV1, qualification: .unavailable, unavailableReason: .gap, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 2, currentValue: nil, baselineValue: nil, result: nil, evidenceTraceReferences: [], limitations: [.noCausalAttribution])
         }
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
-            let traces = (0...DiagnosticExport.maximumFindingTraceReferences).map { String(format: "%012x", $0) }
+            let traces = (0...DiagnosticExport.maximumFindingTraceCandidates).map { String(format: "%012x", $0) }
             _ = try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: traces, limitations: [.providerWeightingUnknown])
+        }
+    }
+
+    @Test("finding traces canonicalize complete shuffled inputs before truncation")
+    func findingTraceTruncation() throws {
+        let traces = (0..<25).map { String(format: "%012x", $0) }
+        let shuffledWithDuplicates = Array(Array(traces[9...] + traces[..<9]).reversed()) + [traces[3], traces[3]]
+        let forecast = try DiagnosticEvidenceForecast(
+            status: .unavailable,
+            method: .pairwisePositiveSlopeInterquartileV2,
+            qualification: .unavailable,
+            unavailableReason: .staleEvidence,
+            observationCount: 25,
+            observationSpanSeconds: 900,
+            evidenceAgeSeconds: 100,
+            range: nil,
+            resetInteraction: .unavailable,
+            evidenceTraceReferences: Array(shuffledWithDuplicates),
+            limitations: [.providerWeightingUnknown]
+        )
+        let anomaly = try DiagnosticEvidenceAnomaly(
+            status: .unavailable,
+            method: .trailingMedianRatioV1,
+            qualification: .unavailable,
+            unavailableReason: .staleEvidence,
+            currentPeriod: nil,
+            baselinePeriod: nil,
+            measuredInputCount: 25,
+            currentValue: nil,
+            baselineValue: nil,
+            result: nil,
+            evidenceTraceReferences: Array(shuffledWithDuplicates),
+            limitations: [.noCausalAttribution]
+        )
+
+        #expect(forecast.traceLimit == 16)
+        #expect(forecast.omittedTraceCount == 9)
+        #expect(forecast.evidenceTraceReferences == Array(traces.prefix(16)))
+        #expect(anomaly.traceLimit == 16)
+        #expect(anomaly.omittedTraceCount == 9)
+        #expect(anomaly.evidenceTraceReferences == Array(traces.prefix(16)))
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            _ = try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: ["trace/conflict"], limitations: [.providerWeightingUnknown])
         }
     }
 
@@ -167,6 +210,18 @@ struct DiagnosticExportTests {
         quota = try #require(object["quotaEvidence"] as? [String: Any])
         records = try #require(quota["records"] as? [[String: Any]])
         records[0]["resetBoundaryProvenance"] = "measured"
+        quota["records"] = records
+        object["quotaEvidence"] = quota
+        #expect(throws: DiagnosticExportError.malformedArtifact) {
+            try DiagnosticExport.decode(JSONSerialization.data(withJSONObject: object))
+        }
+        object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        quota = try #require(object["quotaEvidence"] as? [String: Any])
+        records = try #require(quota["records"] as? [[String: Any]])
+        var forecast = try #require(records[0]["forecast"] as? [String: Any])
+        forecast["traceLimit"] = 15
+        forecast["omittedTraceCount"] = 1
+        records[0]["forecast"] = forecast
         quota["records"] = records
         object["quotaEvidence"] = quota
         #expect(throws: DiagnosticExportError.malformedArtifact) {

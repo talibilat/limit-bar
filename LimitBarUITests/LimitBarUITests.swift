@@ -175,6 +175,35 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
     }
 
+    func testDiagnosticExportAppHostedWriteFailureRetriesSameDestinationAndBytes() {
+        launch(screen: "diagnostic-export-write-retry")
+        driveDiagnosticExportToSave()
+        app.buttons["diagnostic-export-save"].click()
+        XCTAssertTrue(app.staticTexts["Could not save the diagnostic export."].waitForExistence(timeout: 5))
+
+        app.buttons["diagnostic-export-save"].click()
+
+        XCTAssertTrue(app.staticTexts["diagnostic-export-write-attempts"].waitForExistence(timeout: 5))
+        XCTAssertEqual(text(of: app.staticTexts["diagnostic-export-write-attempts"]), "2")
+        XCTAssertEqual(text(of: app.staticTexts["diagnostic-export-byte-equality"]), "equal")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
+    }
+
+    func testDiagnosticExportAppHostedNetworkTrapSeesNoRequestsAcrossAllOperations() {
+        launch(screen: "diagnostic-export-network-trap")
+        driveDiagnosticExportToSave()
+        app.buttons["diagnostic-export-save"].click()
+        XCTAssertTrue(app.staticTexts["Could not save the diagnostic export."].waitForExistence(timeout: 5))
+        app.buttons["diagnostic-export-save"].click()
+        XCTAssertTrue(app.staticTexts["diagnostic-export-network-count"].waitForExistence(timeout: 5))
+        XCTAssertEqual(text(of: app.staticTexts["diagnostic-export-network-count"]), "0")
+
+        app.buttons["diagnostic-export-preview"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-approve"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].click()
+        XCTAssertEqual(text(of: app.staticTexts["diagnostic-export-network-count"]), "0")
+    }
+
     func testQuotaInsightFixtureShowsMethodQualificationAndLimitation() {
         launch(screen: "quota-insight")
 
@@ -337,6 +366,15 @@ final class LimitBarUITests: XCTestCase {
     private func launch(screen: String) {
         app.launchEnvironment["LIMITBAR_UI_TEST_SCREEN"] = screen
         app.launch()
+    }
+
+    private func driveDiagnosticExportToSave() {
+        XCTAssertTrue(app.buttons["diagnostic-export-preview"].waitForExistence(timeout: 5))
+        app.buttons["diagnostic-export-preview"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-approve"].waitForExistence(timeout: 5))
+        app.buttons["diagnostic-export-approve"].click()
+        app.buttons["diagnostic-export-choose-destination"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-save"].waitForExistence(timeout: 5))
     }
 
     private func text(of element: XCUIElement) -> String {
