@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Diagnostic export")
 struct DiagnosticExportTests {
-    @Test("export has the complete deterministic v5 positive allow-list")
+    @Test("export has the complete deterministic v6 positive allow-list")
     func deterministicSchema() throws {
         let first = try DiagnosticExport.make(from: input(providerStatuses: [
             DiagnosticProviderStatus(provider: .openAI, state: .networkUnavailable),
@@ -46,12 +46,51 @@ struct DiagnosticExportTests {
         #expect(report.codexExplanation?.adapterVersion == CodexRolloutEvidenceAdapter.adapterVersion)
     }
 
+    @Test("quota evidence report is an exact bounded deterministic positive allow-list")
+    func quotaEvidenceReport() throws {
+        let start = Date(timeIntervalSince1970: 1_900_000_000)
+        var records: [DiagnosticQuotaEvidenceRecord] = []
+        for index in 0...(DiagnosticExport.maximumQuotaEvidenceRecords + 2) {
+            records.append(try evidenceRecord(index: index, start: start))
+        }
+        let evidence = try DiagnosticQuotaEvidenceReport(
+            selectedProduct: .codex,
+            selectedRange: .init(start: start, end: start.addingTimeInterval(3_600), basis: .gregorianUTC),
+            publicationGeneration: 7,
+            publicationTime: start,
+            apiProviderEvidence: .unavailable,
+            records: records
+        )
+
+        let artifact = try DiagnosticExport.make(from: input(quotaEvidence: evidence))
+        let report = try DiagnosticExport.decode(artifact.bytes)
+        let decoded = try #require(report.quotaEvidence)
+        let references = decoded.records.map { $0.traceReference }
+
+        #expect(decoded.records.count == DiagnosticExport.maximumQuotaEvidenceRecords)
+        #expect(decoded.omittedRecordCount == 3)
+        #expect(references == Array(references.sorted().reversed()))
+        #expect(decoded.records.first?.resetBoundary == nil)
+        #expect(decoded.records.first?.localBreakdown == .gap)
+        #expect(decoded.records.dropFirst().allSatisfy { $0.localBreakdown == DiagnosticEvidenceState.observedZero })
+        #expect(decoded.records.first?.anomaly.status == .unavailable)
+        #expect(decoded.records.dropFirst().allSatisfy { $0.anomaly.status == DiagnosticEvidenceState.noFinding })
+        #expect(artifact.previewBytes == artifact.bytes)
+    }
+
+    @Test("quota evidence rejects unbounded text before preview")
+    func quotaEvidenceBounds() throws {
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceVersion(kind: .adapter, value: String(repeating: "x", count: DiagnosticExport.maximumEvidenceTextLength + 1))
+        }
+    }
+
     @Test("decode routes supported, unsupported, and malformed versions")
     func versionAwareDecode() throws {
         let artifact = try DiagnosticExport.make(from: input())
         #expect(try DiagnosticExport.decode(artifact.bytes).application.build == 42)
-        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(6)) {
-            try DiagnosticExport.decode(Data(#"{"schemaVersion":6,"privateFuturePayload":"SECRET"}"#.utf8))
+        #expect(throws: DiagnosticExportError.unsupportedSchemaVersion(7)) {
+            try DiagnosticExport.decode(Data(#"{"schemaVersion":7,"privateFuturePayload":"SECRET"}"#.utf8))
         }
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(Data(#"{"schemaVersion":1}"#.utf8))
@@ -135,7 +174,7 @@ struct DiagnosticExportTests {
     func legacyDecode() throws {
         let v3 = try DiagnosticExport.make(from: input())
         let legacyText = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 1"#)
+            .replacingOccurrences(of: #""schemaVersion" : 6"#, with: #""schemaVersion" : 1"#)
         let legacy = try DiagnosticExport.decode(Data(legacyText.utf8))
         #expect(legacy.schemaVersion == 1)
         #expect(legacy.quotaFindings == nil)
@@ -145,7 +184,7 @@ struct DiagnosticExportTests {
     func v2ForecastMethodDecode() throws {
         let v3 = try DiagnosticExport.make(from: input(includesQuotaFinding: true))
         let v2Text = try v3.preview
-            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 2"#)
+            .replacingOccurrences(of: #""schemaVersion" : 6"#, with: #""schemaVersion" : 2"#)
             .replacingOccurrences(of: #"      "qualification" : "qualified",\n"#, with: "")
             .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
 
@@ -157,7 +196,7 @@ struct DiagnosticExportTests {
     func v3UnavailableMetadataDecode() throws {
         let v4 = try DiagnosticExport.make(from: input(quotaFindings: [try unavailableQuotaFinding()]))
         let v3Text = try v4.preview
-            .replacingOccurrences(of: #""schemaVersion" : 5"#, with: #""schemaVersion" : 3"#)
+            .replacingOccurrences(of: #""schemaVersion" : 6"#, with: #""schemaVersion" : 3"#)
             .replacingOccurrences(of: "pairwise_positive_slope_interquartile_v2", with: "pairwise_positive_slope_interquartile_v1")
             .replacingOccurrences(of: #"      "qualification" : "unavailable",\n"#, with: "")
             .replacingOccurrences(of: "incompatible_evidence", with: "stale_evidence")
@@ -261,7 +300,8 @@ struct DiagnosticExportTests {
         includesQuotaFinding: Bool = false,
         includesCodexExplanation: Bool = false,
         refreshHistory: [DiagnosticRefreshHistoryRecord]? = nil,
-        quotaFindings: [DiagnosticQuotaFinding]? = nil
+        quotaFindings: [DiagnosticQuotaFinding]? = nil,
+        quotaEvidence: DiagnosticQuotaEvidenceReport? = nil
     ) throws -> DiagnosticExportInput {
         try DiagnosticExportInput(
             generatedAt: generatedAt,
@@ -274,7 +314,8 @@ struct DiagnosticExportTests {
             resourceLimitReasons: [.rateLimited, .responseTooLarge],
             refreshHistory: refreshHistory ?? (includesHistory ? [try historyRecord()] : nil),
             quotaFindings: quotaFindings ?? (includesQuotaFinding ? [try quotaFinding()] : nil),
-            codexExplanation: includesCodexExplanation ? try codexExplanationFinding() : nil
+            codexExplanation: includesCodexExplanation ? try codexExplanationFinding() : nil,
+            quotaEvidence: quotaEvidence
         )
     }
 
@@ -314,6 +355,47 @@ struct DiagnosticExportTests {
             measuredObservationCount: 4,
             measuredSpanMinutes: 30,
             forecastMethod: .pairwisePositiveSlopeInterquartileV2
+        )
+    }
+
+    private func evidenceRecord(index: Int, start: Date) throws -> DiagnosticQuotaEvidenceRecord {
+        let unavailable = index == DiagnosticExport.maximumQuotaEvidenceRecords + 2
+        let forecast = try DiagnosticEvidenceForecast(
+            status: .unavailable,
+            methodVersion: "pairwise_positive_slope_interquartile_v2",
+            qualification: .unavailable,
+            observationCount: 0,
+            observationSpanSeconds: 0,
+            evidenceAgeSeconds: nil,
+            range: nil,
+            resetInteraction: .unavailable,
+            limitations: [.providerWeightingUnknown]
+        )
+        let anomaly = try DiagnosticEvidenceAnomaly(
+            status: unavailable ? .unavailable : .noFinding,
+            methodVersion: "trailing_median_ratio_v1",
+            qualification: unavailable ? .unavailable : .qualified,
+            currentPeriod: nil,
+            baselinePeriod: nil,
+            measuredInputCount: 0,
+            currentValue: nil,
+            baselineValue: nil,
+            result: nil,
+            limitations: [.noCausalAttribution]
+        )
+        return try DiagnosticQuotaEvidenceRecord(
+            traceReference: String(format: "%012d", index),
+            intervalStart: start.addingTimeInterval(Double(index) * 60),
+            intervalEnd: start.addingTimeInterval(Double(index + 1) * 60),
+            resetBoundary: unavailable ? nil : start.addingTimeInterval(7_200),
+            movement: DiagnosticEvidenceMovement(value: Double(index), unit: .percentagePoints, provenance: unavailable ? .reported : .calculated),
+            localBreakdown: unavailable ? .gap : .observedZero,
+            unattributedMovement: true,
+            inferredAllocation: nil,
+            forecast: forecast,
+            anomaly: anomaly,
+            versions: [try DiagnosticEvidenceVersion(kind: .adapter, value: "quota-observation-v1")],
+            limitations: [.fixtureValidationOnly]
         )
     }
 

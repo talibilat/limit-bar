@@ -24,6 +24,7 @@ final class LimitBarUITests: XCTestCase {
         app.launchArguments = ["--limitbar-testing", "--limitbar-ui-testing"]
         app.launchEnvironment["LIMITBAR_UI_TEST_RUN_ID"] = runIdentifier
         app.launchEnvironment["LIMITBAR_UI_TEST_CUSTOM_SOURCE_PATH"] = fixtureURL.path
+        app.launchEnvironment["LIMITBAR_UI_TEST_EXPORT_PATH"] = fixtureDirectory.appendingPathComponent("quota-evidence.json").path
         app.launchEnvironment["AppleLanguages"] = "(en)"
         app.launchEnvironment["AppleLocale"] = "en_US_POSIX"
         app.launchEnvironment["TZ"] = "UTC"
@@ -104,15 +105,47 @@ final class LimitBarUITests: XCTestCase {
 
         let previewButton = app.buttons["diagnostic-export-preview"]
         XCTAssertTrue(previewButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.popUpButtons["diagnostic-export-product"].exists)
+        XCTAssertTrue(app.datePickers["diagnostic-export-range-start"].exists)
+        XCTAssertTrue(app.datePickers["diagnostic-export-range-end"].exists)
+        XCTAssertTrue(text(of: app.staticTexts["diagnostic-export-range-basis"]).contains("half-open"))
         XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
         previewButton.click()
 
         XCTAssertTrue(app.staticTexts["Review Diagnostic Export"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["diagnostic-export-json-preview"].exists)
-        XCTAssertTrue(app.buttons["diagnostic-export-save"].exists)
+        XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
         let preview = app.staticTexts["diagnostic-export-json-preview"]
         let previewText = (preview.value as? String) ?? preview.label
         XCTAssertTrue(previewText.contains("schemaVersion"))
+        XCTAssertTrue(previewText.contains("quotaEvidence"))
+        XCTAssertTrue(previewText.contains("gregorian_utc_half_open"))
+        app.buttons["diagnostic-export-approve"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-choose-destination"].exists)
+        app.buttons["diagnostic-export-choose-destination"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-save"].exists)
+        app.buttons["diagnostic-export-save"].click()
+        let saved = try? String(contentsOf: fixtureDirectory.appendingPathComponent("quota-evidence.json"), encoding: .utf8)
+        XCTAssertEqual(saved, previewText)
+    }
+
+    func testDiagnosticExportCancellationCreatesNoReport() {
+        launch(screen: "diagnostic-export")
+        app.buttons["diagnostic-export-preview"].click()
+        XCTAssertTrue(app.buttons["diagnostic-export-approve"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].click()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
+    }
+
+    func testDiagnosticExportDestinationCancellationKeepsPreviewAndCreatesNoReport() {
+        launch(screen: "diagnostic-export-cancel-destination")
+        app.buttons["diagnostic-export-preview"].click()
+        app.buttons["diagnostic-export-approve"].click()
+        app.buttons["diagnostic-export-choose-destination"].click()
+
+        XCTAssertTrue(app.buttons["diagnostic-export-choose-destination"].exists)
+        XCTAssertFalse(app.buttons["diagnostic-export-save"].exists)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("quota-evidence.json").path))
     }
 
     func testQuotaInsightFixtureShowsMethodQualificationAndLimitation() {

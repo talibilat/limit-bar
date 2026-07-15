@@ -261,6 +261,64 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertFalse(diagnostic.contains(sentinel))
     }
 
+    func testQuotaEvidenceProjectionUsesStructuredCoherentPublicationAndExcludesSourceText() throws {
+        let sentinel = "PRIVATE_PROMPT_PATH_ACCOUNT_RESPONSE_TERMINAL"
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let reset = now.addingTimeInterval(3_600)
+        let explanation = CodexQuotaExplanation(
+            intervalStart: now.addingTimeInterval(-120),
+            intervalEnd: now.addingTimeInterval(-60),
+            quotaResetBoundary: reset,
+            coverageStart: now.addingTimeInterval(-120),
+            coverageEnd: now.addingTimeInterval(-60),
+            calculatedQuotaMovementPercent: 2,
+            observedLocalBreakdown: CodexObservedLocalBreakdown(tokens: CodexMeasuredTokens(input: 2, cachedInput: 0, output: 1, reasoningOutput: 0), sessionCount: 1),
+            unattributed: true,
+            inferredAllocation: nil,
+            observationIdentities: [],
+            evidenceIdentities: [sentinel],
+            adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+            barriers: []
+        )
+        let publication = ForensicInvestigationAssembler.make(input(now: now, explanation: .available(explanation)))
+        let evidence = try QuotaEvidenceReportBuilder.make(
+            snapshot: publication,
+            product: .codex,
+            rangeStart: explanation.intervalStart,
+            rangeEnd: explanation.intervalEnd
+        )
+        let diagnosticInput = try DiagnosticExportInputBuilder.make(
+            generatedAt: now,
+            applicationVersion: "1.0.0",
+            applicationBuild: "1",
+            operatingSystemVersion: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0),
+            providerSettings: ProviderSettings.defaultSettings,
+            customSourceCount: 0,
+            databaseIsAvailable: true,
+            acceptedImportCount: 0,
+            rejectedImportCount: 0,
+            customImportFailures: 0,
+            customRejectedLines: 0,
+            refreshHistory: [:],
+            quotaEvidence: evidence
+        )
+        let artifact = try DiagnosticExport.make(from: diagnosticInput)
+        let decoded = try XCTUnwrap(DiagnosticExport.decode(artifact.bytes).quotaEvidence)
+
+        XCTAssertEqual(decoded.selectedRange.basis, .gregorianUTC)
+        XCTAssertEqual(decoded.records.first?.movement?.value, 2)
+        XCTAssertEqual(decoded.records.first?.movement?.provenance, .calculated)
+        XCTAssertEqual(decoded.records.first?.localBreakdown, .available)
+        XCTAssertEqual(decoded.records.first?.localTokenCount, 3)
+        XCTAssertEqual(decoded.records.first?.localSessionCount, 1)
+        XCTAssertEqual(decoded.records.first?.unattributedMovementValue?.value, 2)
+        XCTAssertEqual(decoded.records.first?.unattributedMovementValue?.provenance, .calculated)
+        XCTAssertEqual(decoded.records.first?.forecast.status, .unavailable)
+        XCTAssertEqual(decoded.records.first?.anomaly.status, .unavailable)
+        XCTAssertEqual(decoded.records.first?.resetBoundary, reset)
+        XCTAssertFalse(try artifact.preview.contains(sentinel))
+    }
+
     private func observations(
         identity: QuotaWindowIdentity,
         now: Date,

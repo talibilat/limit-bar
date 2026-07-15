@@ -65,6 +65,7 @@ enum AppUITestConfiguration {
     private static let screenEnvironmentKey = "LIMITBAR_UI_TEST_SCREEN"
     private static let runIdentifierEnvironmentKey = "LIMITBAR_UI_TEST_RUN_ID"
     private static let fixturePathEnvironmentKey = "LIMITBAR_UI_TEST_CUSTOM_SOURCE_PATH"
+    private static let exportPathEnvironmentKey = "LIMITBAR_UI_TEST_EXPORT_PATH"
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(enabledArgument) && runIdentifier != nil
@@ -78,6 +79,11 @@ enum AppUITestConfiguration {
     static var customSourceFixturePath: String? {
         guard isEnabled else { return nil }
         return ProcessInfo.processInfo.environment[fixturePathEnvironmentKey]
+    }
+
+    static var exportPath: String? {
+        guard isEnabled else { return nil }
+        return ProcessInfo.processInfo.environment[exportPathEnvironmentKey]
     }
 
     static var userDefaults: UserDefaults? {
@@ -167,9 +173,15 @@ private struct LimitBarUITestHostView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
-        case "diagnostic-export":
+        case "diagnostic-export", "diagnostic-export-cancel-destination":
             Form {
-                DiagnosticExportSection(model: AppUITestDiagnosticExport.model())
+                DiagnosticExportSection(
+                    state: AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.partial)),
+                    chooseDestination: {
+                        guard AppUITestConfiguration.screen != "diagnostic-export-cancel-destination" else { return nil }
+                        return AppUITestConfiguration.exportPath.map { URL(fileURLWithPath: $0) }
+                    }
+                )
             }
             .formStyle(.grouped)
             .padding(20)
@@ -465,24 +477,4 @@ private struct QuotaInsightUITestView: View {
     }
 }
 
-@MainActor
-private enum AppUITestDiagnosticExport {
-    static func model() -> DiagnosticExportModel {
-        DiagnosticExportModel(
-            makeArtifact: {
-                try DiagnosticExport.make(from: DiagnosticExportInput(
-                    generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-                    appVersion: DiagnosticVersion(major: 1, minor: 2, patch: 3),
-                    appBuild: 42,
-                    operatingSystemVersion: DiagnosticVersion(major: 15, minor: 0, patch: 0),
-                    providerStatuses: [DiagnosticProviderStatus(provider: .anthropic, state: .connected)],
-                    databaseState: .available,
-                    importCounts: DiagnosticImportCounts(accepted: 7, rejected: 2),
-                    resourceLimitReasons: []
-                ))
-            },
-            chooseDestination: { nil }
-        )
-    }
-}
 #endif

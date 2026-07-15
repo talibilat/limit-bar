@@ -138,6 +138,8 @@ final class DiagnosticExportPresentationTests: XCTestCase {
 
         await model.prepare()
         let preview = model.preview
+        model.approvePreview()
+        model.chooseApprovedDestination()
         model.save()
 
         XCTAssertEqual(generation, 1)
@@ -157,8 +159,51 @@ final class DiagnosticExportPresentationTests: XCTestCase {
             chooseDestination: { URL(fileURLWithPath: "/directory-that-does-not-exist/private.json") }
         )
         await save.prepare()
+        save.approvePreview()
+        save.chooseApprovedDestination()
         save.save()
         XCTAssertEqual(save.message, DiagnosticExportModel.saveError)
+    }
+
+    func testWriteFailureRetainsApprovedCandidateForByteIdenticalRetry() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = root.appendingPathComponent("report.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var generations = 0
+        let model = DiagnosticExportModel(
+            makeArtifact: {
+                generations += 1
+                return try self.artifact(build: generations)
+            },
+            chooseDestination: { destination }
+        )
+
+        await model.prepare()
+        let approved = Data(model.preview.utf8)
+        model.approvePreview()
+        model.chooseApprovedDestination()
+        model.save()
+        XCTAssertEqual(model.message, DiagnosticExportModel.saveError)
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        model.save()
+
+        XCTAssertEqual(generations, 1)
+        XCTAssertEqual(try Data(contentsOf: destination), approved)
+    }
+
+    func testSelectionChangeInvalidatesApprovalAndCandidate() async {
+        let model = DiagnosticExportModel(makeArtifact: { try self.artifact() })
+        await model.prepare()
+        model.approvePreview()
+        XCTAssertTrue(model.isApproved)
+
+        model.invalidateApproval()
+
+        XCTAssertFalse(model.isApproved)
+        XCTAssertFalse(model.hasDestination)
+        XCTAssertFalse(model.showsPreview)
+        XCTAssertEqual(model.preview, "")
     }
 
     func testDiagnosticQuotaWindowKindsUseExactIdentityParsing() throws {

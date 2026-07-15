@@ -45,6 +45,14 @@ struct InvestigationRecord: Identifiable, Equatable {
     let freshness: String
     let isGap: Bool
     let isObservedZero: Bool
+    var exportMovement: DiagnosticEvidenceMovement? = nil
+    var exportLocalTokenCount: Int64? = nil
+    var exportLocalSessionCount: Int? = nil
+    var exportAllocation: DiagnosticEvidenceAllocation? = nil
+    var exportForecast: DiagnosticEvidenceForecast? = nil
+    var exportAnomaly: DiagnosticEvidenceAnomaly? = nil
+    var exportVersions: [DiagnosticEvidenceVersion] = []
+    var exportLimitations: [DiagnosticEvidenceLimitation] = []
 }
 
 struct InvestigationProductEvidence: Identifiable, Equatable {
@@ -396,7 +404,7 @@ enum ForensicInvestigationAssembler {
         let movement = value.map { "Reported percentage observations; Calculated movement: \($0.reportedQuotaMovementPercent.formatted()) percentage points." }
             ?? "Reported percentage observations unavailable: \(selection.state.displayText)"
         let limitations = selection.limitations.map(\.rawValue).joined(separator: ", ")
-        return InvestigationRecord(
+        let record = InvestigationRecord(
             id: selection.interval.id,
             identity: selection.interval.identity,
             resetBoundary: selection.interval.identity.resetBoundary,
@@ -413,6 +421,31 @@ enum ForensicInvestigationAssembler {
             freshness: value.map { "Source evidence age \(ForensicInvestigationPresentation.duration($0.evidenceAge)); \($0.lifecycle.rawValue) exact window." } ?? "Source freshness unavailable.",
             isGap: value == nil || value.map { if case .unavailable = $0.attribution { true } else { false } } == true,
             isObservedZero: observedZero
+        )
+        return exporting(
+            record,
+            product: .claudeCode,
+            movement: value.flatMap { try? DiagnosticEvidenceMovement(value: $0.reportedQuotaMovementPercent, unit: .percentagePoints, provenance: .calculated) },
+            localTokenCount: value.flatMap { explanation in
+                guard case let .partial(breakdown) = explanation.attribution else { return nil }
+                let values = [breakdown.inputTokens, breakdown.outputTokens, breakdown.cacheReadTokens, breakdown.cacheCreationTokens]
+                var total: Int64 = 0
+                for value in values {
+                    let result = total.addingReportingOverflow(value)
+                    guard !result.overflow else { return nil }
+                    total = result.partialValue
+                }
+                return total
+            },
+            localSessionCount: value.flatMap {
+                if case let .partial(breakdown) = $0.attribution { return breakdown.sessionCount }
+                return nil
+            },
+            allocation: value?.inferredAllocation,
+            forecast: forecasts[selection.interval.identity],
+            anomaly: anomalies[selection.interval.identity],
+            adapterVersion: value?.sourceAdapterVersion ?? ClaudeCodeOTLPEvidenceAdapter.adapterVersion,
+            clientVersion: value?.sourceVersion
         )
     }
 
@@ -443,7 +476,7 @@ enum ForensicInvestigationAssembler {
         } ?? (observedZero
             ? "Measured Observed Zero local activity with complete supported evidence coverage. This is not a Gap."
             : "Observed Local Breakdown unavailable. This is a Gap, not zero usage.")
-        return InvestigationRecord(
+        let record = InvestigationRecord(
             id: "codex-\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)",
             identity: identity,
             resetBoundary: reset,
@@ -463,6 +496,20 @@ enum ForensicInvestigationAssembler {
             isGap: value == nil && zero == nil,
             isObservedZero: observedZero
         )
+        return exporting(
+            record,
+            product: .codex,
+            movement: (value?.calculatedQuotaMovementPercent ?? zero?.calculatedQuotaMovementPercent).flatMap {
+                try? DiagnosticEvidenceMovement(value: $0, unit: .percentagePoints, provenance: .calculated)
+            },
+            localTokenCount: value?.observedLocalBreakdown.tokens.total,
+            localSessionCount: value?.observedLocalBreakdown.sessionCount,
+            allocation: value?.inferredAllocation,
+            forecast: identity.flatMap { forecasts[$0] },
+            anomaly: identity.flatMap { anomalies[$0] },
+            adapterVersion: value?.adapterVersion ?? CodexRolloutEvidenceAdapter.adapterVersion,
+            clientVersion: nil
+        )
     }
 
     private static func explanationTraces(observations: [QuotaObservationIdentity], evidence: [String]) -> String {
@@ -476,6 +523,165 @@ enum ForensicInvestigationAssembler {
             return "Unattributed: provider movement is not allocated to local activity and no causal claim is made."
         }
         return "Inferred allocation: \(allocation.percent.formatted())%; method \(allocation.method.rawValue); limitations \(allocation.limitations.map(\.rawValue).joined(separator: ", ")). Remaining movement is Unattributed and no causal claim is made."
+    }
+
+    private static func exporting(
+        _ source: InvestigationRecord,
+        product: ProviderProduct,
+        movement: DiagnosticEvidenceMovement?,
+        localTokenCount: Int64?,
+        localSessionCount: Int?,
+        allocation: InferredQuotaAllocation?,
+        forecast: QuotaInsightState?,
+        anomaly: QuotaAnomalyState?,
+        adapterVersion: String?,
+        clientVersion: String?
+    ) -> InvestigationRecord {
+        var record = source
+        record.exportMovement = movement
+        record.exportLocalTokenCount = localTokenCount
+        record.exportLocalSessionCount = localSessionCount
+        record.exportAllocation = allocation.flatMap {
+            try? DiagnosticEvidenceAllocation(
+                percent: $0.percent,
+                methodVersion: $0.method.rawValue,
+                qualification: .qualified,
+                limitations: $0.limitations.compactMap { limitation in
+                    switch limitation {
+                    case .temporalCorrelationOnly, .noCausalAttribution: .noCausalAttribution
+                    case .providerWeightingUnknown: .providerWeightingUnknown
+                    }
+                }
+            )
+        }
+        record.exportForecast = diagnosticForecast(forecast)
+        record.exportAnomaly = diagnosticAnomaly(anomaly)
+        record.exportVersions = [
+            adapterVersion.flatMap { try? DiagnosticEvidenceVersion(kind: .adapter, value: $0) },
+            clientVersion.flatMap { try? DiagnosticEvidenceVersion(kind: .client, value: $0) },
+            try? DiagnosticEvidenceVersion(kind: .interpretation, value: product == .claudeCode ? "claude_provider_report_v1" : "codex_local_report_v1"),
+        ].compactMap { $0 }
+        record.exportLimitations = [.providerWeightingUnknown, .noCausalAttribution, .fixtureValidationOnly]
+        return record
+    }
+
+    private static func diagnosticForecast(_ state: QuotaInsightState?) -> DiagnosticEvidenceForecast? {
+        switch state {
+        case let .qualified(value):
+            return try? DiagnosticEvidenceForecast(
+                status: .available,
+                methodVersion: value.forecastMethod.rawValue,
+                qualification: .qualified,
+                observationCount: value.measuredObservationCount,
+                observationSpanSeconds: boundedSeconds(value.measuredSpan),
+                evidenceAgeSeconds: boundedSeconds(value.evidenceAge),
+                range: try DiagnosticNumberRange(lower: value.calculatedBurnPercentPerHour.lower, upper: value.calculatedBurnPercentPerHour.upper),
+                resetInteraction: value.calculatedExhaustionRange == nil ? .notProjectedBeforeReset : .beforeReportedReset,
+                limitations: [.providerWeightingUnknown, .probabilityNotEstablished, .futureWorkloadUnknown, .fixtureValidationOnly]
+            )
+        case let .unavailable(value):
+            return try? DiagnosticEvidenceForecast(
+                status: .unavailable,
+                methodVersion: value.forecastMethod.rawValue,
+                qualification: .unavailable,
+                observationCount: value.measuredObservationCount,
+                observationSpanSeconds: boundedSeconds(value.measuredSpan),
+                evidenceAgeSeconds: value.evidenceAge.map(boundedSeconds),
+                range: nil,
+                resetInteraction: .unavailable,
+                limitations: [.providerWeightingUnknown, .probabilityNotEstablished, .futureWorkloadUnknown, .fixtureValidationOnly]
+            )
+        case nil:
+            return nil
+        }
+    }
+
+    private static func diagnosticAnomaly(_ state: QuotaAnomalyState?) -> DiagnosticEvidenceAnomaly? {
+        guard let state else { return nil }
+        let metadata: QuotaAnomalyResultMetadata
+        let status: DiagnosticEvidenceState
+        let current: Double?
+        let baseline: Double?
+        let result: Double?
+        switch state {
+        case let .finding(value):
+            metadata = value.metadata; status = .available; current = value.calculatedCurrentValue; baseline = value.calculatedBaselineMedian; result = value.calculatedRatio
+        case let .noFinding(value):
+            metadata = value.metadata; status = .noFinding; current = value.calculatedCurrentValue; baseline = value.calculatedBaselineMedian; result = value.calculatedRatio
+        case let .observedZero(value):
+            metadata = value.metadata; status = .observedZero; current = value.calculatedCurrentValue; baseline = nil; result = nil
+        case let .unavailable(value):
+            metadata = value.metadata; status = .unavailable; current = nil; baseline = nil; result = nil
+        }
+        return try? DiagnosticEvidenceAnomaly(
+            status: status,
+            methodVersion: metadata.method.rawValue,
+            qualification: metadata.qualification == .qualified ? .qualified : .unavailable,
+            currentPeriod: metadata.currentPeriod.flatMap { try? DiagnosticEvidencePeriod(start: $0.start, end: $0.end) },
+            baselinePeriod: metadata.baselinePeriod.flatMap { try? DiagnosticEvidencePeriod(start: $0.start, end: $0.end) },
+            measuredInputCount: min(10_000, metadata.inputObservationIdentities.count),
+            currentValue: current,
+            baselineValue: baseline,
+            result: result,
+            limitations: [.noCausalAttribution, .fixtureValidationOnly]
+        )
+    }
+
+    private static func boundedSeconds(_ value: TimeInterval) -> Int {
+        min(2_592_000, max(0, Int(value.rounded())))
+    }
+}
+
+enum QuotaEvidenceReportBuilder {
+    static func make(
+        snapshot: ForensicInvestigationSnapshot,
+        product: ProviderProduct,
+        rangeStart: Date,
+        rangeEnd: Date
+    ) throws -> DiagnosticQuotaEvidenceReport {
+        let selected = snapshot.products.first { $0.product == product }?.records.filter {
+            ForensicInvestigationPresentation.intersects(start: $0.start, end: $0.end, rangeStart: rangeStart, rangeEnd: rangeEnd)
+        } ?? []
+        let records = try selected.prefix(DiagnosticExport.maximumQuotaEvidenceInputRecords).map { record in
+            let forecast = try record.exportForecast ?? unavailableForecast()
+            let anomaly = try record.exportAnomaly ?? unavailableAnomaly()
+            let versions = record.exportVersions.isEmpty
+                ? [try DiagnosticEvidenceVersion(kind: .adapter, value: "unavailable")]
+                : record.exportVersions
+            return try DiagnosticQuotaEvidenceRecord(
+                traceReference: ForensicInvestigationPresentation.privacyTrace(record.id),
+                intervalStart: record.start,
+                intervalEnd: record.end,
+                resetBoundary: record.resetBoundary,
+                movement: record.exportMovement,
+                localBreakdown: record.isObservedZero ? .observedZero : (record.isGap ? .gap : .available),
+                localTokenCount: record.exportLocalTokenCount,
+                localSessionCount: record.exportLocalSessionCount,
+                unattributedMovement: true,
+                unattributedMovementValue: record.exportAllocation == nil ? record.exportMovement : nil,
+                inferredAllocation: record.exportAllocation,
+                forecast: forecast,
+                anomaly: anomaly,
+                versions: versions,
+                limitations: record.exportLimitations.isEmpty ? [.noCausalAttribution] : record.exportLimitations
+            )
+        }
+        return try DiagnosticQuotaEvidenceReport(
+            selectedProduct: product == .claudeCode ? .claudeCode : .codex,
+            selectedRange: DiagnosticEvidenceSelection(start: rangeStart, end: rangeEnd, basis: .gregorianUTC),
+            publicationGeneration: snapshot.generation,
+            publicationTime: snapshot.publishedAt,
+            apiProviderEvidence: .unavailable,
+            records: records
+        )
+    }
+
+    private static func unavailableForecast() throws -> DiagnosticEvidenceForecast {
+        try DiagnosticEvidenceForecast(status: .unavailable, methodVersion: "unavailable", qualification: .unavailable, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, limitations: [.providerWeightingUnknown])
+    }
+
+    private static func unavailableAnomaly() throws -> DiagnosticEvidenceAnomaly {
+        try DiagnosticEvidenceAnomaly(status: .unavailable, methodVersion: "unavailable", qualification: .unavailable, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: nil, baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
     }
 }
 
