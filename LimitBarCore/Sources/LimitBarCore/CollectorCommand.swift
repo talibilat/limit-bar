@@ -14,6 +14,7 @@ public enum CollectorCommand {
     public static let usage = """
     Usage:
       limitbar-collect --event-id UUID --provider anthropic|azureOpenAI|openAI --timestamp ISO8601 --model LABEL --input-tokens N --output-tokens N [--deployment LABEL] [--output PATH]
+      limitbar-collect --schema-version 2 --event-id UUID --provider anthropic|azureOpenAI|openAI --timestamp ISO8601 --model LABEL --input-tokens N --output-tokens N [--project-id ID] [--project-label LABEL] [--agent-id ID] [--agent-label LABEL] [--deployment LABEL] [--output PATH]
       limitbar-collect --event-id UUID --custom-source-id UUID --timestamp ISO8601 --model LABEL --input-tokens N --output-tokens N --output PATH
 
     Token values are per-event deltas. Persist the UUID before submission and reuse it
@@ -47,8 +48,35 @@ public enum CollectorCommand {
         } else {
             throw CollectorCommandError.usage("Custom sources require --output with their configured JSONL path")
         }
-        let event = CollectorEventV1(eventID: eventID, identity: identity, timestamp: timestamp, model: try required("--model", in: values), deployment: values["--deployment"], inputTokens: inputTokens, outputTokens: outputTokens)
-        switch try CollectorWriter().append(event, to: outputURL) {
+        let attributionOptions = ["--project-id", "--project-label", "--agent-id", "--agent-label"]
+        let hasAttribution = attributionOptions.contains { values[$0] != nil }
+        let schemaVersion: Int
+        if let explicitVersion = values["--schema-version"] {
+            guard explicitVersion == "1" || explicitVersion == "2", let parsed = Int(explicitVersion) else {
+                throw CollectorCommandError.usage("Unsupported --schema-version")
+            }
+            schemaVersion = parsed
+        } else {
+            schemaVersion = CollectorEventV1.schemaVersion
+        }
+        guard !hasAttribution || schemaVersion == CollectorEventV2.schemaVersion else {
+            throw CollectorCommandError.usage("Attribution options require --schema-version 2")
+        }
+        let result: CollectorWriteResult
+        if schemaVersion == CollectorEventV2.schemaVersion {
+            let project = try attribution(id: values["--project-id"], label: values["--project-label"], field: "project")
+            let agent = try attribution(id: values["--agent-id"], label: values["--agent-label"], field: "agent")
+            let event = CollectorEventV2(
+                eventID: eventID, identity: identity, timestamp: timestamp, model: try required("--model", in: values),
+                deployment: values["--deployment"], inputTokens: inputTokens, outputTokens: outputTokens,
+                project: project, agent: agent
+            )
+            result = try CollectorWriter().append(event, to: outputURL)
+        } else {
+            let event = CollectorEventV1(eventID: eventID, identity: identity, timestamp: timestamp, model: try required("--model", in: values), deployment: values["--deployment"], inputTokens: inputTokens, outputTokens: outputTokens)
+            result = try CollectorWriter().append(event, to: outputURL)
+        }
+        switch result {
         case .appended: return "accepted"
         case .duplicate: return "duplicate"
         case .appendedAfterRotation: return "accepted (rotated)"
@@ -65,7 +93,10 @@ public enum CollectorCommand {
             values[key] = arguments[index + 1]
             index += 2
         }
-        let allowed: Set<String> = ["--event-id", "--provider", "--custom-source-id", "--timestamp", "--model", "--deployment", "--input-tokens", "--output-tokens", "--output"]
+        let allowed: Set<String> = [
+            "--schema-version", "--event-id", "--provider", "--custom-source-id", "--timestamp", "--model", "--deployment",
+            "--input-tokens", "--output-tokens", "--project-id", "--project-label", "--agent-id", "--agent-label", "--output"
+        ]
         if let unknown = Set(values.keys).subtracting(allowed).sorted().first { throw CollectorCommandError.usage("Unknown option: \(unknown)") }
         return values
     }
@@ -73,5 +104,13 @@ public enum CollectorCommand {
     private static func required(_ key: String, in values: [String: String]) throws -> String {
         guard let value = values[key] else { throw CollectorCommandError.usage("Missing required option: \(key)") }
         return value
+    }
+
+    private static func attribution(id: String?, label: String?, field: String) throws -> CollectorAttribution? {
+        guard let id else {
+            guard label == nil else { throw CollectorCommandError.usage("--\(field)-label requires --\(field)-id") }
+            return nil
+        }
+        return CollectorAttribution(id: id, label: label)
     }
 }

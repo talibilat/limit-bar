@@ -44,6 +44,7 @@ public enum CollectorSchemaError: Error, Equatable, Sendable {
     case invalidIdentity
     case invalidTimestamp
     case invalidLabel(String)
+    case invalidAttribution(String)
     case deploymentNotAllowed
     case invalidCounter(String)
 }

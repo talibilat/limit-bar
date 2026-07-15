@@ -10,6 +10,12 @@ protocol QuotaInsightsServing: Sendable {
     func deleteAll() async throws
 }
 
+protocol AttributionEvidenceDeleting: Sendable {
+    func deleteAllAttributionEvidence(now: Date) async throws
+}
+
+extension UsageDatabase: AttributionEvidenceDeleting {}
+
 extension QuotaInsightsService: QuotaInsightsServing {}
 
 @main
@@ -69,6 +75,7 @@ final class LimitBarState {
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
+    private let attributionEvidenceStore: any AttributionEvidenceDeleting
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
@@ -82,6 +89,7 @@ final class LimitBarState {
         providerSettings = ProviderSettingsStore().settings
         let codexExplanationStore = try? SQLiteCodexExplanationStore.applicationSupportStore()
         self.codexExplanationStore = codexExplanationStore
+        attributionEvidenceStore = UsageDatabase.shared
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
             codexEvidence: CodexSessionScanner(sessionsDirectory: sessionsDirectory, explanationStore: codexExplanationStore)
@@ -106,13 +114,15 @@ final class LimitBarState {
         claudeModel: ClaudeRateLimitsModel,
         coordinator: LocalRefreshCoordinator,
         quotaInsightsService: (any QuotaInsightsServing)? = nil,
-        codexExplanationStore: SQLiteCodexExplanationStore? = nil
+        codexExplanationStore: SQLiteCodexExplanationStore? = nil,
+        attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared
     ) {
         self.providerSettings = providerSettings
         self.claudeModel = claudeModel
         self.coordinator = coordinator
         self.quotaInsightsService = quotaInsightsService
         self.codexExplanationStore = codexExplanationStore
+        self.attributionEvidenceStore = attributionEvidenceStore
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
         let alertSettingsStore = AlertSettingsStore()
@@ -187,6 +197,16 @@ final class LimitBarState {
         do {
             try codexExplanationStore.deleteAll()
             local.clearCodexExplanation()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func deleteProjectAgentAttribution() async -> Bool {
+        do {
+            try await attributionEvidenceStore.deleteAllAttributionEvidence(now: Date())
+            requestLocalRefresh()
             return true
         } catch {
             return false

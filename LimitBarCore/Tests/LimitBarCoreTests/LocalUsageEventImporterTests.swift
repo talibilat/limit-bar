@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SQLite3
 import Testing
@@ -71,6 +72,20 @@ struct LocalUsageEventImporterTests {
 
         #expect(event.model == "gpt-4.1")
         #expect(event.deployment == "team-tools")
+    }
+
+    @Test("legacy parser ignores arbitrary schemaVersion and unknown field types")
+    func legacyParserRemainsPermissive() throws {
+        for fields in [
+            #""schemaVersion":"2","unknown":{"private":"sentinel"},"#,
+            #""schemaVersion":true,"unknown":[1,2,3],"#,
+            #""schemaVersion":{"future":2},"unknown":null,"#,
+            #""schemaVersion":2.5,"unknown":false,"#
+        ] {
+            let event = try LocalUsageEventParser.parseLine("{\(fields)\"provider\":\"openAI\",\"timestamp\":\"2026-07-10T10:30:00Z\",\"model\":\"gpt-5\",\"inputTokens\":1,\"outputTokens\":2}")
+            #expect(event.model == "gpt-5")
+            #expect(event.project == nil && event.agent == nil)
+        }
     }
 
     @Test("imports valid events and reports malformed lines")
@@ -199,16 +214,19 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let fileURL = try temporaryFile(contents: Array(repeating: "bad-json", count: 25).joined(separator: "\n"))
 
-        let result = try LocalUsageEventImporter.importEvents(
-            from: fileURL,
-            to: store,
-            now: try date("2026-07-10T18:00:00Z"),
-            calendar: try utcCalendar()
-        )
-
-        #expect(result.malformedEventCount == 25)
-        #expect(result.malformedEvents.count == 20)
-        #expect(result.malformedEvents.map(\.lineNumber) == Array(1...20))
+        do {
+            _ = try LocalUsageEventImporter.importEvents(
+                from: fileURL,
+                to: store,
+                now: try date("2026-07-10T18:00:00Z"),
+                calendar: try utcCalendar()
+            )
+            Issue.record("Expected no-valid-events failure")
+        } catch let LocalUsageEventError.noValidEvents(diagnostics, rejectedLineCount, _) {
+            #expect(rejectedLineCount == 25)
+            #expect(diagnostics.count == 20)
+            #expect(diagnostics.map(\.lineNumber) == Array(1...20))
+        }
     }
 
     @Test("overlong line is discarded without preventing the next event")
@@ -271,6 +289,20 @@ struct LocalUsageEventImporterTests {
         let imported = try store.allMetrics().filter { $0.provider == .openAI && $0.provenance.source == .builtInLocalLog }
         #expect(imported.count == 2)
         #expect(imported.allSatisfy { $0.modelLabel == "existing" })
+    }
+
+    @Test("parent and attribution aggregates share one ten-thousand-key bound")
+    func combinedAggregateLimit() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let fileURL = try temporaryFile(contents: (0...2_500).map { index in
+            "{\"schemaVersion\":2,\"eventID\":\"\(String(format: "00000000-0000-0000-0000-%012d", index + 1))\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-10T10:30:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1,\"projectID\":\"project-\(index)\"}"
+        }.joined(separator: "\n"))
+
+        #expect(throws: LocalUsageEventError.tooManyAggregates) {
+            try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: utcCalendar())
+        }
+        #expect(try store.allMetrics().isEmpty)
     }
 
     @Test("pre-cancelled import preserves the previous snapshot")
@@ -607,6 +639,133 @@ struct LocalUsageEventImporterTests {
         #expect(today.count == 2)
         #expect(today.contains { $0.provenance.source == .providerAPI && $0.modelLabel == "api" })
         #expect(today.contains { $0.provenance.source == .builtInLocalLog && $0.modelLabel == "local" })
+    }
+
+    @Test("v2 project and agent usage is an Observed Local Breakdown without double-counting parent totals")
+    func aggregatesV2AttributionSeparately() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: [
+            #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":10,"outputTokens":2,"projectID":"alpha","projectLabel":"Alpha","agentID":"reviewer","agentLabel":"Reviewer"}"#,
+            #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T11:00:00Z","model":"gpt-5","inputTokens":5,"outputTokens":1,"projectID":"beta","projectLabel":"Beta","agentID":"builder","agentLabel":"Builder"}"#,
+            #"{"schemaVersion":1,"eventID":"00000000-0000-0000-0000-000000000003","provider":"openAI","timestamp":"2026-07-10T12:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":1}"#
+        ].joined(separator: "\n"))
+
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+
+        let parent = try #require(store.metrics(for: .today).first { $0.provider == .openAI })
+        #expect(parent.tokenUsage == TokenUsage(inputTokens: 18, outputTokens: 4))
+        let today = result.attributionBreakdowns.filter { $0.window.timeWindow == .today }
+        #expect(today.count == 2)
+        #expect(today.allSatisfy { $0.evidenceKind == .observedLocalBreakdown })
+        #expect(today.allSatisfy { $0.source == .builtInLocalLog && $0.provider == .openAI && $0.model == "gpt-5" })
+        #expect(Set(today.compactMap(\.project?.id)) == ["alpha", "beta"])
+        #expect(Set(today.compactMap(\.agent?.id)) == ["reviewer", "builder"])
+        #expect(Set(today.flatMap(\.eventIDs)) == [
+            UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        ])
+        #expect(today.reduce(0) { $0 + $1.tokenUsage.totalTokens } == 18)
+        #expect(parent.tokenUsage.totalTokens == 22)
+    }
+
+    @Test("missing attribution remains unknown and deleting input deletes attribution evidence")
+    func missingAndDeletedAttribution() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+        let calendar = try utcCalendar()
+        let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1}"#)
+
+        let initial = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(initial.attributionBreakdowns.isEmpty)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let attributed = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(attributed.attributionBreakdowns.count == 2)
+        try FileManager.default.removeItem(at: fileURL)
+        let deleted = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        #expect(deleted.attributionBreakdowns.isEmpty)
+    }
+
+    @Test("prohibited attribution sentinels never reach persistence diagnostics errors or export")
+    func privacySentinelsDoNotEscape() throws {
+        let acceptedSentinel = "ACCEPTED_API_KEY_SENTINEL"
+        let unknownSentinel = "UNKNOWN_PROMPT_SENTINEL"
+        let rejectedSentinel = "REJECTED_PATH_SENTINEL"
+        let valid = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1,"projectID":"alpha","agentID":"builder"}"#
+        let acceptedField = "{\"schemaVersion\":2,\"eventID\":\"00000000-0000-0000-0000-000000000002\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-10T10:00:00Z\",\"model\":\"gpt-5\",\"inputTokens\":1,\"outputTokens\":1,\"projectID\":\"alpha\",\"projectLabel\":\"\(acceptedSentinel)\"}"
+        let unknownField = "{\"schemaVersion\":2,\"eventID\":\"00000000-0000-0000-0000-000000000003\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-10T10:00:00Z\",\"model\":\"gpt-5\",\"inputTokens\":1,\"outputTokens\":1,\"prompt\":\"\(unknownSentinel)\"}"
+        let rejectedField = "{\"schemaVersion\":2,\"eventID\":\"00000000-0000-0000-0000-000000000004\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-10T10:00:00Z\",\"model\":\"gpt-5\",\"inputTokens\":1,\"outputTokens\":1,\"projectID\":\"/Users/\(rejectedSentinel)\"}"
+        let fileURL = try temporaryFile(contents: [valid, acceptedField, unknownField, rejectedField].joined(separator: "\n"))
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let now = try date("2026-07-10T18:00:00Z")
+
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: utcCalendar())
+        #expect(result.validEventCount == 1)
+        #expect(result.malformedEventCount == 3)
+        let diagnostics = String(describing: result)
+        for sentinel in [acceptedSentinel, unknownSentinel, rejectedSentinel] {
+            #expect(!diagnostics.contains(sentinel))
+        }
+
+        let attributionStore = try SQLiteUsageAttributionStore.inMemory()
+        try attributionStore.replace(result.attributionBreakdowns, source: .builtInLocalLog, sourceRevision: "revision", now: now)
+        let persisted = String(describing: try attributionStore.all(now: now))
+        let export = try DiagnosticExport.make(from: DiagnosticExportInput(
+            generatedAt: now,
+            appVersion: DiagnosticVersion(major: 1, minor: 0, patch: 0),
+            appBuild: 1,
+            operatingSystemVersion: DiagnosticVersion(major: 14, minor: 0, patch: 0),
+            providerStatuses: [],
+            databaseState: .available,
+            importCounts: DiagnosticImportCounts(accepted: result.validEventCount, rejected: result.malformedEventCount),
+            resourceLimitReasons: []
+        ))
+        let preview = try export.preview
+        for sentinel in [acceptedSentinel, unknownSentinel, rejectedSentinel] {
+            #expect(!persisted.contains(sentinel))
+            #expect(!preview.contains(sentinel))
+        }
+
+        for line in [acceptedField, unknownField, rejectedField] {
+            do {
+                _ = try CollectorSchemaV2.decode(Data(line.utf8))
+                Issue.record("Expected prohibited attribution rejection")
+            } catch {
+                let output = String(describing: error)
+                #expect(!output.contains(acceptedSentinel))
+                #expect(!output.contains(unknownSentinel))
+                #expect(!output.contains(rejectedSentinel))
+            }
+        }
+    }
+
+    @Test("source revision hashes the exact bytes read across atomic path replacement")
+    func revisionMatchesImportedBytesDuringReplacement() throws {
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"model-b","inputTokens":2,"outputTokens":2,"projectID":"beta"}"#
+        let bytesA = Data((eventA + String(repeating: "\n", count: 70_000)).utf8)
+        let bytesB = Data(eventB.utf8)
+        let fileURL = try temporaryFile(contents: "")
+        try bytesA.write(to: fileURL)
+        let store = try SQLiteUsageMetricStore.inMemory()
+        var replaced = false
+
+        let result = try LocalUsageEventImporter.importEvents(
+            from: fileURL,
+            to: store,
+            now: try date("2026-07-10T18:00:00Z"),
+            calendar: try utcCalendar(),
+            onChunkRead: { _ in
+                guard !replaced else { return }
+                replaced = true
+                try bytesB.write(to: fileURL, options: .atomic)
+            }
+        )
+
+        #expect(result.sourceRevision == SHA256.hash(data: bytesA).map { String(format: "%02x", $0) }.joined())
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
     private func temporaryFile(contents: String) throws -> URL {

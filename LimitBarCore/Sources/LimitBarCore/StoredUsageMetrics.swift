@@ -4,6 +4,19 @@ public struct StoredUsageMetricsSnapshot: Equatable, Sendable {
     public let metrics: [UsageMetric]
     public let health: UsageStoreHealth
     public let localImport: LocalUsageImportResult
+    public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
+
+    public init(
+        metrics: [UsageMetric],
+        health: UsageStoreHealth,
+        localImport: LocalUsageImportResult,
+        attributionBreakdowns: [ObservedLocalAttributionBreakdown] = []
+    ) {
+        self.metrics = metrics
+        self.health = health
+        self.localImport = localImport
+        self.attributionBreakdowns = attributionBreakdowns
+    }
 }
 
 public enum StoredUsageMetrics {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import LimitBarCore
@@ -65,6 +66,20 @@ struct CustomUsageSourceTests {
         #expect(event.model == "gpt-4o")
         #expect(event.inputTokens == 100)
         #expect(event.outputTokens == 20)
+    }
+
+    @Test("legacy custom parser ignores arbitrary schemaVersion and unknown field types")
+    func legacyCustomParserRemainsPermissive() throws {
+        for fields in [
+            #""schemaVersion":"2","unknown":{"private":"sentinel"},"#,
+            #""schemaVersion":true,"unknown":[1,2,3],"#,
+            #""schemaVersion":{"future":2},"unknown":null,"#,
+            #""schemaVersion":2.5,"unknown":false,"#
+        ] {
+            let event = try CustomUsageEventParser.parseLine("{\(fields)\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"local\",\"inputTokens\":1,\"outputTokens\":2}")
+            #expect(event.model == "local")
+            #expect(event.project == nil && event.agent == nil)
+        }
     }
 
     @Test("rejects missing fields and negative tokens")
@@ -163,6 +178,21 @@ struct CustomUsageSourceTests {
         #expect(result.diagnostics.count == 20)
     }
 
+    @Test("custom-source v2 attribution retains its source identity")
+    func customV2Attribution() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar()
+        )
+
+        #expect(result.attributionBreakdowns.count == 2)
+        #expect(result.attributionBreakdowns.allSatisfy { $0.source == .custom(sourceID) && $0.provider == .custom })
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" && $0.agent?.id == "builder" })
+    }
+
     @Test("load rejects sparse oversized files, directories, and special files without leaking paths")
     func rejectsUnsafeFiles() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -247,6 +277,49 @@ struct CustomUsageSourceTests {
                 calendar: utcCalendar()
             )
         }
+    }
+
+    @Test("custom parent and attribution aggregates share one ten-thousand-key bound")
+    func customCombinedAggregateLimit() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let jsonl = (0...2_500).map { index in
+            "{\"schemaVersion\":2,\"eventID\":\"\(String(format: "00000000-0000-0000-0000-%012d", index + 1))\",\"customSourceID\":\"\(sourceID.uuidString)\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1,\"agentID\":\"agent-\(index)\"}"
+        }.joined(separator: "\n")
+        let fileURL = try temporaryFile(contents: jsonl)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+
+        await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
+            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
+        }
+    }
+
+    @Test("custom source revision hashes the exact bytes read across atomic path replacement")
+    func customRevisionMatchesImportedBytesDuringReplacement() async throws {
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-a","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-b","inputTokens":2,"outputTokens":2,"projectID":"beta"}"#
+        let bytesA = Data((eventA + String(repeating: "\n", count: 70_000)).utf8)
+        let bytesB = Data(eventB.utf8)
+        let fileURL = try temporaryFile(contents: "")
+        try bytesA.write(to: fileURL)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        var replaced = false
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL,
+            source: source,
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar(),
+            onChunkRead: { _ in
+                guard !replaced else { return }
+                replaced = true
+                try bytesB.write(to: fileURL, options: .atomic)
+            }
+        )
+
+        #expect(result.sourceRevision == SHA256.hash(data: bytesA).map { String(format: "%02x", $0) }.joined())
+        #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
     private func temporaryFile(contents: String) throws -> URL {

@@ -66,12 +66,17 @@ public struct CollectorWriter: Sendable {
     }
 
     @discardableResult
+    public func append(_ event: CollectorEventV2, to outputURL: URL, now: Date = Date()) throws -> CollectorWriteResult {
+        try append(CollectorSchemaV2.encode(event), to: outputURL, now: now)
+    }
+
+    @discardableResult
     public func append(_ request: Data, to outputURL: URL, now: Date = Date()) throws -> CollectorWriteResult {
         try validatePolicy()
         guard request.count <= policy.maximumRequestBytes else { throw CollectorWriterError.requestTooLarge }
-        let event = try CollectorSchemaV1.decode(request)
+        let event = try CollectorSchema.decode(request)
         guard event.timestamp <= now.addingTimeInterval(policy.futureTimestampTolerance) else { throw CollectorWriterError.futureTimestamp }
-        let canonicalRequest = try CollectorSchemaV1.encode(event)
+        let canonicalRequest = try CollectorSchema.encode(event)
 
         let fileManager = FileManager.default
         let directory = outputURL.deletingLastPathComponent()
@@ -159,13 +164,13 @@ public struct CollectorWriter: Sendable {
         return descriptor
     }
 
-    private func existingEvent(matching submittedEvent: CollectorEventV1, in data: Data) -> ExistingEventMatch {
+    private func existingEvent(matching submittedEvent: CollectorEvent, in data: Data) -> ExistingEventMatch {
         let expectedID = submittedEvent.eventID.uuidString.lowercased()
         for line in data.split(separator: 0x0A) {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                   let value = object["eventID"] as? String,
                   value.lowercased() == expectedID else { continue }
-            guard let event = try? CollectorSchemaV1.decode(Data(line)) else { return .different }
+            guard let event = try? CollectorSchema.decode(Data(line)) else { return .different }
             return event == submittedEvent ? .same : .different
         }
         return .absent
@@ -205,7 +210,7 @@ public struct CollectorWriter: Sendable {
         }
     }
 
-    private func archiveURL(for outputURL: URL, event: CollectorEventV1, now: Date) -> URL {
+    private func archiveURL(for outputURL: URL, event: CollectorEvent, now: Date) -> URL {
         let suffix = outputURL.pathExtension.isEmpty ? "jsonl" : outputURL.pathExtension
         let name = "\(archivePrefix(for: outputURL))\(Int(now.timeIntervalSince1970)).\(event.eventID.uuidString.lowercased()).\(suffix)"
         return outputURL.deletingLastPathComponent().appendingPathComponent(name)

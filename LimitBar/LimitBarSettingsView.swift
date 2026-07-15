@@ -32,6 +32,8 @@ struct LimitBarSettingsView: View {
     @State private var quotaDeletionMessage: String?
     @State private var showsDeleteCodexExplanationsConfirmation = false
     @State private var codexExplanationDeletionMessage: String?
+    @State private var showsDeleteAttributionConfirmation = false
+    @State private var attributionDeletionMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -153,6 +155,25 @@ struct LimitBarSettingsView: View {
                     Text(codexExplanationDeletionMessage)
                         .font(.caption)
                         .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Project And Agent Attribution") {
+                Text("Measured project and agent breakdowns are retained locally in bounded normalized form. Parent usage totals and source files remain separate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting attribution does not change current parent usage, settings, credentials, alert rules, or notification delivery history. Unchanged sources remain suppressed after refresh and relaunch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Project And Agent Attribution", role: .destructive) {
+                    showsDeleteAttributionConfirmation = true
+                }
+                .accessibilityIdentifier("delete-project-agent-attribution")
+                if let attributionDeletionMessage {
+                    Text(attributionDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(attributionDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                        .accessibilityIdentifier("project-agent-attribution-deletion-message")
                 }
             }
 
@@ -323,6 +344,24 @@ struct LimitBarSettingsView: View {
             Text("This removes retained Codex explanation findings only. It does not remove current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
         }
         .confirmationDialog(
+            "Delete retained project and agent attribution?",
+            isPresented: $showsDeleteAttributionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Attribution", role: .destructive) {
+                Task {
+                    let succeeded = await state.deleteProjectAgentAttribution()
+                    attributionDeletionMessage = AttributionEvidenceDeletionPresentation.message(succeeded: succeeded)
+                    if succeeded {
+                        storedMetrics = await UsageDatabase.shared.snapshot()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained project and agent breakdowns only. Current parent usage, source files, settings, credentials, alert rules, and notification delivery history remain unchanged.")
+        }
+        .confirmationDialog(
             "Clear provider refresh history?",
             isPresented: $showsClearRefreshHistoryConfirmation,
             titleVisibility: .visible
@@ -453,6 +492,14 @@ struct LimitBarSettingsView: View {
                 databaseRecoveryMessage = "Could not create a clean database. The original database was not intentionally deleted."
             }
         }
+    }
+}
+
+enum AttributionEvidenceDeletionPresentation {
+    static func message(succeeded: Bool) -> String {
+        succeeded
+            ? "Project and agent attribution deleted. Parent usage, source files, settings, credentials, alert rules, and delivery history were not changed."
+            : "Could not delete project and agent attribution. Existing attribution was left available."
     }
 }
 
