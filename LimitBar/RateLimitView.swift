@@ -5,6 +5,7 @@ struct RateLimitView: View {
     let state: LimitBarState
     let pricingTable: PricingTable
     let workloadPlanningData: any WorkloadPlanningDataProviding
+    @State private var investigationSnapshot: ForensicInvestigationSnapshot?
 
     init(
         state: LimitBarState,
@@ -19,6 +20,17 @@ struct RateLimitView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Spacer()
+                    Button("Investigate quota evidence") {
+                        investigationSnapshot = ForensicInvestigationAssembler.make(state: state)
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .accessibilityHint("Opens detailed normalized evidence, methods, and limitations")
+                    .accessibilityIdentifier("open-forensic-investigation")
+                }
+
                 if state.claudeModel.isPresent {
                     sectionHeader("Claude")
                     ClaudeRateLimitsView(
@@ -56,6 +68,9 @@ struct RateLimitView: View {
             }
         }
         .scrollIndicators(.hidden)
+        .sheet(item: $investigationSnapshot) { snapshot in
+            ForensicInvestigationView(snapshot: snapshot)
+        }
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -63,6 +78,10 @@ struct RateLimitView: View {
             .font(.headline)
             .foregroundStyle(.secondary)
     }
+}
+
+extension ForensicInvestigationSnapshot: Identifiable {
+    var id: Date { publishedAt }
 }
 
 struct WorkloadPlanningInputSupport: Equatable {

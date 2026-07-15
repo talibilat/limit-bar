@@ -180,6 +180,7 @@ public struct LocalRefreshSnapshot: Equatable, Sendable {
 public final class LimitBarLocalStateProjection {
     public private(set) var status = AppStatus.initial
     public private(set) var metrics: [UsageMetric] = []
+    public private(set) var attributionBreakdowns: [ObservedLocalAttributionBreakdown] = []
     public private(set) var storeHealth = UsageStoreHealth(isOpen: false, message: "Loading SQLite store")
     public private(set) var localImport = LocalUsageImportResult.empty(fileURL: URL(fileURLWithPath: ""))
     public private(set) var customImportFailures = 0
@@ -194,6 +195,7 @@ public final class LimitBarLocalStateProjection {
     public func apply(_ refresh: LocalRefreshSnapshot) {
         if let usage = refresh.usage {
             metrics = usage.snapshot.metrics
+            attributionBreakdowns = usage.snapshot.attributionBreakdowns
             storeHealth = usage.snapshot.health
             localImport = usage.snapshot.localImport
             customImportFailures = usage.customDiagnostics.filter { $0.failureMessage != nil }.count

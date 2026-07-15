@@ -148,10 +148,105 @@ private struct LimitBarUITestHostView: View {
             ClaudeExplanationUITestView()
         case "claude-explanation-single":
             ClaudeExplanationUITestView(includeCompleted: false)
+        case "investigation-all-available":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.available))
+        case "investigation-partial":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.partial))
+        case "investigation-loading":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.loading))
+        case "investigation-empty":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.empty))
+        case "investigation-unavailable":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.unavailable))
+        case "investigation-error":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.error))
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private enum AppUITestInvestigation {
+    static let start = Date(timeIntervalSince1970: 1_900_000_000)
+    static let reset = start.addingTimeInterval(7_200)
+
+    static func fixture(_ state: InvestigationPublicationState) -> ForensicInvestigationSnapshot {
+        guard state == .available || state == .partial else {
+            return ForensicInvestigationSnapshot(
+                publicationState: state,
+                publishedAt: start.addingTimeInterval(1_800),
+                products: [],
+                apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
+                message: state.label
+            )
+        }
+        let identity = try! QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: reset)
+        let qualifiedForecast = InvestigationFindingPresentation(
+            status: "Qualified",
+            summary: "Calculated burn 4.0-6.0% per hour; exhaustion is not projected before the Reported reset.",
+            details: "4 Measured observations over 30m; evidence age 2m; method pairwise_positive_slope_interquartile_v2; qualification qualified; exact bounded evidence range."
+        )
+        let noFinding = InvestigationFindingPresentation(
+            status: "No finding",
+            summary: "Qualified analysis found no anomaly.",
+            details: "Current exact period and trailing baseline exact period; method trailing_median_ratio_v1; Measured inputs; limitations no_causal_attribution."
+        )
+        let available = InvestigationRecord(
+            id: "available",
+            identity: identity,
+            start: start,
+            end: start.addingTimeInterval(900),
+            authoritativeTotal: "Reported provider total: 6 percentage-point movement between two Reported observations.",
+            localBreakdown: "Measured Observed Local Breakdown: 42 tokens across 2 privacy-safe sessions. Not added to the provider total.",
+            unattributed: "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
+            forecast: qualifiedForecast,
+            anomaly: noFinding,
+            version: "Explanation method codex-quota-explanation-v1; adapter codex-rollout-observed-0.144.4; client version unavailable - not captured.",
+            limitations: "Exact source traces: 2 Reported observations and 3 Measured evidence items; provider weighting unknown.",
+            isGap: false,
+            isObservedZero: false
+        )
+        var records = [available]
+        if state == .partial {
+            records.append(InvestigationRecord(
+                id: "observed-zero",
+                identity: identity,
+                start: start.addingTimeInterval(1_200),
+                end: start.addingTimeInterval(1_800),
+                authoritativeTotal: "Reported provider total: 0 percentage-point movement.",
+                localBreakdown: "Measured Observed Zero local activity with complete supported evidence coverage.",
+                unattributed: "Unattributed: flat movement does not prove that no activity occurred.",
+                forecast: InvestigationFindingPresentation(status: "Unavailable", summary: "Unavailable - no point estimate is shown.", details: "Reason no_positive_burn; method pairwise_positive_slope_interquartile_v2."),
+                anomaly: InvestigationFindingPresentation(status: "Observed Zero", summary: "Measured inputs produced a Calculated zero value.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
+                version: "Adapter version codex-rollout-observed-0.144.4; client version unavailable - not captured.",
+                limitations: "Observed Zero does not prove that no other activity occurred.",
+                isGap: false,
+                isObservedZero: true
+            ))
+            records.append(InvestigationRecord(
+                id: "gap",
+                identity: identity,
+                start: start.addingTimeInterval(2_100),
+                end: start.addingTimeInterval(2_700),
+                authoritativeTotal: "Authoritative movement unavailable for this exact interval.",
+                localBreakdown: "Observed Local Breakdown unavailable. This is a Gap, not zero usage.",
+                unattributed: "Unattributed: no local activity is assigned to provider movement.",
+                forecast: InvestigationFindingPresentation(status: "Unavailable", summary: "Unavailable - no point estimate is shown.", details: "Reason gap; method pairwise_positive_slope_interquartile_v2."),
+                anomaly: InvestigationFindingPresentation(status: "Unavailable - Gap", summary: "Analysis unavailable: gap. No numerical finding is shown.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
+                version: "Adapter version unavailable - not captured; no unchanged-version claim.",
+                limitations: "Partial coverage and Gap. No interpolation is drawn.",
+                isGap: true,
+                isObservedZero: false
+            ))
+        }
+        return ForensicInvestigationSnapshot(
+            publicationState: state,
+            publishedAt: start.addingTimeInterval(1_800),
+            products: [InvestigationProductEvidence(product: .codex, records: records, attributions: [])],
+            apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
+            message: state == .partial ? "Independent qualified sections remain available; unavailable sections are not presented as zero." : nil
+        )
     }
 }
 

@@ -183,8 +183,53 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(text.contains("No supported adapter records measured completed runs"))
     }
 
+    func testInvestigationWorkflowShowsExactRangeAndTraceableEvidence() {
+        launch(screen: "investigation-all-available")
+
+        XCTAssertTrue(app.popUpButtons["investigation-product"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.datePickers["investigation-range-start"].exists)
+        XCTAssertTrue(app.datePickers["investigation-range-end"].exists)
+        XCTAssertTrue(text(of: app.staticTexts["investigation-range-basis"]).contains("UTC"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-authoritative-total"]).contains("Reported provider total"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-local-breakdown"]).contains("Observed Local Breakdown"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-unattributed"]).contains("Unattributed"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-reset"]).contains("Reported reset"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-forecast"]).contains("Calculated"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-anomaly"]).contains("method"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-version"]).contains("adapter"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-api-unavailable"]).contains("API-provider quota evidence is unavailable"))
+    }
+
+    func testInvestigationDistinguishesObservedZeroGapAndPartialEvidence() {
+        launch(screen: "investigation-partial")
+
+        XCTAssertTrue(app.staticTexts["investigation-publication-state"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-publication-state"]).contains("Partial evidence"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-observed-zero"]).contains("Observed Zero"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-gap"]).contains("Gap"))
+        XCTAssertFalse(text(of: app.staticTexts["investigation-gap"]).contains("Observed Zero"))
+    }
+
+    func testInvestigationHasDistinctLoadingEmptyUnavailableAndErrorFixtures() {
+        for screen in ["investigation-loading", "investigation-empty", "investigation-unavailable", "investigation-error"] {
+            app.terminate()
+            launch(screen: screen)
+            XCTAssertTrue(app.staticTexts["investigation-publication-state"].waitForExistence(timeout: 5), screen)
+        }
+    }
+
+    func testPopoverExposesSubordinateInvestigationEntryPoint() {
+        launch(screen: "popover")
+
+        XCTAssertTrue(app.buttons["open-forensic-investigation"].waitForExistence(timeout: 5))
+    }
+
     private func launch(screen: String) {
         app.launchEnvironment["LIMITBAR_UI_TEST_SCREEN"] = screen
         app.launch()
+    }
+
+    private func text(of element: XCUIElement) -> String {
+        (element.value as? String) ?? element.label
     }
 }
