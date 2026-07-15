@@ -71,17 +71,30 @@ History persistence is best effort and never changes the provider refresh result
 
 ## Diagnostic Export
 
-Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, a coarse projection of provider refresh-history summaries, and bounded quota finding categories.
+Settings can generate a versioned JSON diagnostic report from current app and macOS versions, fixed provider state categories, database availability, import counts, bounded resource-limit reasons, a coarse projection of provider refresh-history summaries, and bounded quota evidence.
 The preview displays the exact immutable JSON bytes before any file is written.
-Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomically writes those same bytes only to the selected destination.
+The user selects a canonical provider product and exact half-open Gregorian UTC range before preview.
+After reviewing the complete preview, the user explicitly approves those exact bytes, chooses a destination, and separately confirms the save.
+LimitBar atomically writes only the approved in-memory bytes and does not refresh or regenerate them between preview and save.
+A recoverable write failure retains the approved candidate for byte-identical retry, while any product or range change invalidates approval.
+Report generation, preview, cancellation, destination selection, and saving do not upload or otherwise transmit the report.
 
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
-Schema v5 includes coarse quota product and window categories, measured observation counts and span, explicit qualification, calculated burn or exhaustion-minute ranges, typed forecast-method metadata for every finding, and coarse Codex explanation status without exact window IDs, resets, token values, session IDs, or digests.
+Schema v6 retains the v5 sections and adds a positive allow-listed Quota Evidence section projected from one coherent forensic publication.
+It includes the exact selected range and basis, Reported reset provenance or explicit boundary unavailability, typed movement provenance, separate Observed Local Breakdown state, unattributed remainder, qualified inferred allocation, forecasts, anomalies, bounded method and version metadata, limitations, and privacy-safe trace references.
+Each published forecast or anomaly carries its own canonical references to the exact normalized input observations, truncated from privacy-safe digests without exposing raw identities.
+Finding references are sorted and deduplicated before a 16-reference output limit is applied, and each finding declares that limit and its exact omitted-reference count.
+Forecast and anomaly methods, units, provenance, reset interaction, and unavailable reasons are closed typed values; dynamic adapter and client versions must satisfy a strict bounded ASCII token policy.
+Gap, Observed Zero, no finding, and analysis unavailable remain distinct.
+Matching records are deterministically ordered newest-first before projection, limited to eight, and declare both the applicable limit and the total omitted count, including records beyond the 100-record projection cap.
+Candidate processing is capped at 10,000 records, text at 128 UTF-8 bytes, and version and limitation collections at eight items each before preview.
 Current quota findings use `pairwise_positive_slope_interquartile_v2`; V1 remains accepted only for legacy diagnostic decoding.
 The checked synthetic replay baseline contains zero observed held-out completed windows, so empirical forecast quality assessment and a forecast quality threshold remain unavailable and no stronger product claim is enabled.
 The decoder remains compatible with schema v1 artifacts without quota findings and schema v2-v3 findings whose missing method or qualification metadata maps to the established pairwise-slope method and status-derived qualification.
 Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
+Fixture validation proves deterministic report behavior against the tested normalized evidence contract.
+It does not prove real-account provider semantics, provider weighting, causal attribution, or empirical forecast quality.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.
 Claude Code alerts can be evaluated after the same view-triggered or explicit fetches described below, while Codex and cost-budget alerts use the local refresh loop.

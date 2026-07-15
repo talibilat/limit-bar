@@ -7,8 +7,11 @@ import UniformTypeIdentifiers
 
 enum DiagnosticExportInputBuilder {
     @MainActor
-    static func live(state: LimitBarState, now: Date = Date()) async throws -> DiagnosticExportInput {
-        try make(
+    static func live(state: LimitBarState, selection: DiagnosticExportSelection? = nil, now: Date = Date()) async throws -> DiagnosticExportInput {
+        let snapshot = state.investigationPublication
+        let product = selection?.product ?? snapshot.supportedProducts.first
+        let productRecords = snapshot.products.first { $0.product == product }?.records ?? []
+        return try make(
             generatedAt: now,
             applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             applicationBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
@@ -24,7 +27,12 @@ enum DiagnosticExportInputBuilder {
             quotaInsights: state.quotaInsights,
             claudeExplanations: state.claudeExplanationCatalog,
             codexExplanation: state.local.codexExplanation,
-            codexExplanationRetained: state.local.codexExplanationRetained
+            codexExplanationRetained: state.local.codexExplanationRetained,
+            quotaEvidence: try product.flatMap { selectedProduct in
+                guard let start = selection?.rangeStart ?? productRecords.map(\.start).min(),
+                      let end = selection?.rangeEnd ?? productRecords.map(\.end).max(), start < end else { return nil }
+                return try QuotaEvidenceReportBuilder.make(snapshot: snapshot, product: selectedProduct, rangeStart: start, rangeEnd: end)
+            }
         )
     }
 
@@ -44,7 +52,8 @@ enum DiagnosticExportInputBuilder {
         quotaInsights: [QuotaWindowIdentity: QuotaInsightState] = [:],
         claudeExplanations: ClaudeQuotaExplanationCatalog = .empty,
         codexExplanation: CodexQuotaExplanationState? = nil,
-        codexExplanationRetained: Bool = false
+        codexExplanationRetained: Bool = false,
+        quotaEvidence: DiagnosticQuotaEvidenceReport? = nil
     ) throws -> DiagnosticExportInput {
         let rejected = rejectedImportCount.addingReportingOverflow(customRejectedLines)
         guard !rejected.overflow,
@@ -96,7 +105,8 @@ enum DiagnosticExportInputBuilder {
             resourceLimitReasons: [],
             refreshHistory: projectedHistory.isEmpty ? nil : projectedHistory,
             quotaFindings: projectedQuota.isEmpty ? nil : projectedQuota,
-            codexExplanation: try codexExplanation.flatMap { try diagnosticCodexExplanation($0, retained: codexExplanationRetained) }
+            codexExplanation: try codexExplanation.flatMap { try diagnosticCodexExplanation($0, retained: codexExplanationRetained) },
+            quotaEvidence: quotaEvidence
         )
     }
 
@@ -309,22 +319,53 @@ enum DiagnosticExportInputBuilder {
     }
 }
 
+struct DiagnosticExportSelection: Equatable {
+    let product: ProviderProduct
+    let rangeStart: Date
+    let rangeEnd: Date
+}
+
+@MainActor
+protocol DiagnosticExportLocalEffects {
+    func chooseDestination() -> URL?
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws
+}
+
+@MainActor
+private struct ClosureDiagnosticExportLocalEffects: DiagnosticExportLocalEffects {
+    let destination: () -> URL?
+    let write: (DiagnosticExportArtifact, URL) throws -> Void
+
+    func chooseDestination() -> URL? { destination() }
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws { try write(artifact, destination) }
+}
+
 @MainActor
 @Observable
 final class DiagnosticExportModel {
     static let preparationError = "Could not prepare the diagnostic export."
     static let saveError = "Could not save the diagnostic export."
+    static let successMessage = "Diagnostic export saved."
+    static let destinationDefaultName = "limitbar-diagnostics.json"
 
     var showsPreview = false
     private(set) var preview = ""
     private(set) var message: String?
+    private(set) var isApproved = false
+    private(set) var hasDestination = false
+    private(set) var selection: DiagnosticExportSelection?
     private var artifact: DiagnosticExportArtifact?
+    private var destination: URL?
+    private var preparationRevision: UInt64 = 0
     private let makeArtifact: @MainActor () async throws -> DiagnosticExportArtifact
-    private let chooseDestination: @MainActor () -> URL?
+    private let makeSelectedArtifact: (@MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact)?
+    private let localEffects: any DiagnosticExportLocalEffects
 
     init(makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact) {
         self.makeArtifact = makeArtifact
-        chooseDestination = Self.chooseDestinationWithSavePanel
+        makeSelectedArtifact = nil
+        selection = nil
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: Self.chooseDestinationWithSavePanel, write: { try $0.save(to: $1) })
     }
 
     init(
@@ -332,39 +373,136 @@ final class DiagnosticExportModel {
         chooseDestination: @escaping @MainActor () -> URL?
     ) {
         self.makeArtifact = makeArtifact
-        self.chooseDestination = chooseDestination
+        makeSelectedArtifact = nil
+        selection = nil
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
+    }
+
+    init(
+        selection: DiagnosticExportSelection,
+        makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact
+    ) {
+        self.selection = selection
+        self.makeSelectedArtifact = makeArtifact
+        self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: Self.chooseDestinationWithSavePanel, write: { try $0.save(to: $1) })
+    }
+
+    init(
+        selection: DiagnosticExportSelection,
+        makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact,
+        chooseDestination: @escaping @MainActor () -> URL?
+    ) {
+        self.selection = selection
+        self.makeSelectedArtifact = makeArtifact
+        self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
+    }
+
+    init(
+        selection: DiagnosticExportSelection,
+        makeArtifact: @escaping @MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact,
+        localEffects: any DiagnosticExportLocalEffects
+    ) {
+        self.selection = selection
+        self.makeSelectedArtifact = makeArtifact
+        self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
+        self.localEffects = localEffects
+    }
+
+    init(
+        makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact,
+        localEffects: any DiagnosticExportLocalEffects
+    ) {
+        self.makeArtifact = makeArtifact
+        makeSelectedArtifact = nil
+        selection = nil
+        self.localEffects = localEffects
     }
 
     func prepare() async {
+        preparationRevision &+= 1
+        let revision = preparationRevision
+        let requestedSelection = selection
+        clearCandidate()
+        message = nil
         do {
-            let artifact = try await makeArtifact()
-            preview = try artifact.preview
+            let artifact: DiagnosticExportArtifact
+            if let selection, let makeSelectedArtifact {
+                artifact = try await makeSelectedArtifact(selection)
+            } else {
+                artifact = try await makeArtifact()
+            }
+            let preview = try artifact.preview
+            guard preparationRevision == revision, selection == requestedSelection else { return }
+            self.preview = preview
             self.artifact = artifact
+            destination = nil
+            isApproved = false
+            hasDestination = false
             message = nil
             showsPreview = true
         } catch {
-            artifact = nil
-            preview = ""
-            showsPreview = false
+            guard preparationRevision == revision, selection == requestedSelection else { return }
+            clearCandidate()
             message = Self.preparationError
         }
     }
 
+    func approvePreview() {
+        guard artifact != nil, showsPreview else { return }
+        isApproved = true
+        message = nil
+    }
+
+    func chooseApprovedDestination() {
+        guard isApproved, let chosen = localEffects.chooseDestination() else { return }
+        destination = chosen
+        hasDestination = true
+        message = nil
+    }
+
     func save() {
-        guard let artifact, let destination = chooseDestination() else { return }
+        guard isApproved, let artifact, let destination else { return }
         do {
-            try artifact.save(to: destination)
+            try localEffects.save(artifact, to: destination)
             showsPreview = false
-            message = "Diagnostic export saved."
+            message = Self.successMessage
         } catch {
             message = Self.saveError
         }
     }
 
-    private static func chooseDestinationWithSavePanel() -> URL? {
+    func invalidateApproval() {
+        preparationRevision &+= 1
+        clearCandidate()
+        message = nil
+    }
+
+    func cancelPreview() {
+        invalidateApproval()
+    }
+
+    private func clearCandidate() {
+        artifact = nil
+        destination = nil
+        preview = ""
+        isApproved = false
+        hasDestination = false
+        showsPreview = false
+    }
+
+
+    func updateSelection(_ value: DiagnosticExportSelection) {
+        guard value != selection else { return }
+        selection = value
+        invalidateApproval()
+    }
+
+    static func chooseDestinationWithSavePanel() -> URL? {
         let panel = NSSavePanel()
         panel.title = "Save Diagnostic Export"
-        panel.nameFieldStringValue = "limitbar-diagnostics.json"
+        panel.nameFieldStringValue = destinationDefaultName
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         return panel.runModal() == .OK ? panel.url : nil
@@ -373,14 +511,40 @@ final class DiagnosticExportModel {
 
 struct DiagnosticExportSection: View {
     @State private var model: DiagnosticExportModel
+    private let snapshot: ForensicInvestigationSnapshot?
 
     init(state: LimitBarState) {
-        _model = State(initialValue: DiagnosticExportModel {
-            try DiagnosticExport.make(from: await DiagnosticExportInputBuilder.live(state: state))
-        })
+        self.init(state: state, chooseDestination: DiagnosticExportModel.chooseDestinationWithSavePanel)
+    }
+
+    init(state: LimitBarState, chooseDestination: @escaping @MainActor () -> URL?) {
+        self.init(
+            state: state,
+            localEffects: ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
+        )
+    }
+
+    init(state: LimitBarState, localEffects: any DiagnosticExportLocalEffects) {
+        let snapshot = state.investigationPublication
+        self.snapshot = snapshot
+        if let selection = Self.defaultSelection(snapshot: snapshot) {
+            _model = State(initialValue: DiagnosticExportModel(
+                selection: selection,
+                makeArtifact: { selection in
+                    try DiagnosticExport.make(from: await DiagnosticExportInputBuilder.live(state: state, selection: selection))
+                },
+                localEffects: localEffects
+            ))
+        } else {
+            _model = State(initialValue: DiagnosticExportModel(
+                makeArtifact: { try DiagnosticExport.make(from: await DiagnosticExportInputBuilder.live(state: state)) },
+                localEffects: localEffects
+            ))
+        }
     }
 
     init(model: DiagnosticExportModel) {
+        snapshot = nil
         _model = State(initialValue: model)
     }
 
@@ -389,6 +553,31 @@ struct DiagnosticExportSection: View {
             Text("Creates a reviewable JSON report from fixed status categories and counts. It excludes logs, paths, labels, credentials, database files, and raw provider or usage payloads.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let snapshot, let selection = model.selection {
+                Picker("Quota evidence product", selection: Binding(
+                    get: { selection.product },
+                    set: { product in
+                        if let next = Self.defaultSelection(snapshot: snapshot, product: product) { model.updateSelection(next) }
+                    }
+                )) {
+                    ForEach(snapshot.supportedProducts, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .accessibilityIdentifier("diagnostic-export-product")
+                DatePicker("Exact range start", selection: Binding(
+                    get: { model.selection?.rangeStart ?? selection.rangeStart },
+                    set: { model.updateSelection(.init(product: selection.product, rangeStart: $0, rangeEnd: model.selection?.rangeEnd ?? selection.rangeEnd)) }
+                ))
+                .accessibilityIdentifier("diagnostic-export-range-start")
+                DatePicker("Exact range end", selection: Binding(
+                    get: { model.selection?.rangeEnd ?? selection.rangeEnd },
+                    set: { model.updateSelection(.init(product: selection.product, rangeStart: model.selection?.rangeStart ?? selection.rangeStart, rangeEnd: $0)) }
+                ))
+                .accessibilityIdentifier("diagnostic-export-range-end")
+                Text("Half-open [start, end), Gregorian calendar, UTC basis. Changing any selection requires a new complete preview.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("diagnostic-export-range-basis")
+            }
             Button("Preview Diagnostic Export") {
                 Task { await model.prepare() }
             }
@@ -396,7 +585,7 @@ struct DiagnosticExportSection: View {
             if let message = model.message {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(message == "Diagnostic export saved." ? Color.secondary : Color.orange)
+                    .foregroundStyle(message == DiagnosticExportModel.successMessage ? Color.secondary : Color.orange)
                     .accessibilityIdentifier("diagnostic-export-message")
             }
         }
@@ -422,14 +611,32 @@ struct DiagnosticExportSection: View {
                 }
                 HStack {
                     Spacer()
-                    Button("Cancel", role: .cancel) { model.showsPreview = false }
-                    Button("Save As...") { model.save() }
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("diagnostic-export-save")
+                    Button("Cancel", role: .cancel) { model.cancelPreview() }
+                    if !model.isApproved {
+                        Button("Approve Complete Preview") { model.approvePreview() }
+                            .keyboardShortcut(.defaultAction)
+                            .accessibilityIdentifier("diagnostic-export-approve")
+                    } else if !model.hasDestination {
+                        Button("Choose Destination...") { model.chooseApprovedDestination() }
+                            .keyboardShortcut(.defaultAction)
+                            .accessibilityIdentifier("diagnostic-export-choose-destination")
+                    } else {
+                        Button("Save Approved Report") { model.save() }
+                            .keyboardShortcut(.defaultAction)
+                            .accessibilityIdentifier("diagnostic-export-save")
+                    }
                 }
             }
             .padding(20)
             .frame(width: 680, height: 560)
         }
+    }
+
+    private static func defaultSelection(snapshot: ForensicInvestigationSnapshot, product: ProviderProduct? = nil) -> DiagnosticExportSelection? {
+        guard let product = product ?? snapshot.supportedProducts.first,
+              let evidence = snapshot.products.first(where: { $0.product == product }),
+              let start = evidence.records.map(\.start).min(),
+              let end = evidence.records.map(\.end).max(), start < end else { return nil }
+        return DiagnosticExportSelection(product: product, rangeStart: start, rangeEnd: end)
     }
 }

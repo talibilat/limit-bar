@@ -2,6 +2,7 @@
 import AppKit
 import Foundation
 import LimitBarCore
+import Observation
 import SwiftUI
 
 enum AppTestConfiguration {
@@ -65,6 +66,7 @@ enum AppUITestConfiguration {
     private static let screenEnvironmentKey = "LIMITBAR_UI_TEST_SCREEN"
     private static let runIdentifierEnvironmentKey = "LIMITBAR_UI_TEST_RUN_ID"
     private static let fixturePathEnvironmentKey = "LIMITBAR_UI_TEST_CUSTOM_SOURCE_PATH"
+    private static let exportPathEnvironmentKey = "LIMITBAR_UI_TEST_EXPORT_PATH"
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(enabledArgument) && runIdentifier != nil
@@ -78,6 +80,11 @@ enum AppUITestConfiguration {
     static var customSourceFixturePath: String? {
         guard isEnabled else { return nil }
         return ProcessInfo.processInfo.environment[fixturePathEnvironmentKey]
+    }
+
+    static var exportPath: String? {
+        guard isEnabled else { return nil }
+        return ProcessInfo.processInfo.environment[exportPathEnvironmentKey]
     }
 
     static var userDefaults: UserDefaults? {
@@ -167,13 +174,23 @@ private struct LimitBarUITestHostView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
-        case "diagnostic-export":
+        case "diagnostic-export", "diagnostic-export-cancel-destination":
             Form {
-                DiagnosticExportSection(model: AppUITestDiagnosticExport.model())
+                DiagnosticExportSection(
+                    state: AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.partial)),
+                    chooseDestination: {
+                        guard AppUITestConfiguration.screen != "diagnostic-export-cancel-destination" else { return nil }
+                        return AppUITestConfiguration.exportPath.map { URL(fileURLWithPath: $0) }
+                    }
+                )
             }
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
+        case "diagnostic-export-write-retry":
+            DiagnosticExportUITestWorkflowView(interceptsNetwork: false)
+        case "diagnostic-export-network-trap":
+            DiagnosticExportUITestWorkflowView(interceptsNetwork: true)
         case "quota-insight":
             QuotaInsightUITestView()
         case "codex-explanation":
@@ -203,6 +220,91 @@ private struct LimitBarUITestHostView: View {
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private final class AppUITestNetworkTrap: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var requests = 0
+
+    static var requestCount: Int { lock.withLock { requests } }
+    static func reset() { lock.withLock { requests = 0 } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.withLock { Self.requests += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+    }
+    override func stopLoading() {}
+}
+
+@MainActor
+@Observable
+private final class AppUITestDiagnosticLocalEffects: DiagnosticExportLocalEffects {
+    private enum WriteFailure: Error { case expectedDirectoryFailure }
+
+    let destination: URL
+    private let interceptsNetwork: Bool
+    private(set) var writeAttempts = 0
+    private(set) var bytesEqual = false
+    private var approvedBytes: Data?
+
+    init(interceptsNetwork: Bool) {
+        self.interceptsNetwork = interceptsNetwork
+        destination = URL(fileURLWithPath: AppUITestConfiguration.exportPath!)
+        try? FileManager.default.removeItem(at: destination)
+        try! FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        if interceptsNetwork {
+            AppUITestNetworkTrap.reset()
+            URLProtocol.registerClass(AppUITestNetworkTrap.self)
+        }
+    }
+
+    var networkRequestCount: Int { interceptsNetwork ? AppUITestNetworkTrap.requestCount : 0 }
+
+    func chooseDestination() -> URL? { destination }
+
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws {
+        writeAttempts += 1
+        approvedBytes = approvedBytes ?? artifact.bytes
+        if writeAttempts == 1 {
+            do {
+                try artifact.save(to: destination)
+                try? FileManager.default.removeItem(at: destination)
+                throw WriteFailure.expectedDirectoryFailure
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
+        }
+        try artifact.save(to: destination)
+        bytesEqual = try Data(contentsOf: destination) == approvedBytes
+    }
+}
+
+private struct DiagnosticExportUITestWorkflowView: View {
+    @State private var effects: AppUITestDiagnosticLocalEffects
+    private let state: LimitBarState
+
+    @MainActor
+    init(interceptsNetwork: Bool) {
+        let effects = AppUITestDiagnosticLocalEffects(interceptsNetwork: interceptsNetwork)
+        _effects = State(initialValue: effects)
+        state = AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.partial))
+    }
+
+    var body: some View {
+        Form {
+            DiagnosticExportSection(state: state, localEffects: effects)
+            Section("Test status") {
+                Text("\(effects.writeAttempts)").accessibilityIdentifier("diagnostic-export-write-attempts")
+                Text(effects.bytesEqual ? "equal" : "pending").accessibilityIdentifier("diagnostic-export-byte-equality")
+                Text("\(effects.networkRequestCount)").accessibilityIdentifier("diagnostic-export-network-count")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 620, height: 720)
     }
 }
 
@@ -465,24 +567,4 @@ private struct QuotaInsightUITestView: View {
     }
 }
 
-@MainActor
-private enum AppUITestDiagnosticExport {
-    static func model() -> DiagnosticExportModel {
-        DiagnosticExportModel(
-            makeArtifact: {
-                try DiagnosticExport.make(from: DiagnosticExportInput(
-                    generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-                    appVersion: DiagnosticVersion(major: 1, minor: 2, patch: 3),
-                    appBuild: 42,
-                    operatingSystemVersion: DiagnosticVersion(major: 15, minor: 0, patch: 0),
-                    providerStatuses: [DiagnosticProviderStatus(provider: .anthropic, state: .connected)],
-                    databaseState: .available,
-                    importCounts: DiagnosticImportCounts(accepted: 7, rejected: 2),
-                    resourceLimitReasons: []
-                ))
-            },
-            chooseDestination: { nil }
-        )
-    }
-}
 #endif
