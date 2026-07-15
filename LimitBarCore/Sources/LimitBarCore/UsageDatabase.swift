@@ -16,6 +16,7 @@ public actor UsageDatabase {
     private var attributionStore: SQLiteUsageAttributionStore?
     private var resolvedCurrentPath: String?
     private var attributionStorageFailures: Set<UsageMetricSource> = []
+    private var lastAttributionSourceRevisions: [UsageMetricSource: String] = [:]
     private var lastValidSnapshot: StoredUsageMetricsSnapshot?
     private var lastValidHistory: HistoricalUsageSnapshot?
     private var localImportCache: LocalImportCacheEntry?
@@ -79,11 +80,15 @@ public actor UsageDatabase {
     }
 
     public func createCleanDatabaseRecovery(at date: Date = Date()) throws -> URL {
+        try createCleanDatabaseRecovery(at: date, afterLocksAcquired: nil)
+    }
+
+    func createCleanDatabaseRecovery(at date: Date, afterLocksAcquired: (@Sendable () throws -> Void)?) throws -> URL {
         let databaseURL = URL(fileURLWithPath: try resolvedDatabasePath())
         store = nil
         attributionStore = nil
 
-        let archive = try archiveDatabaseFiles(at: databaseURL, date: date)
+        let archive = try archiveDatabaseFiles(at: databaseURL, date: date, afterLocksAcquired: afterLocksAcquired)
         do {
             _ = try openStore()
             _ = try openAttributionStore()
@@ -98,6 +103,7 @@ public actor UsageDatabase {
         localImportCache = nil
         customSourceCache = [:]
         attributionStorageFailures = []
+        lastAttributionSourceRevisions = [:]
         return archive
     }
 
@@ -150,7 +156,11 @@ public actor UsageDatabase {
             }
 
             var snapshotHealth = store.health()
-            var persistedAttribution = lastValidSnapshot?.attributionBreakdowns ?? []
+            let parentPublications = try store.attributionSourcePublications()
+            let parentSourceRevisions = parentPublications.mapValues(\.revision)
+            var persistedAttribution = (lastValidSnapshot?.attributionBreakdowns ?? []).filter { breakdown in
+                lastAttributionSourceRevisions[breakdown.source] == parentSourceRevisions[breakdown.source]
+            }
             do {
                 let attributionStore = try openAttributionStore()
                 if let revision = importResult.sourceRevision {
@@ -162,8 +172,15 @@ public actor UsageDatabase {
                     )
                     attributionStorageFailures.remove(.builtInLocalLog)
                 }
-                persistedAttribution = try attributionStore.all(now: now)
-                if !attributionStorageFailures.isEmpty {
+                persistedAttribution = try attributionStore.all(matching: parentSourceRevisions, now: now)
+                let suppressedSources = try attributionStore.suppressedSources(matching: parentSourceRevisions)
+                lastAttributionSourceRevisions = parentSourceRevisions
+                let persistedCounts = Dictionary(grouping: persistedAttribution, by: \.source).mapValues(\.count)
+                let hasIncompletePublication = parentPublications.contains { source, publication in
+                    !suppressedSources.contains(source)
+                        && persistedCounts[source, default: 0] != publication.expectedBreakdownCount
+                }
+                if !attributionStorageFailures.isEmpty || hasIncompletePublication {
                     snapshotHealth = UsageStoreHealth(isOpen: false, message: "Attribution storage unavailable")
                 }
             } catch {
@@ -362,8 +379,16 @@ public actor UsageDatabase {
             let store = try openStore()
             let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
             try openHistoricalStore().deleteCustomSources(excluding: sourceIDs)
-            try store.deleteCustomMetrics(excluding: sourceIDs)
-            try? openAttributionStore().deleteCustomSources(excluding: sourceIDs, now: now)
+            _ = try store.deleteCustomMetricsAndAttributionRevisions(excluding: sourceIDs)
+            do {
+                try openAttributionStore().deleteCustomSources(excluding: sourceIDs, now: now)
+                attributionStorageFailures = Set(attributionStorageFailures.filter { failure in
+                    guard case let .custom(id) = failure else { return true }
+                    return sourceIDs.contains(id)
+                })
+            } catch {
+                // Retain existing component failures so snapshot health remains unavailable.
+            }
             lastValidHistory = nil
             customSourceCache = customSourceCache.filter { sourceIDs.contains($0.key) }
             var diagnostics: [CustomUsageRefreshDiagnostic] = []
@@ -378,10 +403,14 @@ public actor UsageDatabase {
                     }
                     let result = try await customUsageLoader(fileURL, source, now, calendar)
                     guard customRefreshGeneration == generation else { return diagnostics }
+                    let scope = UsageReplacementScope(provider: .custom, source: .custom(source.id), windows: [windows.today, windows.currentWeek])
                     try store.replaceMetrics(
-                        in: UsageReplacementScope(provider: .custom, source: .custom(source.id), windows: [windows.today, windows.currentWeek]),
-                        with: result.metrics
+                        in: scope,
+                        with: result.metrics,
+                        sourceRevision: result.sourceRevision,
+                        expectedAttributionBreakdownCount: result.attributionBreakdowns.count
                     )
+                    var attributionFailureMessage: String?
                     if let revision = result.sourceRevision {
                         do {
                             try openAttributionStore().replace(
@@ -393,17 +422,18 @@ public actor UsageDatabase {
                             attributionStorageFailures.remove(.custom(source.id))
                         } catch {
                             attributionStorageFailures.insert(.custom(source.id))
-                            throw error
+                            attributionFailureMessage = "Attribution storage unavailable"
                         }
                     }
                     let diagnostic = CustomUsageRefreshDiagnostic(
                         sourceID: source.id,
                         failureMessage: nil,
+                        attributionFailureMessage: attributionFailureMessage,
                         rejectedLineCount: result.rejectedLineCount,
                         diagnostics: result.diagnostics
                     )
                     diagnostics.append(diagnostic)
-                    if let fingerprint, !result.hasFutureTimestampRejection {
+                    if let fingerprint, !result.hasFutureTimestampRejection, attributionFailureMessage == nil {
                         customSourceCache[source.id] = CustomSourceCacheEntry(fingerprint: fingerprint, diagnostic: diagnostic)
                     }
                 } catch CustomUsageLoadError.cancelled {
@@ -692,7 +722,7 @@ public actor UsageDatabase {
         lastValidSnapshot.map(filterConfiguredCustomSources) ?? fallbackSnapshot()
     }
 
-    private func archiveDatabaseFiles(at databaseURL: URL, date: Date) throws -> URL {
+    private func archiveDatabaseFiles(at databaseURL: URL, date: Date, afterLocksAcquired: (@Sendable () throws -> Void)?) throws -> URL {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: databaseURL.path) else {
             throw UsageDatabaseRecoveryError.databaseMissing
@@ -708,20 +738,9 @@ public actor UsageDatabase {
         try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
         let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
-        let originalSourceURLs = [databaseURL, attributionURL].flatMap { url in
-            [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
-        }.filter { fileManager.fileExists(atPath: $0.path) }
-        do {
-            for source in originalSourceURLs {
-                try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
-            }
-        } catch {
-            try? fileManager.removeItem(at: archiveURL)
-            throw error
-        }
         var locks: [OpaquePointer] = []
         do {
-            for url in [databaseURL, attributionURL] where fileManager.fileExists(atPath: url.path) {
+            for url in [databaseURL, attributionURL] {
                 if let lock = try recoveryLock(at: url) { locks.append(lock) }
             }
         } catch {
@@ -738,15 +757,11 @@ public actor UsageDatabase {
                 sqlite3_close(lock)
             }
         }
-
-        // Lock acquisition can update SHM bookkeeping, but database and WAL bytes
-        // must still match the pre-lock archive or a writer raced the recovery.
-        for source in originalSourceURLs where !source.path.hasSuffix("-shm") {
-            let archived = archiveURL.appendingPathComponent(source.lastPathComponent)
-            guard fileManager.fileExists(atPath: source.path), try filesMatch(source, archived) else {
-                try? fileManager.removeItem(at: archiveURL)
-                throw UsageDatabaseRecoveryError.databaseBusy
-            }
+        do {
+            try afterLocksAcquired?()
+        } catch {
+            try? fileManager.removeItem(at: archiveURL)
+            throw error
         }
 
         // Inventory sidecars only after excluding writers so a newly committed WAL cannot be omitted.
@@ -754,6 +769,9 @@ public actor UsageDatabase {
             [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
         }.filter { fileManager.fileExists(atPath: $0.path) }
         do {
+            for source in sourceURLs {
+                try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
+            }
             var removed: [URL] = []
             for source in sourceURLs {
                 do {
@@ -778,6 +796,7 @@ public actor UsageDatabase {
         let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
         guard openResult == SQLITE_OK else {
             sqlite3_close(database)
+            if !FileManager.default.fileExists(atPath: url.path) { return nil }
             if FileManager.default.isWritableFile(atPath: url.path) { throw UsageDatabaseRecoveryError.databaseBusy }
             return nil
         }
@@ -810,23 +829,6 @@ public actor UsageDatabase {
         }
     }
 
-    private func filesMatch(_ lhs: URL, _ rhs: URL) throws -> Bool {
-        let lhsValues = try lhs.resourceValues(forKeys: [.fileSizeKey])
-        let rhsValues = try rhs.resourceValues(forKeys: [.fileSizeKey])
-        guard lhsValues.fileSize == rhsValues.fileSize else { return false }
-        let lhsHandle = try FileHandle(forReadingFrom: lhs)
-        let rhsHandle = try FileHandle(forReadingFrom: rhs)
-        defer {
-            try? lhsHandle.close()
-            try? rhsHandle.close()
-        }
-        while true {
-            let lhsChunk = try lhsHandle.read(upToCount: 64 * 1_024) ?? Data()
-            let rhsChunk = try rhsHandle.read(upToCount: 64 * 1_024) ?? Data()
-            guard lhsChunk == rhsChunk else { return false }
-            if lhsChunk.isEmpty { return true }
-        }
-    }
 }
 
 public enum UsageDatabaseRecoveryError: Error, Equatable {
@@ -848,9 +850,10 @@ private struct LocalImportCacheEntry {
 }
 
 private func localEventsFingerprint(for fileURL: URL, windows: CurrentUsageWindows) throws -> LocalEventsFingerprint {
-    let values = try fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+    let currentFileURL = URL(fileURLWithPath: fileURL.path)
+    let values = try currentFileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
     return LocalEventsFingerprint(
-        fileURL: fileURL.standardizedFileURL,
+        fileURL: currentFileURL.standardizedFileURL,
         modificationDate: values.contentModificationDate,
         fileSize: values.fileSize,
         todayStart: windows.today.start,
@@ -876,7 +879,7 @@ private func customSourceFingerprint(
     source: CustomUsageSource,
     windows: CurrentUsageWindows
 ) throws -> CustomSourceFingerprint {
-    let values = try fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+    let values = try URL(fileURLWithPath: fileURL.path).resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
     return CustomSourceFingerprint(
         source: source,
         modificationDate: values.contentModificationDate,
@@ -898,17 +901,20 @@ private let defaultCustomUsageLoader: CustomUsageLoader = { fileURL, source, now
 public struct CustomUsageRefreshDiagnostic: Equatable, Sendable {
     public let sourceID: UUID
     public let failureMessage: String?
+    public let attributionFailureMessage: String?
     public let rejectedLineCount: Int
     public let diagnostics: [CustomUsageLoadDiagnostic]
 
     public init(
         sourceID: UUID,
         failureMessage: String?,
+        attributionFailureMessage: String? = nil,
         rejectedLineCount: Int = 0,
         diagnostics: [CustomUsageLoadDiagnostic] = []
     ) {
         self.sourceID = sourceID
         self.failureMessage = failureMessage
+        self.attributionFailureMessage = attributionFailureMessage
         self.rejectedLineCount = rejectedLineCount
         self.diagnostics = diagnostics
     }

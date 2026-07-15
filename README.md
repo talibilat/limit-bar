@@ -227,6 +227,7 @@ Use [schema v1](docs/CollectorSchemaV1.md) for normalized usage only or [schema 
 Schema v2 breakdowns are retained in a separate bounded attribution database and remain non-additive to parent usage totals.
 Settings can delete project and agent attribution independently with confirmation; current parent usage, source files, settings, credentials, alert rules, and Delivery Ledger state remain unchanged.
 Failed imports preserve the last valid breakdown, and attribution storage failures are reported through snapshot health without hiding main usage metrics.
+Breakdown publication is revision-qualified, so a newly committed parent revision is never displayed beside stale attribution from an older source revision.
 The collector validates explicit schema v1, coordinates cooperating concurrent writers, rejects unknown fields, enforces resource limits, and rotates bounded local files.
 Its token values are immutable per-operation deltas rather than cumulative counters.
 

@@ -38,6 +38,7 @@ The manifest at `LimitBarCore/Tests/LimitBarCoreTests/Fixtures/Migrations/manife
 Every public release must retain its fixture and release artifact permanently.
 Before wiring another persistent store into the app, add it to this inventory and its release acceptance matrix.
 The attribution schema is a pre-release schema covered by canonical schema, retention, deletion, restart, lock, corruption, and complete recovery-set tests; its first public fixture must be frozen with the candidate release.
+Clean recovery acquires every lockable main and attribution database lock before inventorying either database's WAL/SHM files, preserving non-lockable corrupt files as opaque recovery evidence.
 
 ## Automated Validation
 

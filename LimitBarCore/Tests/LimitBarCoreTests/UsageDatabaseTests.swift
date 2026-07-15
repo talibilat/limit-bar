@@ -160,17 +160,30 @@ struct UsageDatabaseTests {
         try Data("attribution shm".utf8).write(to: URL(fileURLWithPath: attributionPath + "-shm"))
         let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
 
+        let lockedInventory = LockedBox<[String: Data]>([:])
         let archive = try await database.createCleanDatabaseRecovery(
-            at: Date(timeIntervalSince1970: 1_783_716_000)
+            at: Date(timeIntervalSince1970: 1_783_716_000),
+            afterLocksAcquired: {
+                for url in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+                    where url.lastPathComponent.hasPrefix("usage-metrics") && !url.hasDirectoryPath {
+                    try lockedInventory.withValue { $0[url.lastPathComponent] = try Data(contentsOf: url) }
+                }
+            }
         )
 
         #expect(FileManager.default.fileExists(atPath: path))
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite").path))
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-wal").path))
         #expect(FileManager.default.fileExists(atPath: archive.appendingPathComponent("usage-metrics.sqlite-shm").path))
-        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite")) == attributionBytes)
-        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite-wal")) == Data("attribution wal".utf8))
-        #expect(try Data(contentsOf: archive.appendingPathComponent("usage-metrics-attribution.sqlite-shm")) == Data("attribution shm".utf8))
+        let inventory = lockedInventory.value
+        #expect(Set(inventory.keys) == Set([
+            "usage-metrics.sqlite", "usage-metrics.sqlite-wal", "usage-metrics.sqlite-shm",
+            "usage-metrics-attribution.sqlite", "usage-metrics-attribution.sqlite-wal", "usage-metrics-attribution.sqlite-shm"
+        ]))
+        for (name, bytes) in inventory {
+            #expect(try Data(contentsOf: archive.appendingPathComponent(name)) == bytes)
+        }
+        #expect(inventory["usage-metrics-attribution.sqlite"] == attributionBytes)
         #expect(FileManager.default.fileExists(atPath: attributionPath))
         #expect(try SQLiteUsageAttributionStore(path: attributionPath).all(now: Date(timeIntervalSince1970: 1_783_716_000)).isEmpty)
         let snapshot = await database.snapshot(now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
@@ -233,6 +246,40 @@ struct UsageDatabaseTests {
         #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == mainBytes)
         #expect(try Data(contentsOf: URL(fileURLWithPath: attributionPath)) == attributionBytes)
         #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+    }
+
+    @Test("clean recovery locks both databases before inventory")
+    func cleanRecoveryLocksBeforeInventory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("usage-metrics.sqlite").path
+        let attributionPath = attributionDatabasePath(for: path)
+        _ = try SQLiteUsageMetricStore(path: path)
+        _ = try SQLiteUsageAttributionStore(path: attributionPath)
+        let writeStatuses = LockedBox<(Int32, Int32)>((SQLITE_OK, SQLITE_OK))
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+
+        _ = try await database.createCleanDatabaseRecovery(
+            at: Date(timeIntervalSince1970: 1_783_716_000),
+            afterLocksAcquired: {
+                var mainWriter: OpaquePointer?
+                var attributionWriter: OpaquePointer?
+                guard sqlite3_open(path, &mainWriter) == SQLITE_OK,
+                      sqlite3_open(attributionPath, &attributionWriter) == SQLITE_OK else { throw TestError.openFailed }
+                defer {
+                    sqlite3_close(mainWriter)
+                    sqlite3_close(attributionWriter)
+                }
+                writeStatuses.value = (
+                    sqlite3_exec(mainWriter, "BEGIN IMMEDIATE;", nil, nil, nil),
+                    sqlite3_exec(attributionWriter, "BEGIN IMMEDIATE;", nil, nil, nil)
+                )
+            }
+        )
+
+        #expect([SQLITE_BUSY, SQLITE_LOCKED].contains(writeStatuses.value.0))
+        #expect([SQLITE_BUSY, SQLITE_LOCKED].contains(writeStatuses.value.1))
     }
 
     @Test("clean database recovery retains a corrupt database before replacement")
@@ -798,6 +845,111 @@ struct UsageDatabaseTests {
         #expect(retained.attributionBreakdowns == initial.attributionBreakdowns)
     }
 
+    @Test("new built-in parent revision hides stale attribution when attribution persistence fails")
+    func builtInRevisionQualifiedPublicationFailure() async throws {
+        let path = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T11:00:00Z","model":"model-beta","inputTokens":4,"outputTokens":1,"projectID":"beta"}"#
+        try eventA.write(to: fileURL, atomically: true, encoding: .utf8)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL, busyTimeoutMilliseconds: 1)
+        #expect(await database.snapshot(now: now, calendar: utcCalendar()).attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        try eventB.write(to: fileURL, atomically: true, encoding: .utf8)
+        let attributionPath = attributionDatabasePath(for: path)
+        var lock: OpaquePointer?
+        #expect(sqlite3_open(attributionPath, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        #expect(sqlite3_exec(lock, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+
+        let failed = await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(!failed.health.isOpen)
+        #expect(Set(failed.metrics.map(\.modelLabel)) == ["model-beta"])
+        #expect(failed.attributionBreakdowns.isEmpty)
+        let restartedWhileLocked = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL, busyTimeoutMilliseconds: 1)
+        let restartFailure = await restartedWhileLocked.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(!restartFailure.health.isOpen)
+        #expect(Set(restartFailure.metrics.map(\.modelLabel)) == ["model-beta"])
+        #expect(restartFailure.attributionBreakdowns.isEmpty)
+        #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
+        let recovered = await restarted.snapshot(now: now.addingTimeInterval(3), calendar: utcCalendar())
+        #expect(recovered.health.isOpen)
+        #expect(recovered.attributionBreakdowns.allSatisfy { $0.project?.id == "beta" })
+    }
+
+    @Test("custom attribution persistence failure is component-scoped and revision-qualified")
+    func customRevisionQualifiedPublicationFailure() async throws {
+        let path = temporaryDatabasePath()
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#
+        let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T11:00:00Z","model":"model-b","inputTokens":4,"outputTokens":1,"projectID":"beta"}"#
+        try eventA.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL(), busyTimeoutMilliseconds: 1)
+        _ = await database.refreshCustomSources([source], now: now, calendar: utcCalendar())
+        #expect(await database.snapshot(now: now, calendar: utcCalendar()).attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
+        try eventB.write(to: fileURL, atomically: true, encoding: .utf8)
+        let attributionPath = attributionDatabasePath(for: path)
+        var lock: OpaquePointer?
+        #expect(sqlite3_open(attributionPath, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        #expect(sqlite3_exec(lock, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+
+        let diagnostics = await database.refreshCustomSources([source], now: now.addingTimeInterval(1), calendar: utcCalendar())
+        let failed = await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(diagnostics.first?.failureMessage == nil)
+        #expect(diagnostics.first?.attributionFailureMessage == "Attribution storage unavailable")
+        #expect(!failed.health.isOpen)
+        #expect(Set(failed.metrics.filter { $0.provenance.source == .custom(sourceID) }.map(\.modelLabel)) == ["model-b"])
+        #expect(failed.attributionBreakdowns.filter { $0.source == .custom(sourceID) }.isEmpty)
+        let restartedWhileLocked = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL(), busyTimeoutMilliseconds: 1)
+        let restartDiagnostics = await restartedWhileLocked.refreshCustomSources([source], now: now.addingTimeInterval(2), calendar: utcCalendar())
+        let restartFailure = await restartedWhileLocked.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(restartDiagnostics.first?.failureMessage == nil)
+        #expect(restartDiagnostics.first?.attributionFailureMessage == "Attribution storage unavailable")
+        #expect(!restartFailure.health.isOpen)
+        #expect(restartFailure.attributionBreakdowns.filter { $0.source == .custom(sourceID) }.isEmpty)
+        #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+
+        let restarted = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL())
+        let recoveredDiagnostics = await restarted.refreshCustomSources([source], now: now.addingTimeInterval(3), calendar: utcCalendar())
+        let recovered = await restarted.snapshot(now: now.addingTimeInterval(3), calendar: utcCalendar())
+        #expect(recoveredDiagnostics.first?.failureMessage == nil)
+        #expect(recoveredDiagnostics.first?.attributionFailureMessage == nil)
+        #expect(recovered.health.isOpen)
+        #expect(recovered.attributionBreakdowns.filter { $0.source == .custom(sourceID) }.allSatisfy { $0.project?.id == "beta" })
+    }
+
+    @Test("removing a custom source clears its attribution component failure")
+    func removingCustomSourceClearsAttributionFailure() async throws {
+        let path = temporaryDatabasePath()
+        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
+        let database = UsageDatabase(pathFactory: { path }, localEventsURL: missingEventsURL(), busyTimeoutMilliseconds: 1)
+        _ = await database.refreshCustomSources([source], now: now, calendar: utcCalendar())
+        let attributionPath = attributionDatabasePath(for: path)
+        var lock: OpaquePointer?
+        #expect(sqlite3_open(attributionPath, &lock) == SQLITE_OK)
+        defer { sqlite3_close(lock) }
+        #expect(sqlite3_exec(lock, "BEGIN EXCLUSIVE;", nil, nil, nil) == SQLITE_OK)
+        try (#"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T11:00:00Z","model":"model-b","inputTokens":1,"outputTokens":1,"projectID":"beta"}"#).write(to: fileURL, atomically: true, encoding: .utf8)
+        _ = await database.refreshCustomSources([source], now: now.addingTimeInterval(1), calendar: utcCalendar())
+        #expect(!(await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar()).health.isOpen))
+        #expect(sqlite3_exec(lock, "ROLLBACK;", nil, nil, nil) == SQLITE_OK)
+
+        _ = await database.refreshCustomSources([], now: now.addingTimeInterval(2), calendar: utcCalendar())
+        let recovered = await database.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        #expect(recovered.health.isOpen)
+        #expect(recovered.attributionBreakdowns.allSatisfy { $0.source != .custom(sourceID) })
+    }
+
     @Test("corrupt attribution storage fails safely without deleting main usage")
     func corruptAttributionStoreIsExplicit() async throws {
         let path = temporaryDatabasePath()
@@ -1001,5 +1153,33 @@ private final class LockedCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return storage
+    }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Value
+
+    init(_ value: Value) {
+        storage = value
+    }
+
+    var value: Value {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+        set {
+            lock.lock()
+            storage = newValue
+            lock.unlock()
+        }
+    }
+
+    func withValue<Result>(_ body: (inout Value) throws -> Result) rethrows -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body(&storage)
     }
 }

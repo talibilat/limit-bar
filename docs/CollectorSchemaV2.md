@@ -100,6 +100,10 @@ It never stores a raw JSONL line, unknown field, prompt, response, command, path
 A failed built-in or custom import has no source revision and never replaces durable attribution.
 The last valid parent Usage Aggregates and attribution breakdowns remain available together.
 Attribution store open, schema, read, or write failures mark snapshot health unavailable with fixed safe copy while preserving main metrics and the last valid in-memory attribution snapshot.
+Parent replacement records its parsed source revision and expected breakdown count in the same `usage-metrics.sqlite` transaction as the parent metrics.
+Published breakdowns must match that exact parent revision and count, or be covered by an intentional deletion suppression.
+If parent revision B commits but attribution persistence fails, stale revision A breakdowns are hidden and attribution health is unavailable; a failed source import leaves the prior parent revision unchanged and therefore preserves its matching attribution.
+Custom diagnostics report attribution persistence as a separate component failure and do not claim that the already-committed source import failed.
 
 Deleting attribution evidence deletes only that separate normalized store.
 It does not delete parent Usage Aggregates, current usage, Active Usage Files, provider settings, credentials, alert rules, or Delivery Ledger state.
@@ -112,6 +116,7 @@ Archives remain outside ingestion.
 Settings provides a destructive **Delete Project And Agent Attribution** action with confirmation and explicit success or failure state.
 Failure leaves durable and in-memory attribution available.
 Clean database recovery archives `usage-metrics.sqlite`, `usage-metrics-attribution.sqlite`, and each database's WAL and SHM files as one recovery set before creating clean stores.
+Recovery attempts every database lock before inventorying sidecars, then archives exactly the post-lock database set while writers remain excluded.
 
 ## Producer Support And Verification
 

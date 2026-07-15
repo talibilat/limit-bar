@@ -269,8 +269,15 @@ public enum LocalUsageEventImporter {
                 throw LocalUsageEventError.unreadableFile
             }
             try Task.checkCancellation()
-            try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: [:])
-            return .empty(fileURL: fileURL)
+            let empty = LocalUsageImportResult.empty(fileURL: fileURL)
+            try replaceImportedMetrics(
+                in: store,
+                windows: importedWindows,
+                aggregates: [:],
+                sourceRevision: empty.sourceRevision,
+                expectedAttributionBreakdownCount: 0
+            )
+            return empty
         }
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
@@ -349,7 +356,15 @@ public enum LocalUsageEventImporter {
         }
 
         try Task.checkCancellation()
-        try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: aggregates)
+        let sourceRevision = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let attributionBreakdowns = breakdowns(from: attributionAggregates)
+        try replaceImportedMetrics(
+            in: store,
+            windows: importedWindows,
+            aggregates: aggregates,
+            sourceRevision: sourceRevision,
+            expectedAttributionBreakdownCount: attributionBreakdowns.count
+        )
 
         return LocalUsageImportResult(
             fileURL: fileURL,
@@ -358,15 +373,17 @@ public enum LocalUsageEventImporter {
             malformedEvents: malformed,
             failureMessage: nil,
             hasFutureTimestampRejection: hasFutureTimestampRejection,
-            attributionBreakdowns: breakdowns(from: attributionAggregates),
-            sourceRevision: hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            attributionBreakdowns: attributionBreakdowns,
+            sourceRevision: sourceRevision
         )
     }
 
     private static func replaceImportedMetrics(
         in store: SQLiteUsageMetricStore,
         windows: [ExactUsageWindow],
-        aggregates: [AggregateKey: AggregateValue]
+        aggregates: [AggregateKey: AggregateValue],
+        sourceRevision: String?,
+        expectedAttributionBreakdownCount: Int
     ) throws {
         let replacements = ProviderKind.orderedCases
             .filter { supportedProviders.contains($0) }
@@ -376,7 +393,11 @@ public enum LocalUsageEventImporter {
                     metrics: metrics(from: aggregates.filter { $0.key.provider == provider })
                 )
             }
-        try store.replaceMetrics(replacements)
+        try store.replaceMetrics(
+            replacements,
+            sourceRevision: sourceRevision,
+            expectedAttributionBreakdownCount: expectedAttributionBreakdownCount
+        )
     }
 
     private static func process(

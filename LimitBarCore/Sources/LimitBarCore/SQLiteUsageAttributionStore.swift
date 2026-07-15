@@ -122,6 +122,28 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
     }
 
     public func all(now: Date = Date()) throws -> [ObservedLocalAttributionBreakdown] {
+        try all(matching: nil, now: now)
+    }
+
+    public func all(matching sourceRevisions: [UsageMetricSource: String], now: Date = Date()) throws -> [ObservedLocalAttributionBreakdown] {
+        try all(matching: Optional(sourceRevisions), now: now)
+    }
+
+    public func suppressedSources(matching sourceRevisions: [UsageMetricSource: String]) throws -> Set<UsageMetricSource> {
+        let statement = try prepare("SELECT source_kind, source_identifier, source_revision FROM usage_attribution_suppressions;")
+        defer { sqlite3_finalize(statement) }
+        var sources = Set<UsageMetricSource>()
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            let source = try decodeSource(kind: requiredString(statement, 0), identifier: requiredString(statement, 1))
+            if sourceRevisions[source] == requiredString(statement, 2) { sources.insert(source) }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw UsageAttributionStoreError.readFailed }
+        return sources
+    }
+
+    private func all(matching sourceRevisions: [UsageMetricSource: String]?, now: Date) throws -> [ObservedLocalAttributionBreakdown] {
         try execute("BEGIN IMMEDIATE TRANSACTION;", error: .readFailed)
         do {
             try prune(now: now)
@@ -133,14 +155,17 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
         let statement = try prepare("""
         SELECT source_kind, source_identifier, provider, time_window, window_start, window_end, window_basis,
                aggregation_version, model, deployment, project_id, project_label, agent_id, agent_label,
-               input_tokens, output_tokens, event_ids, observed_at
+               input_tokens, output_tokens, event_ids, observed_at, source_revision
         FROM usage_attribution_breakdowns ORDER BY observed_at, id;
         """)
         defer { sqlite3_finalize(statement) }
         var values: [ObservedLocalAttributionBreakdown] = []
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
-            values.append(try decode(statement))
+            let value = try decode(statement)
+            if sourceRevisions.map({ $0[value.source] == requiredString(statement, 18) }) ?? true {
+                values.append(value)
+            }
             result = sqlite3_step(statement)
         }
         guard result == SQLITE_DONE else { throw UsageAttributionStoreError.readFailed }
