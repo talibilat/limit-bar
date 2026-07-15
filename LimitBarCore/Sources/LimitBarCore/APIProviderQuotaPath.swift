@@ -1,25 +1,26 @@
-public enum APIProviderQuotaUnavailableReason: String, Codable, Equatable, Sendable {
-    case noDocumentedSafeAcquisition = "no_documented_safe_acquisition"
-    case noAbsoluteProviderReportedResetBoundary = "no_absolute_provider_reported_reset_boundary"
-    case noDocumentedConsumptionWindowBoundary = "no_documented_consumption_window_boundary"
+public enum APIProviderQuotaUnavailableReason: String, Codable, Equatable, Hashable, Sendable {
+    case noDocumentedSafeAcquisitionForWorkloadEvidence = "no_documented_safe_acquisition_for_workload_evidence"
+    case noDocumentedReadSourceForQuotaConsumption = "no_documented_read_source_for_quota_consumption"
+    case noDocumentedProviderQuotaWindowBoundary = "no_documented_provider_quota_window_boundary"
 }
 
 public enum APIProviderQuotaPathAvailability: Equatable, Sendable {
-    case unavailable(APIProviderQuotaUnavailableReason)
+    case unavailable(Set<APIProviderQuotaUnavailableReason>)
 
     public static let fixedUnavailableSummary =
-        "API-provider quota evidence is unavailable: no documented source currently provides both safely acquirable quota consumption and an exact provider-reported reset boundary."
+        "API-provider quota evidence is unavailable: no documented source currently provides safely acquirable quota consumption in an exact provider-defined Quota window with a reported boundary."
 }
 
 public extension ProviderProduct {
     var apiQuotaPathAvailability: APIProviderQuotaPathAvailability? {
-        switch self {
-        case .anthropicAPI:
-            .unavailable(.noDocumentedSafeAcquisition)
-        case .openAIAPI:
-            .unavailable(.noAbsoluteProviderReportedResetBoundary)
-        case .azureOpenAI:
-            .unavailable(.noDocumentedConsumptionWindowBoundary)
+        let unmetCriteria: Set<APIProviderQuotaUnavailableReason> = [
+            .noDocumentedSafeAcquisitionForWorkloadEvidence,
+            .noDocumentedReadSourceForQuotaConsumption,
+            .noDocumentedProviderQuotaWindowBoundary,
+        ]
+        return switch self {
+        case .anthropicAPI, .openAIAPI, .azureOpenAI:
+            .unavailable(unmetCriteria)
         case .claudeCode, .codex:
             nil
         }

@@ -3,11 +3,16 @@ import Testing
 
 @Suite("API provider quota path")
 struct APIProviderQuotaPathTests {
-    @Test("all modeled API products fail closed with the documented unmet criterion")
+    @Test("all modeled API products fail closed with every documented unmet criterion")
     func modeledProductsAreUnavailable() {
-        #expect(ProviderProduct.anthropicAPI.apiQuotaPathAvailability == .unavailable(.noDocumentedSafeAcquisition))
-        #expect(ProviderProduct.openAIAPI.apiQuotaPathAvailability == .unavailable(.noAbsoluteProviderReportedResetBoundary))
-        #expect(ProviderProduct.azureOpenAI.apiQuotaPathAvailability == .unavailable(.noDocumentedConsumptionWindowBoundary))
+        let workloadAndReadSourceGaps: Set<APIProviderQuotaUnavailableReason> = [
+            .noDocumentedSafeAcquisitionForWorkloadEvidence,
+            .noDocumentedReadSourceForQuotaConsumption,
+            .noDocumentedProviderQuotaWindowBoundary,
+        ]
+        #expect(ProviderProduct.anthropicAPI.apiQuotaPathAvailability == .unavailable(workloadAndReadSourceGaps))
+        #expect(ProviderProduct.openAIAPI.apiQuotaPathAvailability == .unavailable(workloadAndReadSourceGaps))
+        #expect(ProviderProduct.azureOpenAI.apiQuotaPathAvailability == .unavailable(workloadAndReadSourceGaps))
     }
 
     @Test("subscription products are outside the API-provider decision")
@@ -19,6 +24,6 @@ struct APIProviderQuotaPathTests {
     @Test("product copy does not imply adapter support")
     func unavailableCopy() {
         #expect(APIProviderQuotaPathAvailability.fixedUnavailableSummary ==
-            "API-provider quota evidence is unavailable: no documented source currently provides both safely acquirable quota consumption and an exact provider-reported reset boundary.")
+            "API-provider quota evidence is unavailable: no documented source currently provides safely acquirable quota consumption in an exact provider-defined Quota window with a reported boundary.")
     }
 }
