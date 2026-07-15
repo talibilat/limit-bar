@@ -137,6 +137,18 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "codex-rollout-observed-0.144.4")).firstMatch.exists)
     }
 
+    func testPlanningSurfaceAcceptsBoundedInputAndExplainsUnavailableHistory() {
+        launch(screen: "popover")
+
+        XCTAssertTrue(app.staticTexts["planned-workload-title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.steppers["planned-workload-units"].exists)
+        let outcome = app.staticTexts["planned-workload-outcome"]
+        XCTAssertTrue(outcome.exists)
+        let text = (outcome.value as? String) ?? outcome.label
+        XCTAssertTrue(text.contains("Assessment unavailable"))
+        XCTAssertTrue(text.contains("No measured completed runs"))
+    }
+
     private func launch(screen: String) {
         app.launchEnvironment["LIMITBAR_UI_TEST_SCREEN"] = screen
         app.launch()
