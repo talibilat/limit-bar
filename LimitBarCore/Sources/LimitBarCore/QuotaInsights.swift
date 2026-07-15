@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import SQLite3
 
 public enum QuotaObservationSource: String, Codable, CaseIterable, Sendable {
@@ -10,11 +11,57 @@ public enum QuotaInsightValidationError: Error, Equatable {
     case invalidObservation
 }
 
+public enum QuotaObservationIdentityVersion: String, Codable, Equatable, Hashable, Sendable {
+    case normalizedQuotaObservationV1 = "normalized_quota_observation_v1"
+}
+
+public enum QuotaObservationNormalizationVersion: String, Codable, Equatable, Hashable, Sendable {
+    case quotaObservationNormalizationV1 = "quota_observation_normalization_v1"
+}
+
+public enum QuotaObservationInterpretationVersion: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
+    case claudeProviderReportV1 = "claude_provider_report_v1"
+    case codexLocalReportV1 = "codex_local_report_v1"
+
+    public init(derivedFrom source: QuotaObservationSource) {
+        self = switch source {
+        case .claudeProviderReport: .claudeProviderReportV1
+        case .codexLocalReport: .codexLocalReportV1
+        }
+    }
+}
+
+public struct QuotaObservationIdentity: Codable, Equatable, Hashable, Sendable {
+    public let version: QuotaObservationIdentityVersion
+    public let digest: String
+
+    fileprivate init(version: QuotaObservationIdentityVersion, digest: String) {
+        self.version = version
+        self.digest = digest
+    }
+}
+
 public struct MeasuredQuotaObservation: Equatable, Sendable {
     public let identity: QuotaWindowIdentity
     public let percentageUsed: Double
     public let observedAt: Date
     public let source: QuotaObservationSource
+    public let normalizationVersion: QuotaObservationNormalizationVersion
+    public var interpretationVersion: QuotaObservationInterpretationVersion { .init(derivedFrom: source) }
+
+    public var stableIdentity: QuotaObservationIdentity {
+        var content = Data()
+        content.appendLengthPrefixed(normalizationVersion.rawValue)
+        content.appendLengthPrefixed(interpretationVersion.rawValue)
+        content.appendLengthPrefixed(identity.product.rawValue)
+        content.appendLengthPrefixed(identity.identifier.precomposedStringWithCanonicalMapping)
+        content.appendCanonicalDouble(identity.resetBoundary.timeIntervalSince1970)
+        content.appendCanonicalDouble(observedAt.timeIntervalSince1970)
+        content.appendCanonicalDouble(percentageUsed)
+        content.appendLengthPrefixed(source.rawValue)
+        let digest = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
+        return QuotaObservationIdentity(version: .normalizedQuotaObservationV1, digest: digest)
+    }
 
     public init(
         identity: QuotaWindowIdentity,
@@ -30,9 +77,10 @@ public struct MeasuredQuotaObservation: Equatable, Sendable {
             throw QuotaInsightValidationError.invalidObservation
         }
         self.identity = identity
-        self.percentageUsed = percentageUsed
+        self.percentageUsed = percentageUsed == 0 ? 0 : percentageUsed
         self.observedAt = observedAt
         self.source = source
+        self.normalizationVersion = .quotaObservationNormalizationV1
     }
 }
 
@@ -64,7 +112,7 @@ public enum MeasuredQuotaObservationAdapter {
     }
 }
 
-public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Sendable {
+public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Hashable, Sendable {
     case insufficientObservations = "insufficient_observations"
     case insufficientSpan = "insufficient_span"
     case staleEvidence = "stale_evidence"
@@ -72,6 +120,8 @@ public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Sendable 
     case counterDecreased = "counter_decreased"
     case noPositiveBurn = "no_positive_burn"
     case conflictingObservations = "conflicting_observations"
+    case incompatibleEvidence = "incompatible_evidence"
+    case invalidEvaluation = "invalid_evaluation"
 
     public var displayText: String {
         switch self {
@@ -82,6 +132,8 @@ public enum QuotaInsightUnavailableReason: String, Codable, Equatable, Sendable 
         case .counterDecreased: "Usage decreased; waiting for a stable window"
         case .noPositiveBurn: "No positive burn measured"
         case .conflictingObservations: "Conflicting measured observations at the same time"
+        case .incompatibleEvidence: "Measured observations belong to different quota windows"
+        case .invalidEvaluation: "Evaluation time is invalid"
         }
     }
 }
@@ -133,6 +185,12 @@ public struct QuotaInsightRange: Equatable, Sendable {
 
 public enum QuotaForecastMethod: String, Codable, CaseIterable, Equatable, Sendable {
     case pairwisePositiveSlopeInterquartileV1 = "pairwise_positive_slope_interquartile_v1"
+    case pairwisePositiveSlopeInterquartileV2 = "pairwise_positive_slope_interquartile_v2"
+}
+
+public enum QuotaInsightQualificationStatus: String, Codable, Equatable, Sendable {
+    case qualified
+    case unavailable
 }
 
 public struct QualifiedQuotaInsight: Equatable, Sendable {
@@ -140,14 +198,22 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
     public let measuredObservationCount: Int
     public let measuredSpan: TimeInterval
     public let forecastMethod: QuotaForecastMethod
+    public let createdAt: Date
+    public let evidenceAge: TimeInterval
+    public let inputObservationIdentities: [QuotaObservationIdentity]
+    public let interpretationVersions: [QuotaObservationInterpretationVersion]
     public let calculatedBurnPercentPerHour: QuotaInsightRange
     public let calculatedExhaustionRange: ClosedRange<Date>?
 
-    public init(
+    init(
         identity: QuotaWindowIdentity,
         measuredObservationCount: Int,
         measuredSpan: TimeInterval,
         forecastMethod: QuotaForecastMethod,
+        createdAt: Date,
+        evidenceAge: TimeInterval,
+        inputObservationIdentities: [QuotaObservationIdentity],
+        interpretationVersions: [QuotaObservationInterpretationVersion],
         calculatedBurnPercentPerHour: QuotaInsightRange,
         calculatedExhaustionRange: ClosedRange<Date>?
     ) {
@@ -155,14 +221,59 @@ public struct QualifiedQuotaInsight: Equatable, Sendable {
         self.measuredObservationCount = measuredObservationCount
         self.measuredSpan = measuredSpan
         self.forecastMethod = forecastMethod
+        self.createdAt = createdAt
+        self.evidenceAge = evidenceAge
+        self.inputObservationIdentities = inputObservationIdentities
+        self.interpretationVersions = interpretationVersions
         self.calculatedBurnPercentPerHour = calculatedBurnPercentPerHour
         self.calculatedExhaustionRange = calculatedExhaustionRange
     }
 }
 
+public struct UnavailableQuotaInsight: Equatable, Sendable {
+    public let reason: QuotaInsightUnavailableReason
+    public let implicatedIdentities: [QuotaWindowIdentity]
+    public let measuredObservationCount: Int
+    public let measuredSpan: TimeInterval
+    public let forecastMethod: QuotaForecastMethod
+    public let createdAt: Date?
+    public let evidenceAge: TimeInterval?
+    public let inputObservationIdentities: [QuotaObservationIdentity]
+    public let interpretationVersions: [QuotaObservationInterpretationVersion]
+
+    init(
+        reason: QuotaInsightUnavailableReason,
+        implicatedIdentities: [QuotaWindowIdentity],
+        measuredObservationCount: Int,
+        measuredSpan: TimeInterval,
+        forecastMethod: QuotaForecastMethod,
+        createdAt: Date?,
+        evidenceAge: TimeInterval?,
+        inputObservationIdentities: [QuotaObservationIdentity],
+        interpretationVersions: [QuotaObservationInterpretationVersion]
+    ) {
+        self.reason = reason
+        self.implicatedIdentities = implicatedIdentities
+        self.measuredObservationCount = measuredObservationCount
+        self.measuredSpan = measuredSpan
+        self.forecastMethod = forecastMethod
+        self.createdAt = createdAt
+        self.evidenceAge = evidenceAge
+        self.inputObservationIdentities = inputObservationIdentities
+        self.interpretationVersions = interpretationVersions
+    }
+}
+
 public enum QuotaInsightState: Equatable, Sendable {
     case qualified(QualifiedQuotaInsight)
-    case unavailable(QuotaInsightUnavailableReason, measuredObservationCount: Int, measuredSpan: TimeInterval)
+    case unavailable(UnavailableQuotaInsight)
+
+    public var qualificationStatus: QuotaInsightQualificationStatus {
+        switch self {
+        case .qualified: .qualified
+        case .unavailable: .unavailable
+        }
+    }
 }
 
 public enum QuotaInsightAnalytics {
@@ -172,41 +283,92 @@ public enum QuotaInsightAnalytics {
     public static func analyze(
         _ observations: [MeasuredQuotaObservation],
         now: Date,
-        maximumAge: TimeInterval
+        maximumAge: TimeInterval,
+        expectedIdentity: QuotaWindowIdentity? = nil
     ) -> QuotaInsightState {
-        let ordered = observations.sorted { $0.observedAt < $1.observedAt }
-        guard let identity = ordered.first?.identity else {
-            return .unavailable(.insufficientObservations, measuredObservationCount: 0, measuredSpan: 0)
+        guard now.timeIntervalSince1970.isFinite else {
+            let ordered = observations.sorted {
+                ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
+            }
+            var seen = Set<QuotaObservationIdentity>()
+            let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
+            let identities = orderedIdentities(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })
+            let span = unique.count < 2 ? 0 : unique.last!.observedAt.timeIntervalSince(unique.first!.observedAt)
+            return .unavailable(UnavailableQuotaInsight(
+                reason: .invalidEvaluation,
+                implicatedIdentities: identities,
+                measuredObservationCount: unique.count,
+                measuredSpan: span,
+                forecastMethod: .pairwisePositiveSlopeInterquartileV2,
+                createdAt: nil,
+                evidenceAge: nil,
+                inputObservationIdentities: unique.map(\.stableIdentity),
+                interpretationVersions: Array(Set(unique.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue }
+            ))
         }
-        let sameWindow = ordered.filter { $0.identity == identity }
-        let grouped = Dictionary(grouping: sameWindow, by: \.observedAt)
+        let ordered = observations.sorted {
+            ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
+        }
+        var seen = Set<QuotaObservationIdentity>()
+        let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
+        let implicatedIdentities = orderedIdentities(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })
+        let span = max(0, (unique.last?.observedAt ?? now).timeIntervalSince(unique.first?.observedAt ?? now))
+        let evidenceAge = unique.last.map { now.timeIntervalSince($0.observedAt) }
+        func unavailable(
+            _ reason: QuotaInsightUnavailableReason,
+            implicatedIdentities: [QuotaWindowIdentity],
+            inputs: [MeasuredQuotaObservation] = unique,
+            span: TimeInterval? = nil
+        ) -> QuotaInsightState {
+            .unavailable(UnavailableQuotaInsight(
+                reason: reason,
+                implicatedIdentities: implicatedIdentities,
+                measuredObservationCount: inputs.count,
+                measuredSpan: span ?? max(0, (inputs.last?.observedAt ?? now).timeIntervalSince(inputs.first?.observedAt ?? now)),
+                forecastMethod: .pairwisePositiveSlopeInterquartileV2,
+                createdAt: now,
+                evidenceAge: inputs.last.map { now.timeIntervalSince($0.observedAt) },
+                inputObservationIdentities: inputs.map(\.stableIdentity),
+                interpretationVersions: Array(Set(inputs.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue }
+            ))
+        }
+        guard let identity = unique.first?.identity ?? expectedIdentity else {
+            return unavailable(.insufficientObservations, implicatedIdentities: [], span: 0)
+        }
+        guard implicatedIdentities.count == 1 else {
+            return unavailable(.incompatibleEvidence, implicatedIdentities: implicatedIdentities, span: span)
+        }
+        let grouped = Dictionary(grouping: unique, by: \.observedAt)
         let hasConflict = grouped.values.contains { Set($0.map(\.percentageUsed)).count > 1 }
         let distinct = grouped
             .compactMap { $0.value.first }
-            .sorted { $0.observedAt < $1.observedAt }
-        let span = max(0, (distinct.last?.observedAt ?? now).timeIntervalSince(distinct.first?.observedAt ?? now))
+            .sorted { ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest) }
+        let distinctSpan = max(0, (distinct.last?.observedAt ?? now).timeIntervalSince(distinct.first?.observedAt ?? now))
 
         guard !hasConflict else {
-            return .unavailable(.conflictingObservations, measuredObservationCount: sameWindow.count, measuredSpan: span)
+            return unavailable(.conflictingObservations, implicatedIdentities: implicatedIdentities, inputs: unique, span: distinctSpan)
+        }
+        guard !distinct.isEmpty else {
+            return unavailable(.insufficientObservations, implicatedIdentities: implicatedIdentities, inputs: distinct, span: 0)
         }
 
         guard identity.resetBoundary > now else {
-            return .unavailable(.resetOrExpired, measuredObservationCount: distinct.count, measuredSpan: span)
+            return unavailable(.resetOrExpired, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
         guard let latest = distinct.last,
               maximumAge.isFinite, maximumAge >= 0,
-              now.timeIntervalSince(latest.observedAt) >= 0,
-              now.timeIntervalSince(latest.observedAt) <= maximumAge else {
-            return .unavailable(.staleEvidence, measuredObservationCount: distinct.count, measuredSpan: span)
+              let evidenceAge, evidenceAge >= 0,
+              evidenceAge <= maximumAge else {
+            return unavailable(.staleEvidence, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
         guard distinct.count >= minimumObservationCount else {
-            return .unavailable(.insufficientObservations, measuredObservationCount: distinct.count, measuredSpan: span)
+            return unavailable(.insufficientObservations, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
-        guard span >= minimumObservationSpan else {
-            return .unavailable(.insufficientSpan, measuredObservationCount: distinct.count, measuredSpan: span)
+        guard distinctSpan >= minimumObservationSpan else {
+            return unavailable(.insufficientSpan, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
         for pair in zip(distinct, distinct.dropFirst()) where pair.1.percentageUsed < pair.0.percentageUsed {
-            return .unavailable(.counterDecreased, measuredObservationCount: distinct.count, measuredSpan: span)
+            return unavailable(.counterDecreased, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
 
         var slopes: [Double] = []
@@ -221,7 +383,7 @@ public enum QuotaInsightAnalytics {
         }
         slopes.sort()
         guard !slopes.isEmpty else {
-            return .unavailable(.noPositiveBurn, measuredObservationCount: distinct.count, measuredSpan: span)
+            return unavailable(.noPositiveBurn, implicatedIdentities: implicatedIdentities, inputs: distinct, span: distinctSpan)
         }
         let lowerBurn = percentile(slopes, fraction: 0.25)
         let upperBurn = percentile(slopes, fraction: 0.75)
@@ -234,8 +396,12 @@ public enum QuotaInsightAnalytics {
         return .qualified(QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: distinct.count,
-            measuredSpan: span,
-            forecastMethod: .pairwisePositiveSlopeInterquartileV1,
+            measuredSpan: distinctSpan,
+            forecastMethod: .pairwisePositiveSlopeInterquartileV2,
+            createdAt: now,
+            evidenceAge: now.timeIntervalSince(latest.observedAt),
+            inputObservationIdentities: distinct.map(\.stableIdentity),
+            interpretationVersions: Array(Set(distinct.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue },
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: lowerBurn, upper: upperBurn),
             calculatedExhaustionRange: exhaustion
         ))
@@ -248,6 +414,29 @@ public enum QuotaInsightAnalytics {
         guard lower != upper else { return sorted[lower] }
         let weight = position - Double(lower)
         return sorted[lower] * (1 - weight) + sorted[upper] * weight
+    }
+
+    private static func orderedIdentities(_ identities: [QuotaWindowIdentity]) -> [QuotaWindowIdentity] {
+        Array(Set(identities)).sorted {
+            ($0.product.rawValue, $0.identifier, $0.resetBoundary.timeIntervalSince1970)
+                < ($1.product.rawValue, $1.identifier, $1.resetBoundary.timeIntervalSince1970)
+        }
+    }
+}
+
+private extension Data {
+    mutating func appendLengthPrefixed(_ value: String) {
+        let bytes = Data(value.utf8)
+        appendBigEndian(UInt64(bytes.count))
+        append(bytes)
+    }
+
+    mutating func appendBigEndian(_ value: UInt64) {
+        var bigEndian = value.bigEndian
+        Swift.withUnsafeBytes(of: &bigEndian) { append(contentsOf: $0) }
+    }
+    mutating func appendCanonicalDouble(_ value: Double) {
+        appendBigEndian((value == 0 ? 0 : value).bitPattern)
     }
 }
 
@@ -337,7 +526,7 @@ public final class SQLiteQuotaObservationStore {
                 try stepDone(statement, error: .writeFailed)
                 inserted += Int(sqlite3_changes(database))
             }
-            try prune(now: now)
+            try prune(now: now, canonicalIdentities: Set(observations.map(\.identity)))
             try execute("COMMIT;")
             return inserted
         } catch {
@@ -347,29 +536,36 @@ public final class SQLiteQuotaObservationStore {
     }
 
     public func observations(for identity: QuotaWindowIdentity, now: Date = Date()) throws -> [MeasuredQuotaObservation] {
-        try pruneInTransaction(now: now)
+        try pruneInTransaction(now: now, canonicalIdentities: [identity])
         let statement = try prepare("""
-        SELECT percentage_used, observed_at, observation_source
+        SELECT window_identifier, percentage_used, observed_at, observation_source
         FROM quota_observations
-        WHERE product = ? AND window_identifier = ? AND reset_boundary = ?
-        ORDER BY observed_at ASC, percentage_used ASC, observation_source ASC;
+        WHERE product = ? AND reset_boundary = ?
+        ORDER BY observed_at ASC, percentage_used ASC, observation_source ASC, window_identifier ASC;
         """)
         defer { sqlite3_finalize(statement) }
         bind(identity.product.rawValue, at: 1, in: statement)
-        bind(identity.identifier, at: 2, in: statement)
-        sqlite3_bind_double(statement, 3, identity.resetBoundary.timeIntervalSince1970)
+        sqlite3_bind_double(statement, 2, identity.resetBoundary.timeIntervalSince1970)
         var result: [MeasuredQuotaObservation] = []
+        var seen = Set<QuotaObservationIdentity>()
         var step = sqlite3_step(statement)
         while step == SQLITE_ROW {
-            guard let sourceRaw = stringColumn(statement, index: 2),
-                  let source = QuotaObservationSource(rawValue: sourceRaw),
-                  let observation = try? MeasuredQuotaObservation(
-                      identity: identity,
-                      percentageUsed: sqlite3_column_double(statement, 0),
-                      observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-                      source: source
-                  ) else { throw QuotaObservationStoreError.readFailed }
-            result.append(observation)
+            guard let storedIdentifier = stringColumn(statement, index: 0),
+                  storedIdentifier.precomposedStringWithCanonicalMapping == identity.identifier else {
+                step = sqlite3_step(statement)
+                continue
+            }
+            guard let sourceRaw = stringColumn(statement, index: 3),
+                   let source = QuotaObservationSource(rawValue: sourceRaw),
+                   let observation = try? MeasuredQuotaObservation(
+                       identity: identity,
+                       percentageUsed: sqlite3_column_double(statement, 1),
+                       observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)),
+                       source: source
+                   ) else { throw QuotaObservationStoreError.readFailed }
+            if seen.insert(observation.stableIdentity).inserted {
+                result.append(observation)
+            }
             step = sqlite3_step(statement)
         }
         guard step == SQLITE_DONE else { throw QuotaObservationStoreError.readFailed }
@@ -377,7 +573,7 @@ public final class SQLiteQuotaObservationStore {
     }
 
     public func identities(for product: ProviderProduct, now: Date = Date()) throws -> [QuotaWindowIdentity] {
-        try pruneInTransaction(now: now)
+        try pruneInTransaction(now: now, canonicalIdentities: [])
         let statement = try prepare("""
         SELECT DISTINCT window_identifier, reset_boundary
         FROM quota_observations WHERE product = ?
@@ -428,10 +624,10 @@ public final class SQLiteQuotaObservationStore {
         }
     }
 
-    private func pruneInTransaction(now: Date) throws {
+    private func pruneInTransaction(now: Date, canonicalIdentities: Set<QuotaWindowIdentity>) throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
-            try prune(now: now)
+            try prune(now: now, canonicalIdentities: canonicalIdentities)
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -439,7 +635,7 @@ public final class SQLiteQuotaObservationStore {
         }
     }
 
-    private func prune(now: Date) throws {
+    private func prune(now: Date, canonicalIdentities: Set<QuotaWindowIdentity>) throws {
         let age = try prepare("DELETE FROM quota_observations WHERE observed_at < ?;")
         defer { sqlite3_finalize(age) }
         sqlite3_bind_double(age, 1, now.addingTimeInterval(-Self.retentionInterval).timeIntervalSince1970)
@@ -459,6 +655,54 @@ public final class SQLiteQuotaObservationStore {
         defer { sqlite3_finalize(count) }
         sqlite3_bind_int64(count, 1, Int64(Self.maximumObservationsPerWindow))
         try stepDone(count, error: .writeFailed)
+
+        for identity in canonicalIdentities {
+            try pruneCanonicalIdentity(identity)
+        }
+    }
+
+    private func pruneCanonicalIdentity(_ identity: QuotaWindowIdentity) throws {
+        while true {
+            let candidates = try prepare("""
+            SELECT rowid, window_identifier
+            FROM quota_observations
+            WHERE product = ? AND reset_boundary = ?
+            ORDER BY observed_at DESC, percentage_used DESC, observation_source DESC, window_identifier ASC, rowid DESC;
+            """)
+            bind(identity.product.rawValue, at: 1, in: candidates)
+            sqlite3_bind_double(candidates, 2, identity.resetBoundary.timeIntervalSince1970)
+            var canonicalPosition = 0
+            var excessRowIDs: [Int64] = []
+            var step = sqlite3_step(candidates)
+            while step == SQLITE_ROW, excessRowIDs.count < Self.maximumObservationsPerWindow {
+                guard let storedIdentifier = stringColumn(candidates, index: 1) else {
+                    sqlite3_finalize(candidates)
+                    throw QuotaObservationStoreError.readFailed
+                }
+                if storedIdentifier.precomposedStringWithCanonicalMapping == identity.identifier {
+                    canonicalPosition += 1
+                    if canonicalPosition > Self.maximumObservationsPerWindow {
+                        excessRowIDs.append(sqlite3_column_int64(candidates, 0))
+                    }
+                }
+                step = sqlite3_step(candidates)
+            }
+            guard step == SQLITE_DONE || excessRowIDs.count == Self.maximumObservationsPerWindow else {
+                sqlite3_finalize(candidates)
+                throw QuotaObservationStoreError.readFailed
+            }
+            sqlite3_finalize(candidates)
+            guard !excessRowIDs.isEmpty else { return }
+
+            let deletion = try prepare("DELETE FROM quota_observations WHERE rowid = ?;")
+            defer { sqlite3_finalize(deletion) }
+            for rowID in excessRowIDs {
+                sqlite3_reset(deletion)
+                sqlite3_clear_bindings(deletion)
+                sqlite3_bind_int64(deletion, 1, rowID)
+                try stepDone(deletion, error: .writeFailed)
+            }
+        }
     }
 
     private func schemaVersion() throws -> Int {
@@ -636,7 +880,7 @@ public actor QuotaInsightsService {
     ) throws -> [QuotaWindowIdentity: QuotaInsightState] {
         try Dictionary(uniqueKeysWithValues: identities.map { identity in
             let retained = try store.observations(for: identity, now: now)
-            return (identity, QuotaInsightAnalytics.analyze(retained, now: now, maximumAge: maximumAge))
+            return (identity, QuotaInsightAnalytics.analyze(retained, now: now, maximumAge: maximumAge, expectedIdentity: identity))
         })
     }
 }

@@ -74,8 +74,10 @@ Pressing **Save As...** opens a standard macOS save panel, and LimitBar atomical
 
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
-Schema v3 includes coarse quota product and window categories, measured observation counts and span, finding status, calculated burn or exhaustion-minute ranges, and typed forecast-method metadata for qualified findings.
-The decoder remains compatible with schema v1 artifacts without quota findings and schema v2 findings whose qualified forecast method is the legacy pairwise-slope method.
+Schema v4 includes coarse quota product and window categories, measured observation counts and span, explicit qualification, calculated burn or exhaustion-minute ranges, and typed forecast-method metadata for every finding.
+Current quota findings use `pairwise_positive_slope_interquartile_v2`; V1 remains accepted only for legacy diagnostic decoding.
+The checked synthetic replay baseline contains zero observed held-out completed windows, so empirical forecast quality assessment and a forecast quality threshold remain unavailable and no stronger product claim is enabled.
+The decoder remains compatible with schema v1 artifacts without quota findings and schema v2-v3 findings whose missing method or qualification metadata maps to the established pairwise-slope method and status-derived qualification.
 Preparation and save failures use fixed generic UI messages without exposing paths or underlying errors.
 
 Alert evaluation runs after these existing refreshes and does not add provider API polling or Keychain reads.

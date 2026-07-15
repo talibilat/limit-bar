@@ -148,10 +148,18 @@ public enum DiagnosticQuotaFindingStatus: String, Codable, CaseIterable, Equatab
     case counterDecreased = "counter_decreased"
     case noPositiveBurn = "no_positive_burn"
     case conflictingObservations = "conflicting_observations"
+    case incompatibleEvidence = "incompatible_evidence"
+    case invalidEvaluation = "invalid_evaluation"
 }
 
 public enum DiagnosticQuotaForecastMethod: String, Codable, CaseIterable, Equatable, Sendable {
     case pairwisePositiveSlopeInterquartileV1 = "pairwise_positive_slope_interquartile_v1"
+    case pairwisePositiveSlopeInterquartileV2 = "pairwise_positive_slope_interquartile_v2"
+}
+
+public enum DiagnosticQuotaQualification: String, Codable, CaseIterable, Equatable, Sendable {
+    case qualified
+    case unavailable
 }
 
 public struct DiagnosticNumberRange: Codable, Equatable, Sendable {
@@ -171,9 +179,10 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
     public let product: DiagnosticQuotaProduct
     public let windowKind: DiagnosticQuotaWindowKind
     public let status: DiagnosticQuotaFindingStatus
+    public let qualification: DiagnosticQuotaQualification
     public let measuredObservationCount: Int
     public let measuredSpanMinutes: Int
-    public let forecastMethod: DiagnosticQuotaForecastMethod?
+    public let forecastMethod: DiagnosticQuotaForecastMethod
     public let calculatedBurnPercentPerHour: DiagnosticNumberRange?
     public let calculatedExhaustionMinutes: DiagnosticNumberRange?
 
@@ -181,21 +190,24 @@ public struct DiagnosticQuotaFinding: Codable, Equatable, Sendable {
         product: DiagnosticQuotaProduct,
         windowKind: DiagnosticQuotaWindowKind,
         status: DiagnosticQuotaFindingStatus,
+        qualification: DiagnosticQuotaQualification,
         measuredObservationCount: Int,
         measuredSpanMinutes: Int,
-        forecastMethod: DiagnosticQuotaForecastMethod? = nil,
+        forecastMethod: DiagnosticQuotaForecastMethod,
         calculatedBurnPercentPerHour: DiagnosticNumberRange? = nil,
         calculatedExhaustionMinutes: DiagnosticNumberRange? = nil
     ) throws {
         guard (0...SQLiteQuotaObservationStore.maximumObservationsPerWindow).contains(measuredObservationCount),
               (0...43_200).contains(measuredSpanMinutes),
-              status == .qualified || (forecastMethod == nil && calculatedBurnPercentPerHour == nil && calculatedExhaustionMinutes == nil),
-              status != .qualified || (forecastMethod != nil && calculatedBurnPercentPerHour != nil) else {
+              (status == .qualified) == (qualification == .qualified),
+              status == .qualified || (calculatedBurnPercentPerHour == nil && calculatedExhaustionMinutes == nil),
+              status != .qualified || calculatedBurnPercentPerHour != nil else {
             throw DiagnosticExportError.invalidQuotaFindings
         }
         self.product = product
         self.windowKind = windowKind
         self.status = status
+        self.qualification = qualification
         self.measuredObservationCount = measuredObservationCount
         self.measuredSpanMinutes = measuredSpanMinutes
         self.forecastMethod = forecastMethod
@@ -328,8 +340,32 @@ private struct LegacyDiagnosticExportReportV1: Codable {
     let refreshHistory: [DiagnosticRefreshHistoryRecord]?
 }
 
+private struct LegacyDiagnosticQuotaFindingV3: Codable {
+    let product: DiagnosticQuotaProduct
+    let windowKind: DiagnosticQuotaWindowKind
+    let status: DiagnosticQuotaFindingStatus
+    let measuredObservationCount: Int
+    let measuredSpanMinutes: Int
+    let forecastMethod: DiagnosticQuotaForecastMethod?
+    let calculatedBurnPercentPerHour: DiagnosticNumberRange?
+    let calculatedExhaustionMinutes: DiagnosticNumberRange?
+}
+
+private struct LegacyDiagnosticExportReportV3: Codable {
+    let schemaVersion: Int
+    let generatedAt: Date
+    let application: DiagnosticExportReport.Application
+    let operatingSystem: DiagnosticExportReport.OperatingSystem
+    let providers: [DiagnosticProviderStatus]
+    let database: DiagnosticExportReport.Database
+    let imports: DiagnosticImportCounts
+    let resourceLimitReasons: [DiagnosticResourceLimitReason]
+    let refreshHistory: [DiagnosticRefreshHistoryRecord]?
+    let quotaFindings: [LegacyDiagnosticQuotaFindingV3]?
+}
+
 public enum DiagnosticExport {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
     public static let maximumRefreshHistoryRecords = 20
     public static let maximumQuotaFindings = 8
 
@@ -393,16 +429,17 @@ public enum DiagnosticExport {
                     refreshHistory: legacy.refreshHistory,
                     quotaFindings: nil
                 )
-            } else if envelope.schemaVersion == 2 {
-                let legacy = try decoder.decode(DiagnosticExportReport.self, from: bytes)
+            } else if envelope.schemaVersion == 2 || envelope.schemaVersion == 3 {
+                let legacy = try decoder.decode(LegacyDiagnosticExportReportV3.self, from: bytes)
                 let quotaFindings = try legacy.quotaFindings?.map {
                     try DiagnosticQuotaFinding(
                         product: $0.product,
                         windowKind: $0.windowKind,
                         status: $0.status,
+                        qualification: $0.status == .qualified ? .qualified : .unavailable,
                         measuredObservationCount: $0.measuredObservationCount,
                         measuredSpanMinutes: $0.measuredSpanMinutes,
-                        forecastMethod: $0.status == .qualified ? .pairwisePositiveSlopeInterquartileV1 : nil,
+                        forecastMethod: $0.forecastMethod ?? .pairwisePositiveSlopeInterquartileV1,
                         calculatedBurnPercentPerHour: $0.calculatedBurnPercentPerHour.map {
                             try DiagnosticNumberRange(lower: $0.lower, upper: $0.upper)
                         },
@@ -462,6 +499,7 @@ public enum DiagnosticExport {
                         product: $0.product,
                         windowKind: $0.windowKind,
                         status: $0.status,
+                        qualification: $0.qualification,
                         measuredObservationCount: $0.measuredObservationCount,
                         measuredSpanMinutes: $0.measuredSpanMinutes,
                         forecastMethod: $0.forecastMethod,

@@ -123,8 +123,9 @@ This check is not evidence of filesystem isolation.
 | Quota observation boundary | `QuotaInsightsTests` verifies Claude adaptation retains only account-wide percentage limits, Codex adaptation retains only individual-plan percentage reports, identities use exact provider-reported resets, and model-scoped or business-plan data is excluded. The schema contains no prompt, code, account, project, agent, model, token, or payload fields. |
 | Quota persistence | `QuotaInsightsTests` verifies immutable insert behavior, exact repeat-scan deduplication, 30-day and 500-observation-per-window retention, explicit deletion, and canonical SQL type, nullability, check, primary-key, and index fingerprint validation without mutating unknown schemas. Production storage is isolated in `quota-observations.sqlite`. |
 | Qualified quota analytics | `QuotaInsightsTests` verifies four-distinct-observation and 15-minute minimums, robust pairwise-slope burn ranges, exhaustion only when both projected bounds precede reset, and explicit unavailable states for counter decreases, resets, staleness, flat usage, and insufficient evidence. |
+| Quota replay baseline | `QuotaForecastReplayTests` verifies the frozen synthetic corpus, exact artifact bytes, origin counts, separate development and held-out algorithm replay metrics, and deterministic V2 replay. The corpus has zero observed held-out completed windows, so empirical forecast quality assessment and a quality threshold are unavailable and no stronger product claim is enabled. |
 | Quota presentation and alerts | Existing Claude and Codex rate-limit rows show concise **Measured** and **Calculated** labels without another gauge or dashboard. Every existing local refresh publication reevaluates retained Claude evidence against the current time without recording another Claude observation. `LimitBarState` records insights separately from `AlertCoordinator`; ticket 12 alert adapters, qualification, notification copy, and delivery ledger are unchanged. |
-| Quota diagnostic export | `DiagnosticExportTests` snapshots the v3 allow-list with typed forecast-method metadata, validates bounded quota findings, and verifies v1 and v2 decode compatibility. `DiagnosticExportPresentationTests` verifies exact quota identities and reset boundaries are not projected into the preview. |
+| Quota diagnostic export | `DiagnosticExportTests` snapshots the v4 allow-list with typed forecast-method and qualification metadata for qualified and unavailable findings, validates bounded quota findings, and verifies v1-v3 decode compatibility. `DiagnosticExportPresentationTests` verifies exact quota identities, reset boundaries, and local observation digests are not projected into the preview. |
 
 ## Manual Acceptance
 
@@ -159,6 +160,13 @@ These checks require a local signed app and should not be inferred from fixture 
 27. Confirm a counter decrease, stale report, or expired reset replaces the calculated range with an explicit unavailable explanation.
 28. Delete quota observations in Settings and confirm current rate limits, usage, alert rules, delivery state, settings, and credentials remain available; confirm the UI explains that an unchanged current report can be measured again on a later refresh.
 29. Preview a diagnostic export and confirm quota findings contain only coarse product/window categories, bounded counts/span, status, method version, and calculated ranges, with no exact reset or internal window identifier.
+30. With a signed app, replay stable increasing evidence and confirm the row identifies calculated V2 as qualified, shows measured evidence separately, and states that provider weighting is unknown.
+31. Replay a qualified non-exhausting trajectory and confirm the row says exhaustion is not projected before the exact reset rather than calling the forecast unavailable.
+32. Replay fewer than four observations and confirm calculated V2 is unavailable while the measured observation count and span remain visible.
+33. Replay otherwise qualifying evidence older than its maximum age and confirm the row reports stale measured observations.
+34. Replay an expired exact reset and confirm the row reports reset or expired evidence without carrying a prior exhaustion projection across the boundary.
+35. Replay exhaustion-likely evidence and confirm the displayed calculated range remains bounded before the exact reset and does not imply provider-reported certainty.
+36. Compare all six signed-app scenarios with `quota_forecast_corpus_v1`, method `pairwise_positive_slope_interquartile_v2`, and `docs/QUOTA_FORECAST_EVALUATION.md`; record any presentation or method mismatch before release acceptance.
 
 ## Repository-Only Boundary
 
