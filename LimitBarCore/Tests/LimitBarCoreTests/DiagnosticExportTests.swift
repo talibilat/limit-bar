@@ -71,8 +71,11 @@ struct DiagnosticExportTests {
         #expect(decoded.omittedRecordCount == 3)
         #expect(references == Array(references.sorted().reversed()))
         #expect(decoded.records.first?.resetBoundary == nil)
+        #expect(decoded.records.first?.resetBoundaryAvailability == .unavailable)
+        #expect(decoded.records.first?.resetBoundaryProvenance == nil)
         #expect(decoded.records.first?.localBreakdown == .gap)
         #expect(decoded.records.dropFirst().allSatisfy { $0.localBreakdown == DiagnosticEvidenceState.observedZero })
+        #expect(decoded.records.dropFirst().allSatisfy { $0.resetBoundaryAvailability == .available && $0.resetBoundaryProvenance == .reported })
         #expect(decoded.records.first?.anomaly.status == .unavailable)
         #expect(decoded.records.dropFirst().allSatisfy { $0.anomaly.status == DiagnosticEvidenceState.noFinding })
         #expect(artifact.previewBytes == artifact.bytes)
@@ -93,16 +96,26 @@ struct DiagnosticExportTests {
     @Test("forecast and anomaly states require complete typed evidence")
     func analyticalEvidenceInvariants() throws {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
-            try DiagnosticEvidenceForecast(status: .available, method: .pairwisePositiveSlopeInterquartileV2, qualification: .qualified, unavailableReason: nil, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 10, range: nil, resetInteraction: .beforeReportedReset, limitations: [.providerWeightingUnknown])
+            try DiagnosticEvidenceForecast(status: .available, method: .pairwisePositiveSlopeInterquartileV2, qualification: .qualified, unavailableReason: nil, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 10, range: nil, resetInteraction: .beforeReportedReset, evidenceTraceReferences: ["aaaaaaaaaaaa"], limitations: [.providerWeightingUnknown])
         }
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
-            try DiagnosticEvidenceForecast(status: .unavailable, method: .pairwisePositiveSlopeInterquartileV2, qualification: .unavailable, unavailableReason: nil, observationCount: 1, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, limitations: [.providerWeightingUnknown])
+            try DiagnosticEvidenceForecast(status: .unavailable, method: .pairwisePositiveSlopeInterquartileV2, qualification: .unavailable, unavailableReason: nil, observationCount: 1, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: ["aaaaaaaaaaaa"], limitations: [.providerWeightingUnknown])
         }
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
-            try DiagnosticEvidenceAnomaly(status: .noFinding, method: .trailingMedianRatioV1, qualification: .qualified, unavailableReason: nil, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 7, currentValue: nil, baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
+            try DiagnosticEvidenceAnomaly(status: .noFinding, method: .trailingMedianRatioV1, qualification: .qualified, unavailableReason: nil, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 7, currentValue: nil, baselineValue: nil, result: nil, evidenceTraceReferences: ["bbbbbbbbbbbb"], limitations: [.noCausalAttribution])
         }
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
-            try DiagnosticEvidenceAnomaly(status: .unavailable, method: .trailingMedianRatioV1, qualification: .unavailable, unavailableReason: .gap, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated), baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
+            try DiagnosticEvidenceAnomaly(status: .unavailable, method: .trailingMedianRatioV1, qualification: .unavailable, unavailableReason: .gap, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated), baselineValue: nil, result: nil, evidenceTraceReferences: [], limitations: [.noCausalAttribution])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceForecast(status: .unavailable, method: .pairwisePositiveSlopeInterquartileV2, qualification: .unavailable, unavailableReason: .staleEvidence, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 100, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: [], limitations: [.providerWeightingUnknown])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            try DiagnosticEvidenceAnomaly(status: .unavailable, method: .trailingMedianRatioV1, qualification: .unavailable, unavailableReason: .gap, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 2, currentValue: nil, baselineValue: nil, result: nil, evidenceTraceReferences: [], limitations: [.noCausalAttribution])
+        }
+        #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
+            let traces = (0...DiagnosticExport.maximumFindingTraceReferences).map { String(format: "%012x", $0) }
+            _ = try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: traces, limitations: [.providerWeightingUnknown])
         }
     }
 
@@ -146,6 +159,15 @@ struct DiagnosticExportTests {
         }
         quota["records"] = Array(records.reversed())
         quota["omittedRecordCount"] = 3
+        object["quotaEvidence"] = quota
+        #expect(throws: DiagnosticExportError.malformedArtifact) {
+            try DiagnosticExport.decode(JSONSerialization.data(withJSONObject: object))
+        }
+        object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        quota = try #require(object["quotaEvidence"] as? [String: Any])
+        records = try #require(quota["records"] as? [[String: Any]])
+        records[0]["resetBoundaryProvenance"] = "measured"
+        quota["records"] = records
         object["quotaEvidence"] = quota
         #expect(throws: DiagnosticExportError.malformedArtifact) {
             try DiagnosticExport.decode(JSONSerialization.data(withJSONObject: object))
@@ -437,6 +459,7 @@ struct DiagnosticExportTests {
             evidenceAgeSeconds: nil,
             range: nil,
             resetInteraction: .unavailable,
+            evidenceTraceReferences: [],
             limitations: [.providerWeightingUnknown]
         )
         let currentPeriod = try DiagnosticEvidencePeriod(start: start, end: start.addingTimeInterval(60))
@@ -452,6 +475,7 @@ struct DiagnosticExportTests {
             currentValue: unavailable ? nil : DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated),
             baselineValue: unavailable ? nil : DiagnosticEvidenceValue(value: 1, unit: .percentagePoints, provenance: .calculated),
             result: nil,
+            evidenceTraceReferences: unavailable ? [] : [String(format: "%012x", index + 1)],
             limitations: [.noCausalAttribution]
         )
         return try DiagnosticQuotaEvidenceRecord(

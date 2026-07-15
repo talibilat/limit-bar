@@ -585,6 +585,7 @@ enum ForensicInvestigationAssembler {
                 evidenceAgeSeconds: boundedSeconds(value.evidenceAge),
                 range: try DiagnosticEvidenceRange(lower: value.calculatedBurnPercentPerHour.lower, upper: value.calculatedBurnPercentPerHour.upper, unit: .percentPerHour, provenance: .calculated),
                 resetInteraction: value.calculatedExhaustionRange == nil ? .notProjectedBeforeReset : .beforeReportedReset,
+                evidenceTraceReferences: traceReferences(value.inputObservationIdentities),
                 limitations: [.providerWeightingUnknown, .probabilityNotEstablished, .futureWorkloadUnknown, .fixtureValidationOnly]
             )
         case let .unavailable(value):
@@ -598,6 +599,7 @@ enum ForensicInvestigationAssembler {
                 evidenceAgeSeconds: value.evidenceAge.map(boundedSeconds),
                 range: nil,
                 resetInteraction: .unavailable,
+                evidenceTraceReferences: traceReferences(value.inputObservationIdentities),
                 limitations: [.providerWeightingUnknown, .probabilityNotEstablished, .futureWorkloadUnknown, .fixtureValidationOnly]
             )
         case nil:
@@ -631,6 +633,7 @@ enum ForensicInvestigationAssembler {
                 currentValue: nil,
                 baselineValue: nil,
                 result: nil,
+                evidenceTraceReferences: traceReferences(value.metadata.inputObservationIdentities),
                 limitations: [.noCausalAttribution, .fixtureValidationOnly]
             )
         }
@@ -645,6 +648,7 @@ enum ForensicInvestigationAssembler {
             currentValue: current.flatMap { try? DiagnosticEvidenceValue(value: $0, unit: .percentagePoints, provenance: .calculated) },
             baselineValue: baseline.flatMap { try? DiagnosticEvidenceValue(value: $0, unit: .percentagePoints, provenance: .calculated) },
             result: result.flatMap { try? DiagnosticEvidenceValue(value: $0, unit: .ratio, provenance: .calculated) },
+            evidenceTraceReferences: traceReferences(metadata.inputObservationIdentities),
             limitations: [.noCausalAttribution, .fixtureValidationOnly]
         )
     }
@@ -693,6 +697,10 @@ enum ForensicInvestigationAssembler {
 
     private static func boundedSeconds(_ value: TimeInterval) -> Int {
         min(2_592_000, max(0, Int(value.rounded())))
+    }
+
+    private static func traceReferences(_ identities: [QuotaObservationIdentity]) -> [String] {
+        Array(Set(identities.map { String($0.digest.prefix(12)) })).sorted().prefix(DiagnosticExport.maximumFindingTraceReferences).map { $0 }
     }
 
     private static func median(_ values: [Double]) -> Double? {
@@ -763,11 +771,11 @@ enum QuotaEvidenceReportBuilder {
     }
 
     private static func unavailableForecast() throws -> DiagnosticEvidenceForecast {
-        try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, limitations: [.providerWeightingUnknown])
+        try DiagnosticEvidenceForecast(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, observationCount: 0, observationSpanSeconds: 0, evidenceAgeSeconds: nil, range: nil, resetInteraction: .unavailable, evidenceTraceReferences: [], limitations: [.providerWeightingUnknown])
     }
 
     private static func unavailableAnomaly() throws -> DiagnosticEvidenceAnomaly {
-        try DiagnosticEvidenceAnomaly(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: nil, baselineValue: nil, result: nil, limitations: [.noCausalAttribution])
+        try DiagnosticEvidenceAnomaly(status: .unavailable, method: .notPublished, qualification: .unavailable, unavailableReason: .notPublished, currentPeriod: nil, baselinePeriod: nil, measuredInputCount: 0, currentValue: nil, baselineValue: nil, result: nil, evidenceTraceReferences: [], limitations: [.noCausalAttribution])
     }
 }
 

@@ -326,6 +326,21 @@ struct DiagnosticExportSelection: Equatable {
 }
 
 @MainActor
+protocol DiagnosticExportLocalEffects {
+    func chooseDestination() -> URL?
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws
+}
+
+@MainActor
+private struct ClosureDiagnosticExportLocalEffects: DiagnosticExportLocalEffects {
+    let destination: () -> URL?
+    let write: (DiagnosticExportArtifact, URL) throws -> Void
+
+    func chooseDestination() -> URL? { destination() }
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws { try write(artifact, destination) }
+}
+
+@MainActor
 @Observable
 final class DiagnosticExportModel {
     static let preparationError = "Could not prepare the diagnostic export."
@@ -344,13 +359,13 @@ final class DiagnosticExportModel {
     private var preparationRevision: UInt64 = 0
     private let makeArtifact: @MainActor () async throws -> DiagnosticExportArtifact
     private let makeSelectedArtifact: (@MainActor (DiagnosticExportSelection) async throws -> DiagnosticExportArtifact)?
-    private let chooseDestination: @MainActor () -> URL?
+    private let localEffects: any DiagnosticExportLocalEffects
 
     init(makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact) {
         self.makeArtifact = makeArtifact
         makeSelectedArtifact = nil
         selection = nil
-        chooseDestination = Self.chooseDestinationWithSavePanel
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: Self.chooseDestinationWithSavePanel, write: { try $0.save(to: $1) })
     }
 
     init(
@@ -360,7 +375,7 @@ final class DiagnosticExportModel {
         self.makeArtifact = makeArtifact
         makeSelectedArtifact = nil
         selection = nil
-        self.chooseDestination = chooseDestination
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
     }
 
     init(
@@ -371,7 +386,17 @@ final class DiagnosticExportModel {
         self.selection = selection
         self.makeSelectedArtifact = makeArtifact
         self.makeArtifact = { throw DiagnosticExportError.invalidQuotaEvidence }
-        self.chooseDestination = chooseDestination
+        localEffects = ClosureDiagnosticExportLocalEffects(destination: chooseDestination, write: { try $0.save(to: $1) })
+    }
+
+    init(
+        makeArtifact: @escaping @MainActor () async throws -> DiagnosticExportArtifact,
+        localEffects: any DiagnosticExportLocalEffects
+    ) {
+        self.makeArtifact = makeArtifact
+        makeSelectedArtifact = nil
+        selection = nil
+        self.localEffects = localEffects
     }
 
     func prepare() async {
@@ -410,7 +435,7 @@ final class DiagnosticExportModel {
     }
 
     func chooseApprovedDestination() {
-        guard isApproved, let chosen = chooseDestination() else { return }
+        guard isApproved, let chosen = localEffects.chooseDestination() else { return }
         destination = chosen
         hasDestination = true
         message = nil
@@ -419,7 +444,7 @@ final class DiagnosticExportModel {
     func save() {
         guard isApproved, let artifact, let destination else { return }
         do {
-            try artifact.save(to: destination)
+            try localEffects.save(artifact, to: destination)
             showsPreview = false
             message = Self.successMessage
         } catch {

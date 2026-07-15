@@ -291,6 +291,10 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         ]
         let now = Date(timeIntervalSince1970: 1_900_000_000)
         let reset = now.addingTimeInterval(3_600)
+        let identity = try QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: reset)
+        let analyticalInputs = try observations(identity: identity, now: now, values: [10, 11, 12, 13, 14, 15, 20], spacing: 600)
+        let forecast = QuotaInsightAnalytics.analyze(Array(analyticalInputs.prefix(4)), now: analyticalInputs[3].observedAt, maximumAge: 60)
+        let anomaly = QuotaAnomalyAnalytics.analyze(analyticalInputs, now: now, maximumAge: 60)
         let explanation = CodexQuotaExplanation(
             intervalStart: now.addingTimeInterval(-120),
             intervalEnd: now.addingTimeInterval(-60),
@@ -304,9 +308,10 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
             observationIdentities: [],
             evidenceIdentities: sentinels,
             adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
-            barriers: []
+            barriers: [],
+            quotaWindowIdentity: identity
         )
-        let publication = ForensicInvestigationAssembler.make(input(now: now, explanation: .available(explanation)))
+        let publication = ForensicInvestigationAssembler.make(input(now: now, explanation: .available(explanation), forecasts: [identity: forecast], anomalies: [identity: anomaly]))
         let evidence = try QuotaEvidenceReportBuilder.make(
             snapshot: publication,
             product: .codex,
@@ -339,9 +344,16 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertEqual(decoded.records.first?.localSessionCount, 1)
         XCTAssertEqual(decoded.records.first?.unattributedRemainder.value, 2)
         XCTAssertEqual(decoded.records.first?.unattributedRemainder.provenance, .calculated)
-        XCTAssertEqual(decoded.records.first?.forecast.status, .unavailable)
-        XCTAssertEqual(decoded.records.first?.anomaly.status, .unavailable)
+        let forecastTraces = try XCTUnwrap(decoded.records.first?.forecast.evidenceTraceReferences)
+        let anomalyTraces = try XCTUnwrap(decoded.records.first?.anomaly.evidenceTraceReferences)
+        XCTAssertEqual(decoded.records.first?.forecast.status, .available)
+        XCTAssertNotEqual(decoded.records.first?.anomaly.status, .unavailable)
+        XCTAssertFalse(forecastTraces.isEmpty)
+        XCTAssertFalse(anomalyTraces.isEmpty)
+        XCTAssertNotEqual(forecastTraces, anomalyTraces)
+        XCTAssertTrue(Set(forecastTraces).isSubset(of: Set(anomalyTraces)))
         XCTAssertEqual(decoded.records.first?.resetBoundary, reset)
+        XCTAssertEqual(decoded.records.first?.resetBoundaryProvenance, .reported)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -351,6 +363,10 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         for sentinel in sentinels {
             XCTAssertFalse(try artifact.preview.contains(sentinel))
             XCTAssertFalse(saved.contains(sentinel))
+        }
+        for identity in analyticalInputs.map(\.stableIdentity.digest) {
+            XCTAssertFalse(try artifact.preview.contains(identity))
+            XCTAssertFalse(saved.contains(identity))
         }
     }
 
@@ -412,7 +428,8 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         snapshot: CodexRateLimitSnapshot? = nil,
         explanation: CodexQuotaExplanationState,
         retained: Bool = false,
-        forecasts: [QuotaWindowIdentity: QuotaInsightState] = [:]
+        forecasts: [QuotaWindowIdentity: QuotaInsightState] = [:],
+        anomalies: [QuotaWindowIdentity: QuotaAnomalyState] = [:]
     ) -> ForensicInvestigationInput {
         ForensicInvestigationInput(
             generation: 7,
@@ -422,7 +439,7 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
             codexExplanationRetained: retained,
             claudeExplanationCatalog: .empty,
             forecasts: forecasts,
-            anomalies: [:],
+            anomalies: anomalies,
             storageAvailable: true,
             storeOpen: true
         )

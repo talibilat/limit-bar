@@ -525,9 +525,11 @@ public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
     public let range: DiagnosticEvidenceRange?
     public let resetInteraction: DiagnosticEvidenceResetInteraction
     public let provenance: DiagnosticEvidenceProvenance
+    public let evidenceTraceReferences: [String]
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceForecastMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticForecastUnavailableReason?, observationCount: Int, observationSpanSeconds: Int, evidenceAgeSeconds: Int?, range: DiagnosticEvidenceRange?, resetInteraction: DiagnosticEvidenceResetInteraction, limitations: [DiagnosticEvidenceLimitation]) throws {
+    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceForecastMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticForecastUnavailableReason?, observationCount: Int, observationSpanSeconds: Int, evidenceAgeSeconds: Int?, range: DiagnosticEvidenceRange?, resetInteraction: DiagnosticEvidenceResetInteraction, evidenceTraceReferences: [String], limitations: [DiagnosticEvidenceLimitation]) throws {
+        let canonicalTraces = Array(Set(evidenceTraceReferences)).sorted()
         guard [.available, .unavailable].contains(status),
               (status == .available) == (qualification == .qualified),
               status == .available ? (range != nil && evidenceAgeSeconds != nil && unavailableReason == nil && resetInteraction != .unavailable && method != .notPublished) : (range == nil && unavailableReason != nil && resetInteraction == .unavailable),
@@ -535,6 +537,11 @@ public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
               (0...SQLiteQuotaObservationStore.maximumObservationsPerWindow).contains(observationCount),
               (0...2_592_000).contains(observationSpanSeconds),
               evidenceAgeSeconds.map({ (0...2_592_000).contains($0) }) ?? true,
+              evidenceTraceReferences.count == canonicalTraces.count,
+              canonicalTraces.count <= DiagnosticExport.maximumFindingTraceReferences,
+              canonicalTraces.allSatisfy(DiagnosticExport.isTraceReference),
+              status == .available || unavailableReason == .notPublished || observationCount == 0 || !canonicalTraces.isEmpty,
+              status != .available || !canonicalTraces.isEmpty,
               !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
@@ -548,6 +555,7 @@ public struct DiagnosticEvidenceForecast: Codable, Equatable, Sendable {
         self.range = range
         self.resetInteraction = resetInteraction
         provenance = .calculated
+        self.evidenceTraceReferences = canonicalTraces
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
 }
@@ -564,9 +572,11 @@ public struct DiagnosticEvidenceAnomaly: Codable, Equatable, Sendable {
     public let baselineValue: DiagnosticEvidenceValue?
     public let result: DiagnosticEvidenceValue?
     public let provenance: DiagnosticEvidenceProvenance
+    public let evidenceTraceReferences: [String]
     public let limitations: [DiagnosticEvidenceLimitation]
 
-    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceAnomalyMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticAnomalyUnavailableReason?, currentPeriod: DiagnosticEvidencePeriod?, baselinePeriod: DiagnosticEvidencePeriod?, measuredInputCount: Int, currentValue: DiagnosticEvidenceValue?, baselineValue: DiagnosticEvidenceValue?, result: DiagnosticEvidenceValue?, limitations: [DiagnosticEvidenceLimitation]) throws {
+    public init(status: DiagnosticEvidenceState, method: DiagnosticEvidenceAnomalyMethod, qualification: DiagnosticEvidenceQualification, unavailableReason: DiagnosticAnomalyUnavailableReason?, currentPeriod: DiagnosticEvidencePeriod?, baselinePeriod: DiagnosticEvidencePeriod?, measuredInputCount: Int, currentValue: DiagnosticEvidenceValue?, baselineValue: DiagnosticEvidenceValue?, result: DiagnosticEvidenceValue?, evidenceTraceReferences: [String], limitations: [DiagnosticEvidenceLimitation]) throws {
+        let canonicalTraces = Array(Set(evidenceTraceReferences)).sorted()
         let qualifiedValuesAreValid: Bool = switch status {
         case .available: currentValue?.unit == .percentagePoints && baselineValue?.unit == .percentagePoints && result?.unit == .ratio
         case .noFinding: currentValue?.unit == .percentagePoints && baselineValue?.unit == .percentagePoints
@@ -578,6 +588,11 @@ public struct DiagnosticEvidenceAnomaly: Codable, Equatable, Sendable {
               status == .unavailable ? (unavailableReason != nil && currentPeriod == nil && baselinePeriod == nil && currentValue == nil && baselineValue == nil && result == nil) : (unavailableReason == nil && currentPeriod != nil && baselinePeriod != nil && qualifiedValuesAreValid && method != .notPublished),
               (0...10_000).contains(measuredInputCount),
               status == .unavailable || measuredInputCount > 0,
+              evidenceTraceReferences.count == canonicalTraces.count,
+              canonicalTraces.count <= DiagnosticExport.maximumFindingTraceReferences,
+              canonicalTraces.allSatisfy(DiagnosticExport.isTraceReference),
+              status == .unavailable || !canonicalTraces.isEmpty,
+              status != .unavailable || unavailableReason == .notPublished || measuredInputCount == 0 || !canonicalTraces.isEmpty,
               !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations else {
             throw DiagnosticExportError.invalidQuotaEvidence
         }
@@ -592,6 +607,7 @@ public struct DiagnosticEvidenceAnomaly: Codable, Equatable, Sendable {
         self.baselineValue = baselineValue
         self.result = result
         provenance = .calculated
+        self.evidenceTraceReferences = canonicalTraces
         self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
     }
 }
@@ -602,6 +618,7 @@ public struct DiagnosticQuotaEvidenceRecord: Codable, Equatable, Sendable {
     public let intervalEnd: Date
     public let resetBoundary: Date?
     public let resetBoundaryAvailability: DiagnosticEvidenceAvailability
+    public let resetBoundaryProvenance: DiagnosticEvidenceProvenance?
     public let movement: DiagnosticEvidenceMovement?
     public let localBreakdown: DiagnosticEvidenceState
     public let localBreakdownProvenance: DiagnosticEvidenceProvenance
@@ -635,6 +652,7 @@ public struct DiagnosticQuotaEvidenceRecord: Codable, Equatable, Sendable {
         self.intervalEnd = intervalEnd
         self.resetBoundary = resetBoundary
         resetBoundaryAvailability = resetBoundary == nil ? .unavailable : .available
+        resetBoundaryProvenance = resetBoundary == nil ? nil : .reported
         self.movement = movement
         self.localBreakdown = localBreakdown
         localBreakdownProvenance = .measured
@@ -871,6 +889,7 @@ public enum DiagnosticExport {
     public static let maximumEvidenceTextLength = 128
     public static let maximumEvidenceVersions = 8
     public static let maximumEvidenceLimitations = 8
+    public static let maximumFindingTraceReferences = 16
 
     public static func make(from input: DiagnosticExportInput) throws -> DiagnosticExportArtifact {
         let report = DiagnosticExportReport(
@@ -1091,6 +1110,7 @@ public enum DiagnosticExport {
                 evidenceAgeSeconds: record.forecast.evidenceAgeSeconds,
                 range: try record.forecast.range.map { try DiagnosticEvidenceRange(lower: $0.lower, upper: $0.upper, unit: $0.unit, provenance: $0.provenance) },
                 resetInteraction: record.forecast.resetInteraction,
+                evidenceTraceReferences: record.forecast.evidenceTraceReferences,
                 limitations: record.forecast.limitations
             )
             let anomaly = try DiagnosticEvidenceAnomaly(
@@ -1104,6 +1124,7 @@ public enum DiagnosticExport {
                 currentValue: try record.anomaly.currentValue.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
                 baselineValue: try record.anomaly.baselineValue.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
                 result: try record.anomaly.result.map { try DiagnosticEvidenceValue(value: $0.value, unit: $0.unit, provenance: $0.provenance) },
+                evidenceTraceReferences: record.anomaly.evidenceTraceReferences,
                 limitations: record.anomaly.limitations
             )
             let versions = try record.versions.map { try DiagnosticEvidenceVersion(kind: $0.kind, value: $0.value) }

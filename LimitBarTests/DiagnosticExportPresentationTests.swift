@@ -3,6 +3,21 @@ import LimitBarCore
 import XCTest
 @testable import LimitBar
 
+private final class DiagnosticExportNetworkTrap: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var requests = 0
+
+    static var requestCount: Int { lock.withLock { requests } }
+    static func reset() { lock.withLock { requests = 0 } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.withLock { Self.requests += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+    }
+    override func stopLoading() {}
+}
+
 @MainActor
 final class DiagnosticExportPresentationTests: XCTestCase {
     func testQuotaInsightDisclosureStatesMethodQualificationAndLimitationConservatively() throws {
@@ -192,6 +207,32 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: destination), approved)
     }
 
+    func testExistingDirectoryWriteFailureRetriesSameApprovedDestinationAsFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = root.appendingPathComponent("same-destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var generations = 0
+        let model = DiagnosticExportModel(makeArtifact: {
+            generations += 1
+            return try self.artifact(build: generations)
+        }, chooseDestination: { destination })
+
+        await model.prepare()
+        let approved = Data(model.preview.utf8)
+        model.approvePreview()
+        model.chooseApprovedDestination()
+        model.save()
+        XCTAssertEqual(model.message, DiagnosticExportModel.saveError)
+
+        try FileManager.default.removeItem(at: destination)
+        model.save()
+
+        XCTAssertEqual(generations, 1)
+        XCTAssertEqual(try Data(contentsOf: destination), approved)
+        XCTAssertEqual(model.message, DiagnosticExportModel.successMessage)
+    }
+
     func testSelectionChangeInvalidatesApprovalAndCandidate() async {
         let model = DiagnosticExportModel(makeArtifact: { try self.artifact() })
         await model.prepare()
@@ -316,15 +357,26 @@ final class DiagnosticExportPresentationTests: XCTestCase {
         XCTAssertTrue(model.preview.contains(#""build" : 2"#))
     }
 
-    func testWorkflowHasNoNetworkUploadCollaboratorAndUsesFixedSafeStrings() async {
+    func testWorkflowLocalEffectsHaveNoNetworkOperationAndAllPhasesMakeZeroRequests() async throws {
         let sentinel = "/Users/private TOKEN_SECRET ACCOUNT_LABEL"
-        let model = DiagnosticExportModel(makeArtifact: { try self.artifact() })
-        let collaboratorNames = Mirror(reflecting: model).children.compactMap(\.label).joined(separator: " ").lowercased()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = root.appendingPathComponent("report.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        DiagnosticExportNetworkTrap.reset()
+        URLProtocol.registerClass(DiagnosticExportNetworkTrap.self)
+        defer { URLProtocol.unregisterClass(DiagnosticExportNetworkTrap.self) }
+        let model = DiagnosticExportModel(makeArtifact: { try self.artifact() }, chooseDestination: { destination })
 
         await model.prepare()
+        model.approvePreview()
+        model.chooseApprovedDestination()
+        model.save()
+        XCTAssertEqual(model.message, DiagnosticExportModel.saveError)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        model.save()
+        model.cancelPreview()
 
-        XCTAssertFalse(collaboratorNames.contains("network"))
-        XCTAssertFalse(collaboratorNames.contains("upload"))
+        XCTAssertEqual(DiagnosticExportNetworkTrap.requestCount, 0)
         for value in [DiagnosticExportModel.preparationError, DiagnosticExportModel.saveError, DiagnosticExportModel.successMessage, DiagnosticExportModel.destinationDefaultName, model.preview] {
             XCTAssertFalse(value.contains(sentinel))
             XCTAssertFalse(value.contains("/Users/private"))

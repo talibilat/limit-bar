@@ -82,7 +82,8 @@ Report generation, preview, cancellation, destination selection, and saving do n
 The schema is a positive allow-list independent from internal settings and storage models.
 It excludes logs, database copies, paths, filenames, account and project labels, custom source names, credentials, arbitrary error text, exact refresh windows, and raw local or provider payloads.
 Schema v6 retains the v5 sections and adds a positive allow-listed Quota Evidence section projected from one coherent forensic publication.
-It includes the exact selected range and basis, reported reset or explicit boundary unavailability, typed movement provenance, separate Observed Local Breakdown state, unattributed remainder, qualified inferred allocation, forecasts, anomalies, bounded method and version metadata, limitations, and privacy-safe trace references.
+It includes the exact selected range and basis, Reported reset provenance or explicit boundary unavailability, typed movement provenance, separate Observed Local Breakdown state, unattributed remainder, qualified inferred allocation, forecasts, anomalies, bounded method and version metadata, limitations, and privacy-safe trace references.
+Each published forecast or anomaly carries its own bounded canonical references to the exact normalized input observations, truncated from privacy-safe digests without exposing raw identities.
 Forecast and anomaly methods, units, provenance, reset interaction, and unavailable reasons are closed typed values; dynamic adapter and client versions must satisfy a strict bounded ASCII token policy.
 Gap, Observed Zero, no finding, and analysis unavailable remain distinct.
 Matching records are deterministically ordered newest-first before projection, limited to eight, and declare both the applicable limit and the total omitted count, including records beyond the 100-record projection cap.
