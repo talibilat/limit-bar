@@ -60,6 +60,10 @@ struct LimitBarApp: App {
 @MainActor
 @Observable
 final class LimitBarState {
+    private enum PendingInvestigationRefresh: Equatable {
+        case requested(UUID)
+        case generation(UInt64)
+    }
     static let shared = LimitBarState()
 
     let local = LimitBarLocalStateProjection()
@@ -92,6 +96,7 @@ final class LimitBarState {
     private var observationTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
     private var latestCodexRefreshed = false
+    private var pendingInvestigationRefresh: PendingInvestigationRefresh?
 
     private init() {
         let sessionsDirectory = LimitBarFileLocations.codexSessionsDirectory(
@@ -159,7 +164,7 @@ final class LimitBarState {
     func start() {
         guard usesLiveRefresh else { return }
         guard observationTask == nil else { return }
-        investigationPublication = investigationPublication.loading(pendingGeneration: nil)
+        beginInvestigationRefreshRequest()
         observationTask = Task { [weak self, coordinator] in
             await coordinator.start()
             for await snapshot in coordinator.snapshots {
@@ -175,7 +180,7 @@ final class LimitBarState {
     func requestLocalRefresh() {
         guard usesLiveRefresh else { return }
         providerSettings = ProviderSettingsStore().settings
-        investigationPublication = investigationPublication.loading(pendingGeneration: nil)
+        beginInvestigationRefreshRequest()
         Task { [coordinator] in await coordinator.requestRefresh() }
     }
 
@@ -215,7 +220,9 @@ final class LimitBarState {
             return true
         } catch {
             quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            if pendingInvestigationRefresh == nil {
+                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            }
             return false
         }
     }
@@ -255,10 +262,15 @@ final class LimitBarState {
     }
 
     func refreshQuotaInsights(for snapshot: LocalRefreshSnapshot) async {
+        let refreshToken = PendingInvestigationRefresh.generation(snapshot.sequence)
+        pendingInvestigationRefresh = refreshToken
         investigationPublication = investigationPublication.loading(pendingGeneration: snapshot.sequence)
         local.apply(snapshot)
         guard let quotaInsightsService else {
-            investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
+            if pendingInvestigationRefresh == refreshToken {
+                investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
+                pendingInvestigationRefresh = nil
+            }
             return
         }
         do {
@@ -273,13 +285,19 @@ final class LimitBarState {
             }
             staged = Self.merging(staged, with: codex, for: .codex)
 
-            quotaAnalysis = staged
-            claudeExplanationCatalog = staged.claudeExplanations
-            quotaInsightsStorageAvailable = true
-            publishInvestigation(generation: snapshot.sequence, at: snapshot.refreshedAt)
+            if pendingInvestigationRefresh == refreshToken {
+                quotaAnalysis = staged
+                claudeExplanationCatalog = staged.claudeExplanations
+                quotaInsightsStorageAvailable = true
+                publishInvestigation(generation: snapshot.sequence, at: snapshot.refreshedAt)
+                pendingInvestigationRefresh = nil
+            }
         } catch {
-            quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
+            if pendingInvestigationRefresh == refreshToken {
+                quotaInsightsStorageAvailable = false
+                investigationPublication = investigationPublication.failed(pendingGeneration: snapshot.sequence)
+                pendingInvestigationRefresh = nil
+            }
         }
     }
 
@@ -333,7 +351,9 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            if pendingInvestigationRefresh == nil {
+                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            }
         }
     }
 
@@ -345,7 +365,9 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            if pendingInvestigationRefresh == nil {
+                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            }
         }
     }
 
@@ -357,7 +379,9 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            if pendingInvestigationRefresh == nil {
+                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            }
         }
     }
 
@@ -369,14 +393,23 @@ final class LimitBarState {
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false
-            investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            if pendingInvestigationRefresh == nil {
+                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
+            }
         }
     }
 
     private func publish(_ analysis: QuotaFindingAnalysisSnapshot, for product: ProviderProduct) {
         quotaAnalysis = Self.merging(quotaAnalysis, with: analysis, for: product)
         claudeExplanationCatalog = quotaAnalysis.claudeExplanations
-        publishInvestigation(generation: investigationPublication.generation, at: Date())
+        if pendingInvestigationRefresh == nil {
+            publishInvestigation(generation: investigationPublication.generation, at: Date())
+        }
+    }
+
+    func beginInvestigationRefreshRequest() {
+        pendingInvestigationRefresh = .requested(UUID())
+        investigationPublication = investigationPublication.loading(pendingGeneration: nil)
     }
 
     private static func merging(

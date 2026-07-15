@@ -109,7 +109,7 @@ public struct ClaudeQuotaExplanation: Codable, Equatable, Sendable {
     public let reportedQuotaMovementPercent: Double
     public let attribution: ClaudeQuotaAttribution
     public let unattributed: Bool
-    public let inferredAllocationPercent: Double?
+    public let inferredAllocation: InferredQuotaAllocation?
     public let observationIdentities: [QuotaObservationIdentity]
     public let evidenceIdentities: [String]
     public let observationIdentityCount: Int
@@ -130,7 +130,7 @@ public struct ClaudeQuotaExplanation: Codable, Equatable, Sendable {
         reportedQuotaMovementPercent: Double,
         attribution: ClaudeQuotaAttribution,
         unattributed: Bool,
-        inferredAllocationPercent: Double?,
+        inferredAllocation: InferredQuotaAllocation?,
         observationIdentities: [QuotaObservationIdentity],
         evidenceIdentities: [String] = [],
         observationIdentityCount: Int? = nil,
@@ -150,7 +150,7 @@ public struct ClaudeQuotaExplanation: Codable, Equatable, Sendable {
         self.reportedQuotaMovementPercent = reportedQuotaMovementPercent
         self.attribution = attribution
         self.unattributed = unattributed
-        self.inferredAllocationPercent = inferredAllocationPercent
+        self.inferredAllocation = inferredAllocation
         self.observationIdentities = observationIdentities
         self.evidenceIdentities = evidenceIdentities
         self.observationIdentityCount = observationIdentityCount ?? observationIdentities.count
@@ -173,7 +173,7 @@ public struct ClaudeQuotaExplanation: Codable, Equatable, Sendable {
             reportedQuotaMovementPercent: reportedQuotaMovementPercent,
             attribution: attribution,
             unattributed: unattributed,
-            inferredAllocationPercent: inferredAllocationPercent,
+            inferredAllocation: inferredAllocation,
             observationIdentities: observationIdentities,
             evidenceIdentities: evidenceIdentities,
             observationIdentityCount: observationIdentityCount,
@@ -417,7 +417,7 @@ public enum ClaudeQuotaExplanationEngine {
             reportedQuotaMovementPercent: movement,
             attribution: attribution,
             unattributed: true,
-            inferredAllocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [lower.observation.stableIdentity, upper.observation.stableIdentity],
             evidenceIdentities: matching.map(\.identity).sorted(),
             observationSpan: interval.intervalEnd.timeIntervalSince(interval.intervalStart),
@@ -447,7 +447,7 @@ public enum ClaudeQuotaExplanationEngine {
             reportedQuotaMovementPercent: upper.observation.percentageUsed - lower.observation.percentageUsed,
             attribution: .unavailable(attribution),
             unattributed: true,
-            inferredAllocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [lower.observation.stableIdentity, upper.observation.stableIdentity],
             observationSpan: interval.intervalEnd.timeIntervalSince(interval.intervalStart),
             evidenceAge: max(0, now.timeIntervalSince(interval.intervalEnd)),

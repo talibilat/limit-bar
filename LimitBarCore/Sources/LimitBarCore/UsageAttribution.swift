@@ -4,6 +4,36 @@ public enum LocalUsageEvidenceKind: Equatable, Sendable {
     case observedLocalBreakdown
 }
 
+public enum InferredQuotaAllocationValidationError: Error, Equatable {
+    case invalidAllocation
+}
+
+public enum InferredQuotaAllocationMethod: String, Codable, Equatable, Hashable, Sendable {
+    case temporalProportionalV1 = "temporal_proportional_v1"
+}
+
+public enum InferredQuotaAllocationLimitation: String, Codable, Equatable, Hashable, Sendable {
+    case temporalCorrelationOnly = "temporal_correlation_only"
+    case providerWeightingUnknown = "provider_weighting_unknown"
+    case noCausalAttribution = "no_causal_attribution"
+}
+
+public struct InferredQuotaAllocation: Codable, Equatable, Sendable {
+    public let percent: Double
+    public let method: InferredQuotaAllocationMethod
+    public let limitations: [InferredQuotaAllocationLimitation]
+
+    public init(percent: Double, method: InferredQuotaAllocationMethod, limitations: [InferredQuotaAllocationLimitation]) throws {
+        guard percent.isFinite, (0...100).contains(percent),
+              !limitations.isEmpty else {
+            throw InferredQuotaAllocationValidationError.invalidAllocation
+        }
+        self.percent = percent
+        self.method = method
+        self.limitations = Array(Set(limitations)).sorted { $0.rawValue < $1.rawValue }
+    }
+}
+
 /// Measured event-level attribution kept separate from its parent Usage Aggregate.
 public struct ObservedLocalAttributionBreakdown: Equatable, Sendable {
     public let evidenceKind: LocalUsageEvidenceKind

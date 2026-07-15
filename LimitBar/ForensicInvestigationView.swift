@@ -135,13 +135,13 @@ enum ForensicInvestigationPresentation {
             return InvestigationFindingPresentation(
                 status: "Qualified",
                 summary: "Calculated burn \(PercentRateLimitPresentation.burnRange(value.calculatedBurnPercentPerHour)). \(exhaustion).",
-                details: "\(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(duration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
+                details: "\(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(duration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
             )
         case let .unavailable(value):
             return InvestigationFindingPresentation(
                 status: "Unavailable",
                 summary: "Unavailable - no point estimate is shown.",
-                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(value.evidenceAge.map(duration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", "))."
+                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(value.evidenceAge.map(duration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
             )
         }
     }
@@ -210,6 +210,15 @@ enum ForensicInvestigationPresentation {
 
     private static func traceList(_ values: [QuotaObservationIdentity]) -> String {
         values.isEmpty ? "unavailable" : values.map { String($0.digest.prefix(12)) }.joined(separator: ", ")
+    }
+
+    private static func forecastLimitations(_ method: QuotaForecastMethod) -> String {
+        switch method {
+        case .pairwisePositiveSlopeInterquartileV2:
+            "provider capacity and weighting are unknown; the interquartile range is not a probability interval; future workload and unobserved activity are unknown; qualification is validated against a frozen synthetic replay that does not establish real-user representativeness or empirical forecast quality"
+        case .pairwisePositiveSlopeInterquartileV1:
+            "legacy method scope; provider capacity and weighting are unknown; the calculated range is not a probability interval and has no current empirical quality claim"
+        }
     }
 
     static func duration(_ interval: TimeInterval) -> String {
@@ -395,7 +404,7 @@ enum ForensicInvestigationAssembler {
             end: selection.interval.intervalEnd,
             authoritativeTotal: movement,
             localBreakdown: local,
-            unattributed: value?.inferredAllocationPercent.map { "Inferred allocation: \($0.formatted())%. Method and causal attribution are unavailable; remaining movement is Unattributed." } ?? "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
+            unattributed: allocationText(value?.inferredAllocation),
             forecast: ForensicInvestigationPresentation.forecast(forecasts[selection.interval.identity]),
             anomaly: ForensicInvestigationPresentation.anomaly(anomalies[selection.interval.identity]),
             version: "Explanation method \(value?.methodVersion ?? ClaudeQuotaExplanationEngine.methodVersion); source adapter \(value?.sourceAdapterVersion ?? ClaudeCodeOTLPEvidenceAdapter.adapterVersion); source/client version \(value?.sourceVersion ?? "unavailable - not captured").",
@@ -422,13 +431,8 @@ enum ForensicInvestigationAssembler {
         case .unavailable: value = nil; zero = nil
         }
         let reset = value?.quotaResetBoundary ?? zero?.quotaResetBoundary
-        let candidates = snapshot.map(MeasuredQuotaObservationAdapter.codex) ?? []
-        let identity = reset.flatMap { boundary in
-            value?.quotaWindowIdentity.flatMap { expected in candidates.first { $0.identity == expected }?.identity }
-                ?? candidates.first { $0.identity.resetBoundary == boundary }?.identity
-                ?? forecasts.keys.filter { $0.product == .codex && $0.resetBoundary == boundary }.sorted { $0.identifier < $1.identifier }.first
-                ?? anomalies.keys.filter { $0.product == .codex && $0.resetBoundary == boundary }.sorted { $0.identifier < $1.identifier }.first
-        }
+        _ = snapshot // Snapshot evidence must never substitute an identity omitted by legacy findings.
+        let identity = value?.quotaWindowIdentity ?? zero?.quotaWindowIdentity
         let start = value?.intervalStart ?? zero?.intervalStart
         let end = value?.intervalEnd ?? zero?.intervalEnd
         guard let start, let end, start < end else { return nil }
@@ -445,11 +449,11 @@ enum ForensicInvestigationAssembler {
             resetBoundary: reset,
             start: start,
             end: end,
-            authoritativeTotal: value.map { "Measured local quota observations; Calculated movement: \($0.reportedQuotaMovementPercent.formatted()) percentage points." }
+            authoritativeTotal: value.map { "Measured local quota observations; Calculated movement: \($0.calculatedQuotaMovementPercent.formatted()) percentage points." }
                 ?? zero.map { "Measured local quota observations; Calculated movement: \($0.calculatedQuotaMovementPercent.formatted()) percentage points." }
                 ?? "Measured local quota observations unavailable: \(explanation.displayText)",
             localBreakdown: local,
-            unattributed: value?.allocationPercent.map { "Inferred allocation: \($0.formatted())%. Local activity does not establish cause; remaining movement is Unattributed." } ?? "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
+            unattributed: allocationText(value?.inferredAllocation),
             forecast: ForensicInvestigationPresentation.forecast(identity.flatMap { forecasts[$0] }),
             anomaly: ForensicInvestigationPresentation.anomaly(identity.flatMap { anomalies[$0] }),
             version: "Explanation method \(CodexQuotaExplanationEngine.methodVersion); adapter \(value?.adapterVersion ?? CodexRolloutEvidenceAdapter.adapterVersion); client version unavailable - not captured.",
@@ -465,6 +469,13 @@ enum ForensicInvestigationAssembler {
         let observationTraces = observations.map { String($0.digest.prefix(12)) }
         let evidenceTraces = evidence.map(ForensicInvestigationPresentation.privacyTrace)
         return "Privacy-safe bounded traces - observations: \(observationTraces.isEmpty ? "unavailable" : observationTraces.joined(separator: ", ")); local evidence: \(evidenceTraces.isEmpty ? "unavailable" : evidenceTraces.joined(separator: ", "))."
+    }
+
+    private static func allocationText(_ allocation: InferredQuotaAllocation?) -> String {
+        guard let allocation else {
+            return "Unattributed: provider movement is not allocated to local activity and no causal claim is made."
+        }
+        return "Inferred allocation: \(allocation.percent.formatted())%; method \(allocation.method.rawValue); limitations \(allocation.limitations.map(\.rawValue).joined(separator: ", ")). Remaining movement is Unattributed and no causal claim is made."
     }
 }
 

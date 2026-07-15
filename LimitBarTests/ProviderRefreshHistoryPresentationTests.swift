@@ -265,13 +265,13 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
             quotaResetBoundary: now.addingTimeInterval(3_600),
             coverageStart: now.addingTimeInterval(-130),
             coverageEnd: now.addingTimeInterval(-50),
-            reportedQuotaMovementPercent: 2,
+            calculatedQuotaMovementPercent: 2,
             observedLocalBreakdown: CodexObservedLocalBreakdown(
                 tokens: CodexMeasuredTokens(input: 3, cachedInput: 1, output: 2, reasoningOutput: 1),
                 sessionCount: 1
             ),
             unattributed: true,
-            allocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [],
             evidenceIdentities: ["retained-private-digest"],
             adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,

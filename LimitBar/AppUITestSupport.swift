@@ -13,7 +13,7 @@ enum AppTestConfiguration {
 
     @MainActor
     static func state(investigationPublication: ForensicInvestigationSnapshot? = nil) -> LimitBarState {
-        LimitBarState(
+        let state = LimitBarState(
             providerSettings: [],
             claudeModel: ClaudeRateLimitsModel(
                 credentials: AppUITestClaudeCredentials(),
@@ -25,6 +25,38 @@ enum AppTestConfiguration {
             )),
             investigationPublication: investigationPublication
         )
+        if investigationPublication != nil {
+            let sentinel = "PRIVATE_SENTINEL_PROMPT_PATH_COOKIE"
+            let now = Date(timeIntervalSince1970: 1_900_000_000)
+            let window = try! ExactUsageWindow(timeWindow: .today, start: now, end: now.addingTimeInterval(86_400), basis: .localCalendar)
+            let genericAPIBreakdown = ObservedLocalAttributionBreakdown(
+                source: .builtInLocalLog,
+                provider: .anthropic,
+                window: window,
+                model: sentinel,
+                deployment: sentinel,
+                project: CollectorAttribution(id: "generic-api", label: sentinel),
+                agent: CollectorAttribution(id: "generic-agent", label: sentinel),
+                tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 5),
+                eventIDs: [UUID(uuidString: "00000000-0000-0000-0000-000000000032")!],
+                observedAt: now
+            )
+            state.local.apply(LocalRefreshSnapshot(
+                sequence: 99,
+                usage: LocalUsageRefresh(
+                    snapshot: StoredUsageMetricsSnapshot(
+                        metrics: [],
+                        health: UsageStoreHealth(isOpen: true, message: sentinel),
+                        localImport: .empty(fileURL: URL(fileURLWithPath: "")),
+                        attributionBreakdowns: [genericAPIBreakdown]
+                    ),
+                    customDiagnostics: []
+                ),
+                codex: nil,
+                refreshedAt: now
+            ))
+        }
+        return state
     }
 }
 
@@ -385,13 +417,13 @@ private struct CodexExplanationUITestView: View {
                 quotaResetBoundary: Date(timeIntervalSince1970: 1_783_716_600),
                 coverageStart: Date(timeIntervalSince1970: 1_783_716_090),
                 coverageEnd: Date(timeIntervalSince1970: 1_783_716_210),
-                reportedQuotaMovementPercent: 3.5,
+                calculatedQuotaMovementPercent: 3.5,
                 observedLocalBreakdown: CodexObservedLocalBreakdown(
                     tokens: CodexMeasuredTokens(input: 7, cachedInput: 2, output: 3, reasoningOutput: 1),
                     sessionCount: 1
                 ),
                 unattributed: true,
-                allocationPercent: nil,
+                inferredAllocation: nil,
                 observationIdentities: [],
                 evidenceIdentities: ["fixture"],
                 adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,

@@ -9,10 +9,36 @@ public enum CodexExplanationStoreError: Error, Equatable {
 }
 
 public final class SQLiteCodexExplanationStore: @unchecked Sendable {
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
     private static let defaultMaximumRecords = 100
     private static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
 
+    private static let createTableV1SQL = """
+    CREATE TABLE codex_explanation_findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recorded_at REAL NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('available', 'partial', 'observed_zero', 'unavailable')),
+        reason TEXT,
+        adapter_version TEXT NOT NULL,
+        interval_start REAL,
+        interval_end REAL,
+        quota_reset_boundary REAL,
+        coverage_start REAL,
+        coverage_end REAL,
+        quota_movement_percent REAL,
+        input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+        cached_input_tokens INTEGER NOT NULL CHECK (cached_input_tokens >= 0),
+        output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+        reasoning_output_tokens INTEGER NOT NULL CHECK (reasoning_output_tokens >= 0),
+        session_count INTEGER NOT NULL CHECK (session_count >= 0),
+        evidence_count INTEGER NOT NULL CHECK (evidence_count >= 0),
+        observation_count INTEGER NOT NULL CHECK (observation_count >= 0),
+        barrier_categories TEXT NOT NULL,
+        CHECK (cached_input_tokens <= input_tokens),
+        CHECK (reason IS NULL OR status = 'unavailable'),
+        CHECK (quota_reset_boundary IS NULL OR status IN ('available', 'partial', 'observed_zero'))
+    );
+    """
     private static let createTableSQL = """
     CREATE TABLE codex_explanation_findings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +60,7 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
         evidence_count INTEGER NOT NULL CHECK (evidence_count >= 0),
         observation_count INTEGER NOT NULL CHECK (observation_count >= 0),
         barrier_categories TEXT NOT NULL,
+        window_identifier TEXT CHECK (window_identifier IS NULL OR length(window_identifier) BETWEEN 1 AND 128),
         CHECK (cached_input_tokens <= input_tokens),
         CHECK (reason IS NULL OR status = 'unavailable'),
         CHECK (quota_reset_boundary IS NULL OR status IN ('available', 'partial', 'observed_zero'))
@@ -91,8 +118,8 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
             INSERT INTO codex_explanation_findings
                 (recorded_at, status, reason, adapter_version, interval_start, interval_end, quota_reset_boundary, coverage_start, coverage_end,
                  quota_movement_percent, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens,
-                 session_count, evidence_count, observation_count, barrier_categories)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                 session_count, evidence_count, observation_count, barrier_categories, window_identifier)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """)
             defer { sqlite3_finalize(statement) }
             sqlite3_bind_double(statement, 1, now.timeIntervalSince1970)
@@ -113,6 +140,7 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
             sqlite3_bind_int64(statement, 16, Int64(normalized.evidenceCount))
             sqlite3_bind_int64(statement, 17, Int64(normalized.observationCount))
             bind(normalized.barrierCategories.joined(separator: ","), at: 18, in: statement)
+            bindNullable(normalized.windowIdentifier, at: 19, in: statement)
             try stepDone(statement, error: .writeFailed)
             try pruneInTransaction(now: now)
             try execute("COMMIT;")
@@ -127,7 +155,7 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
         let statement = try prepare("""
         SELECT status, reason, adapter_version, interval_start, interval_end, coverage_start, coverage_end,
                quota_reset_boundary, quota_movement_percent, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens,
-               session_count, evidence_count, observation_count, barrier_categories
+               session_count, evidence_count, observation_count, barrier_categories, window_identifier
         FROM codex_explanation_findings ORDER BY recorded_at DESC, id DESC LIMIT 1;
         """)
         defer { sqlite3_finalize(statement) }
@@ -153,6 +181,10 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
         let version = try schemaVersion()
         guard version <= Self.schemaVersion else { throw CodexExplanationStoreError.schemaFailed }
         let objects = try schemaObjects()
+        if version == 1 {
+            try migrateV1()
+            return
+        }
         if !objects.isEmpty || version != 0 {
             guard version == Self.schemaVersion else { throw CodexExplanationStoreError.schemaFailed }
             try validateCanonicalSchema()
@@ -164,6 +196,38 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
             try execute(Self.createRecordedIndexSQL)
             try validateCanonicalSchema()
             try execute("PRAGMA user_version = \(Self.schemaVersion);")
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    private func migrateV1() throws {
+        guard try schemaObjects() == ["table:codex_explanation_findings", "index:codex_explanation_findings_recorded"],
+              try schemaSQL(type: "table", name: "codex_explanation_findings") == Self.normalizedSQL(Self.createTableV1SQL),
+              try schemaSQL(type: "index", name: "codex_explanation_findings_recorded") == Self.normalizedSQL(Self.createRecordedIndexSQL) else {
+            throw CodexExplanationStoreError.schemaFailed
+        }
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            try execute("ALTER TABLE codex_explanation_findings RENAME TO codex_explanation_findings_v1;")
+            try execute("DROP INDEX codex_explanation_findings_recorded;")
+            try execute(Self.createTableSQL)
+            try execute("""
+            INSERT INTO codex_explanation_findings
+                (id, recorded_at, status, reason, adapter_version, interval_start, interval_end, quota_reset_boundary,
+                 coverage_start, coverage_end, quota_movement_percent, input_tokens, cached_input_tokens, output_tokens,
+                 reasoning_output_tokens, session_count, evidence_count, observation_count, barrier_categories, window_identifier)
+            SELECT id, recorded_at, status, reason, adapter_version, interval_start, interval_end, quota_reset_boundary,
+                   coverage_start, coverage_end, quota_movement_percent, input_tokens, cached_input_tokens, output_tokens,
+                   reasoning_output_tokens, session_count, evidence_count, observation_count, barrier_categories, NULL
+            FROM codex_explanation_findings_v1;
+            """)
+            try execute("DROP TABLE codex_explanation_findings_v1;")
+            try execute(Self.createRecordedIndexSQL)
+            try execute("PRAGMA user_version = \(Self.schemaVersion);")
+            try validateCanonicalSchema()
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -214,6 +278,7 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
         }
         guard adapterVersion == CodexRolloutEvidenceAdapter.adapterVersion else { return .unavailable(.unsupportedEvidence) }
         let reason = stringColumn(statement, index: 1)
+        let windowIdentifier = stringColumn(statement, index: 17)
         let movement = optionalDouble(statement, index: 8)
         let tokens = CodexMeasuredTokens(
             input: sqlite3_column_int64(statement, 9),
@@ -236,6 +301,9 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
                 quotaResetBoundary: quotaResetBoundary,
                 observationIdentities: [],
                 evidenceIdentities: [],
+                quotaWindowIdentity: windowIdentifier.flatMap {
+                    try? QuotaWindowIdentity(product: .codex, identifier: $0, resetBoundary: quotaResetBoundary)
+                },
                 observationIdentityCount: Int(sqlite3_column_int64(statement, 15)),
                 evidenceIdentityCount: Int(sqlite3_column_int64(statement, 14))
             ))
@@ -255,16 +323,19 @@ public final class SQLiteCodexExplanationStore: @unchecked Sendable {
             quotaResetBoundary: quotaResetBoundary,
             coverageStart: coverageStart,
             coverageEnd: coverageEnd,
-            reportedQuotaMovementPercent: movement,
+            calculatedQuotaMovementPercent: movement,
             observedLocalBreakdown: CodexObservedLocalBreakdown(tokens: tokens, sessionCount: Int(sqlite3_column_int64(statement, 13))),
             unattributed: true,
-            allocationPercent: nil,
+            inferredAllocation: nil,
             observationIdentities: [],
             evidenceIdentities: [],
             observationIdentityCount: Int(sqlite3_column_int64(statement, 15)),
             evidenceIdentityCount: Int(sqlite3_column_int64(statement, 14)),
             adapterVersion: adapterVersion,
-            barriers: barriers
+            barriers: barriers,
+            quotaWindowIdentity: windowIdentifier.flatMap {
+                try? QuotaWindowIdentity(product: .codex, identifier: $0, resetBoundary: quotaResetBoundary)
+            }
         )
         if status == "available" { return .available(explanation) }
         if status == "partial" { return .partial(explanation) }
@@ -364,6 +435,7 @@ private struct NormalizedFinding {
     let evidenceCount: Int
     let observationCount: Int
     let barrierCategories: [String]
+    let windowIdentifier: String?
 
     init(state: CodexQuotaExplanationState) {
         switch state {
@@ -386,7 +458,8 @@ private struct NormalizedFinding {
                 sessionCount: 0,
                 evidenceCount: value.evidenceIdentityCount,
                 observationCount: value.observationIdentityCount,
-                barrierCategories: []
+                barrierCategories: [],
+                windowIdentifier: value.quotaWindowIdentity?.identifier
             )
         case let .unavailable(value):
             self.init(
@@ -403,7 +476,8 @@ private struct NormalizedFinding {
                 sessionCount: 0,
                 evidenceCount: 0,
                 observationCount: 0,
-                barrierCategories: []
+                barrierCategories: [],
+                windowIdentifier: nil
             )
         }
     }
@@ -417,12 +491,13 @@ private struct NormalizedFinding {
         quotaResetBoundary = explanation.quotaResetBoundary
         coverageStart = explanation.coverageStart
         coverageEnd = explanation.coverageEnd
-        quotaMovementPercent = explanation.reportedQuotaMovementPercent
+        quotaMovementPercent = explanation.calculatedQuotaMovementPercent
         tokens = explanation.observedLocalBreakdown.tokens
         sessionCount = explanation.observedLocalBreakdown.sessionCount
         evidenceCount = explanation.evidenceIdentityCount
         observationCount = explanation.observationIdentityCount
         barrierCategories = explanation.barriers.map(\.rawValue).sorted()
+        windowIdentifier = explanation.quotaWindowIdentity?.identifier
     }
 
     private init(
@@ -439,7 +514,8 @@ private struct NormalizedFinding {
         sessionCount: Int,
         evidenceCount: Int,
         observationCount: Int,
-        barrierCategories: [String]
+        barrierCategories: [String],
+        windowIdentifier: String?
     ) {
         self.status = status
         self.reason = reason
@@ -455,6 +531,7 @@ private struct NormalizedFinding {
         self.evidenceCount = evidenceCount
         self.observationCount = observationCount
         self.barrierCategories = barrierCategories
+        self.windowIdentifier = windowIdentifier
     }
 }
 

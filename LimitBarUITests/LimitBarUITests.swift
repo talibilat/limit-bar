@@ -131,7 +131,7 @@ final class LimitBarUITests: XCTestCase {
         let explanation = app.staticTexts["codex-quota-explanation"]
         XCTAssertTrue(explanation.waitForExistence(timeout: 5))
         let text = (explanation.value as? String) ?? explanation.label
-        XCTAssertTrue(text.contains("Measured quota change: +3.5%"))
+        XCTAssertTrue(text.contains("Measured local quota observations; Calculated movement: +3.5%"))
         XCTAssertTrue(text.contains("Observed Local Breakdown: 10 measured tokens"))
         XCTAssertTrue(text.contains("Quota movement remains unattributed"))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "codex-rollout-observed-0.144.4")).firstMatch.exists)
@@ -239,6 +239,11 @@ final class LimitBarUITests: XCTestCase {
         picker.click()
         app.menuItems["Claude Code"].click()
         XCTAssertTrue(app.staticTexts["investigation-reset-unavailable"].waitForExistence(timeout: 5))
+        let sentinel = "PRIVATE_SENTINEL_PROMPT_PATH_COOKIE"
+        let sentinelPredicate = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@ OR identifier CONTAINS %@", sentinel, sentinel, sentinel)
+        XCTAssertFalse(app.staticTexts.matching(sentinelPredicate).firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(sentinelPredicate).firstMatch.exists)
+        XCTAssertFalse(app.popUpButtons.matching(sentinelPredicate).firstMatch.exists)
 
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertFalse(picker.exists)
