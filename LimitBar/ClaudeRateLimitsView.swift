@@ -101,6 +101,12 @@ struct ClaudeRateLimitsView: View {
                         }
                         .accessibilityIdentifier("claude-explanation-interval")
                     }
+                    if let selectedSelection {
+                        Text(intervalTraceText(selectedSelection))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("claude-explanation-trace")
+                    }
                     Text(selectedExplanation.displayText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -177,6 +183,15 @@ struct ClaudeRateLimitsView: View {
     private func intervalLabel(_ interval: ClaudeQuotaExplanationInterval) -> String {
         let status = interval.lifecycle == .active ? "Active" : "Completed"
         return "\(status) · \(interval.intervalStart.formatted(date: .abbreviated, time: .shortened)) to \(interval.intervalEnd.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private func intervalTraceText(_ selection: ClaudeQuotaExplanationSelection) -> String {
+        let evidenceCount: Int
+        switch selection.state {
+        case let .movement(value), let .flat(value): evidenceCount = value.evidenceIdentityCount
+        case .unavailable: evidenceCount = 0
+        }
+        return "Exact selected interval: \(selection.interval.intervalStart.formatted(date: .abbreviated, time: .standard)) to \(selection.interval.intervalEnd.formatted(date: .abbreviated, time: .standard)); interval trace: \(selection.interval.id); Reported observation traces: 2; Measured evidence traces: \(evidenceCount); Calculated method: \(ClaudeQuotaExplanationEngine.methodVersion); provenance: Reported percentages, Calculated movement, Measured local breakdown when available."
     }
 
     private func duration(_ interval: TimeInterval) -> String {

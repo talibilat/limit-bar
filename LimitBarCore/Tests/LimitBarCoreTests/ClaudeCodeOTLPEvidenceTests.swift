@@ -32,6 +32,27 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(result.sourceStatus == .unsupportedMetric)
     }
 
+    @Test("validated evidence factory rejects every invalid invariant")
+    func validatedFactory() throws {
+        let valid = try ClaudeCodeOTLPEvidence.validated(identity: digest("a"), accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 1), intervalEnd: Date(timeIntervalSince1970: 2), model: "claude-sonnet-4-5", tokenType: .input, tokenCount: 0, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        #expect(valid.tokenCount == 0)
+        #expect(throws: ClaudeCodeOTLPEvidenceValidationError.invalidInterval) {
+            try ClaudeCodeOTLPEvidence.validated(identity: digest("a"), accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 2), intervalEnd: Date(timeIntervalSince1970: 2), model: "claude", tokenType: .input, tokenCount: 0, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        }
+        #expect(throws: ClaudeCodeOTLPEvidenceValidationError.invalidTokenCount) {
+            try ClaudeCodeOTLPEvidence.validated(identity: digest("a"), accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 1), intervalEnd: Date(timeIntervalSince1970: 2), model: "claude", tokenType: .input, tokenCount: -1, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        }
+        #expect(throws: ClaudeCodeOTLPEvidenceValidationError.invalidModel) {
+            try ClaudeCodeOTLPEvidence.validated(identity: digest("a"), accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 1), intervalEnd: Date(timeIntervalSince1970: 2), model: "/private/model", tokenType: .input, tokenCount: 0, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        }
+        #expect(throws: ClaudeCodeOTLPEvidenceValidationError.invalidDigest) {
+            try ClaudeCodeOTLPEvidence.validated(identity: "raw", accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 1), intervalEnd: Date(timeIntervalSince1970: 2), model: "claude", tokenType: .input, tokenCount: 0, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        }
+        #expect(throws: ClaudeCodeOTLPEvidenceValidationError.unsupportedVersion) {
+            try ClaudeCodeOTLPEvidence.validated(identity: digest("a"), accountIdentity: digest("b"), sessionIdentity: digest("c"), intervalStart: Date(timeIntervalSince1970: 1), intervalEnd: Date(timeIntervalSince1970: 2), model: "claude", tokenType: .input, tokenCount: 0, sourceVersion: "future", adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
+        }
+    }
+
     @Test("fails closed for unsupported versions and non-Claude metrics")
     func rejectsUnsupportedInputs() throws {
         let unsupported = ClaudeCodeOTLPEvidenceAdapter.scan(
@@ -102,3 +123,5 @@ struct ClaudeCodeOTLPEvidenceTests {
         return try Data(contentsOf: file)
     }
 }
+
+private func digest(_ character: Character) -> String { String(repeating: character, count: 64) }

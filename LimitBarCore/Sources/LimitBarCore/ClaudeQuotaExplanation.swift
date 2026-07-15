@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum ClaudeQuotaExplanationUnavailableReason: String, Codable, Equatable, Sendable {
@@ -282,13 +283,15 @@ public enum ClaudeQuotaExplanationEngine {
         now: Date,
         maximumObservationAge: TimeInterval = 9 * 24 * 60 * 60
     ) -> ClaudeQuotaExplanationState {
-        let account = expectedAccountIdentity ?? "explicit-test-scope"
         let scoped = observations
             .filter { now.timeIntervalSince($0.observedAt) <= maximumObservationAge }
-            .map { ClaudeScopedQuotaObservation(observation: $0, accountIdentity: account, unit: .percentageUsed) }
-        let source: ClaudeEvidenceSourceAvailability = sourceConfigured && expectedAccountIdentity != nil
-            ? .available(expectedAccountIdentity: account)
-            : .unavailable([.receiverNotConfigured, .accountBindingUnavailable])
+            .map { ClaudeScopedQuotaObservation(observation: $0, accountIdentity: nil, unit: .percentageUsed) }
+        let source: ClaudeEvidenceSourceAvailability
+        if sourceConfigured, let expectedAccountIdentity {
+            source = .available(expectedAccountIdentity: expectedAccountIdentity)
+        } else {
+            source = .unavailable([.receiverNotConfigured, .accountBindingUnavailable])
+        }
         let result = catalog(observations: scoped, evidence: evidence, source: source, evidenceLimitations: [], now: now).defaultSelection?.state
         if let result { return result }
         if Set(observations.map(\.identity)).count > 1 { return .unavailable(.incompatibleQuotaWindow) }
@@ -305,12 +308,19 @@ public enum ClaudeQuotaExplanationEngine {
         let unique = Dictionary(observations.map { ($0.observation.stableIdentity, $0) }, uniquingKeysWith: { first, _ in first }).values
             .filter { $0.observation.identity.product == .claudeCode }
         var pairs: [(ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation)] = []
-        for group in Dictionary(grouping: unique, by: { $0.observation.identity }).values {
+        let groups = Dictionary(grouping: unique, by: { $0.observation.identity })
+        let decreasedIdentities = Set(groups.compactMap { identity, group -> QuotaWindowIdentity? in
+            let ordered = group.sorted { ($0.observation.observedAt, $0.observation.stableIdentity.digest) < ($1.observation.observedAt, $1.observation.stableIdentity.digest) }
+            return zip(ordered, ordered.dropFirst()).contains { $0.1.observation.percentageUsed < $0.0.observation.percentageUsed } ? identity : nil
+        })
+        for group in groups.values {
             let ordered = group.sorted { ($0.observation.observedAt, $0.observation.stableIdentity.digest) < ($1.observation.observedAt, $1.observation.stableIdentity.digest) }
             pairs.append(contentsOf: zip(ordered, ordered.dropFirst()).filter { $0.0.observation.observedAt < $0.1.observation.observedAt })
         }
         pairs.sort { pairSortKey($0, now: now) > pairSortKey($1, now: now) }
-        let selections = pairs.prefix(maximumIntervals).map { evaluate($0, evidence: evidence, source: source, evidenceLimitations: evidenceLimitations, now: now) }
+        let selections = pairs.prefix(maximumIntervals).map {
+            evaluate($0, windowCounterDecreased: decreasedIdentities.contains($0.1.observation.identity), evidence: evidence, source: source, evidenceLimitations: evidenceLimitations, now: now)
+        }
         let preferred = selections.first { $0.interval.lifecycle == .active } ?? selections.first
         var catalogLimitations = Set(evidenceLimitations)
         if case let .unavailable(values) = source { catalogLimitations.formUnion(values) }
@@ -319,6 +329,7 @@ public enum ClaudeQuotaExplanationEngine {
 
     private static func evaluate(
         _ pair: (ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation),
+        windowCounterDecreased: Bool,
         evidence: [ClaudeCodeOTLPEvidence],
         source: ClaudeEvidenceSourceAvailability,
         evidenceLimitations: [ClaudeEvidenceLimitation],
@@ -328,7 +339,7 @@ public enum ClaudeQuotaExplanationEngine {
         let upper = pair.1
         let lifecycle: ClaudeExplanationLifecycle = upper.observation.identity.resetBoundary > now ? .active : .completed
         let interval = ClaudeQuotaExplanationInterval(
-            id: "\(lower.observation.stableIdentity.digest):\(upper.observation.stableIdentity.digest)",
+            id: intervalIdentity(lower: lower.observation.stableIdentity, upper: upper.observation.stableIdentity),
             identity: upper.observation.identity,
             intervalStart: lower.observation.observedAt,
             intervalEnd: upper.observation.observedAt,
@@ -336,6 +347,10 @@ public enum ClaudeQuotaExplanationEngine {
         )
         var limitations = Set(evidenceLimitations)
         if case let .unavailable(sourceLimitations) = source { limitations.formUnion(sourceLimitations) }
+        if limitations.contains(.missingEvidenceBoundary) { limitations.insert(.partialCoverage) }
+        if windowCounterDecreased {
+            return selection(interval, .unavailable(.counterDecreased), limitations)
+        }
         guard lower.unit == upper.unit, lower.unit == .percentageUsed else {
             limitations.insert(.incompatibleUnit)
             return selection(interval, .unavailable(.incompatibleUnit), limitations)
@@ -372,7 +387,12 @@ public enum ClaudeQuotaExplanationEngine {
             matching = Array(Dictionary(contained.filter { $0.accountIdentity == expectedAccountIdentity }.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first }).values)
             if limitations.contains(.partialCoverage) {
                 attribution = .unavailable(.partialCoverage)
+            } else if limitations.contains(.evidenceGap) {
+                attribution = .unavailable(.gap)
             } else if matching.isEmpty {
+                limitations.insert(.evidenceGap)
+                attribution = .unavailable(.gap)
+            } else if !hasCompleteCoverage(matching, interval: interval) {
                 limitations.insert(.evidenceGap)
                 attribution = .unavailable(.gap)
             } else if let value = breakdown(matching) {
@@ -451,6 +471,22 @@ public enum ClaudeQuotaExplanationEngine {
             models[item.model, default: 0] += 1
         }
         return ClaudeObservedLocalBreakdown(inputTokens: totals[.input] ?? 0, outputTokens: totals[.output] ?? 0, cacheReadTokens: totals[.cacheRead] ?? 0, cacheCreationTokens: totals[.cacheCreation] ?? 0, modelCounts: models, sessionCount: Set(evidence.map(\.sessionIdentity)).count, evidenceCount: evidence.count)
+    }
+
+    private static func hasCompleteCoverage(_ evidence: [ClaudeCodeOTLPEvidence], interval: ClaudeQuotaExplanationInterval) -> Bool {
+        let ordered = evidence.sorted { ($0.intervalStart, $0.intervalEnd, $0.identity) < ($1.intervalStart, $1.intervalEnd, $1.identity) }
+        guard let first = ordered.first, first.intervalStart == interval.intervalStart else { return false }
+        var coveredEnd = first.intervalEnd
+        for item in ordered.dropFirst() {
+            guard item.intervalStart <= coveredEnd else { return false }
+            coveredEnd = max(coveredEnd, item.intervalEnd)
+        }
+        return coveredEnd == interval.intervalEnd
+    }
+
+    private static func intervalIdentity(lower: QuotaObservationIdentity, upper: QuotaObservationIdentity) -> String {
+        SHA256.hash(data: Data("\(lower.version.rawValue):\(lower.digest):\(upper.version.rawValue):\(upper.digest)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
     }
 
     private static func pairSortKey(_ pair: (ClaudeScopedQuotaObservation, ClaudeScopedQuotaObservation), now: Date) -> String {

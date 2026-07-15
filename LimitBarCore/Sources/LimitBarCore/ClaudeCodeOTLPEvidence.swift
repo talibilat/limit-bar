@@ -35,7 +35,15 @@ public enum ClaudeEvidenceLimitation: String, Codable, CaseIterable, Equatable, 
     case unsupportedEvidence = "unsupported_evidence"
 }
 
-public struct ClaudeCodeOTLPEvidence: Codable, Equatable, Sendable {
+public enum ClaudeCodeOTLPEvidenceValidationError: Error, Equatable {
+    case invalidInterval
+    case invalidTokenCount
+    case invalidModel
+    case invalidDigest
+    case unsupportedVersion
+}
+
+public struct ClaudeCodeOTLPEvidence: Encodable, Equatable, Sendable {
     public let identity: String
     public let accountIdentity: String
     public let sessionIdentity: String
@@ -47,7 +55,7 @@ public struct ClaudeCodeOTLPEvidence: Codable, Equatable, Sendable {
     public let sourceVersion: String
     public let adapterVersion: String
 
-    public init(
+    private init(
         identity: String,
         accountIdentity: String,
         sessionIdentity: String,
@@ -71,29 +79,53 @@ public struct ClaudeCodeOTLPEvidence: Codable, Equatable, Sendable {
         self.adapterVersion = adapterVersion
     }
 
-    public init(
+    public static func validated(
         identity: String,
         accountIdentity: String,
         sessionIdentity: String,
-        observedAt: Date,
+        intervalStart: Date,
+        intervalEnd: Date,
         model: String,
         tokenType: ClaudeCodeTokenType,
         tokenCount: Int64,
         sourceVersion: String,
         adapterVersion: String
-    ) {
-        self.init(
+    ) throws -> Self {
+        guard intervalStart.timeIntervalSince1970.isFinite,
+              intervalEnd.timeIntervalSince1970.isFinite,
+              intervalStart < intervalEnd else { throw ClaudeCodeOTLPEvidenceValidationError.invalidInterval }
+        guard tokenCount >= 0 else { throw ClaudeCodeOTLPEvidenceValidationError.invalidTokenCount }
+        guard validModel(model) else { throw ClaudeCodeOTLPEvidenceValidationError.invalidModel }
+        guard validDigest(identity), validDigest(accountIdentity), validDigest(sessionIdentity) else {
+            throw ClaudeCodeOTLPEvidenceValidationError.invalidDigest
+        }
+        guard sourceVersion == ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion,
+              adapterVersion == ClaudeCodeOTLPEvidenceAdapter.adapterVersion else {
+            throw ClaudeCodeOTLPEvidenceValidationError.unsupportedVersion
+        }
+        return Self(
             identity: identity,
             accountIdentity: accountIdentity,
             sessionIdentity: sessionIdentity,
-            intervalStart: observedAt.addingTimeInterval(-0.001),
-            intervalEnd: observedAt,
+            intervalStart: intervalStart,
+            intervalEnd: intervalEnd,
             model: model,
             tokenType: tokenType,
             tokenCount: tokenCount,
             sourceVersion: sourceVersion,
             adapterVersion: adapterVersion
         )
+    }
+
+    private static func validDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    private static func validModel(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 128
+            && value.first?.isASCIIAlphaNumeric == true
+            && value.allSatisfy { $0.isASCIIAlphaNumeric || $0 == "." || $0 == "_" || $0 == "-" }
+            && !value.lowercased().hasPrefix("sk-")
     }
 }
 
@@ -136,7 +168,7 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                               let endNanos = UInt64(point.timeUnixNano), endNanos > startNanos,
                               let tokenTypeText = pointAttributes["type"],
                               let tokenType = ClaudeCodeTokenType(rawValue: tokenTypeText),
-                              let model = pointAttributes["model"], validModel(model),
+                              let model = pointAttributes["model"],
                               let sourceVersion = pointAttributes["app.version"], sourceVersion == supportedSourceVersion,
                               let rawAccount = pointAttributes["user.account_uuid"], UUID(uuidString: rawAccount) != nil,
                               let rawSession = pointAttributes["session.id"], UUID(uuidString: rawSession) != nil else {
@@ -153,7 +185,7 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                         let accountIdentity = keyedDigest(rawAccount, key: identityKey)
                         let sessionIdentity = keyedDigest(rawSession, key: identityKey)
                         let identityMaterial = "\(accountIdentity):\(sessionIdentity):\(startNanosText):\(point.timeUnixNano):\(tokenType.rawValue):\(count):\(model)"
-                        evidence.append(ClaudeCodeOTLPEvidence(
+                        guard let normalized = try? ClaudeCodeOTLPEvidence.validated(
                             identity: keyedDigest(identityMaterial, key: identityKey),
                             accountIdentity: accountIdentity,
                             sessionIdentity: sessionIdentity,
@@ -164,7 +196,11 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
                             tokenCount: count,
                             sourceVersion: sourceVersion,
                             adapterVersion: adapterVersion
-                        ))
+                        ) else {
+                            foundUnsupported = true
+                            continue
+                        }
+                        evidence.append(normalized)
                     }
                     if !limitations.isEmpty { return result(.unsupportedMetric, evidence: evidence, limitations: limitations) }
                 }
@@ -210,12 +246,6 @@ public enum ClaudeCodeOTLPEvidenceAdapter {
             .map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func validModel(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.count <= 128
-            && value.first?.isASCIIAlphaNumeric == true
-            && value.allSatisfy { $0.isASCIIAlphaNumeric || $0 == "." || $0 == "_" || $0 == "-" }
-            && !value.lowercased().hasPrefix("sk-")
-    }
 }
 
 private extension Character {

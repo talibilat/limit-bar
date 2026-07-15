@@ -56,6 +56,8 @@ The adapter accepts only these normalized inputs:
 | Datapoint `app.version` | Exact supported producer-version gate. |
 
 Raw account and session UUIDs are transformed with a caller-supplied local HMAC key before normalized evidence is returned.
+Normalized evidence has no public unchecked initializer or decoder.
+Its throwing factory requires finite increasing interval boundaries, non-negative counts, a bounded safe model, exact supported source and adapter versions, and 64-character lowercase hexadecimal keyed identities for the evidence, account, and session.
 The adapter ignores all unknown resource, scope, metric, point, and value fields.
 It never copies prompts, code, responses, tool details, terminal output, request or response bodies, credentials, authorization headers, email addresses, account labels, workspace paths, private paths, or raw OTLP payloads into normalized evidence or persistence.
 Generic Anthropic API metrics do not match the required `claude_code.token.usage` metric identity and cannot become Claude Code evidence.
@@ -67,7 +69,12 @@ Active intervals are preferred only for default selection; completed intervals r
 Movement is calculated only when both quota observations have the same verified account scope and percentage unit.
 Production observations currently lack that scope, so production calculation fails closed with `quota_account_scope_unavailable`.
 Duplicate observation identities are removed, out-of-order inputs are sorted by measured time, and account transitions, counter decreases, incompatible units, gaps, partial evidence coverage, missing boundaries, and unsupported evidence remain distinct limitations.
+Any counter decrease anywhere in one exact quota identity invalidates every candidate interval for that identity; a new reported reset boundary creates a distinct identity that can recover independently.
 An OTLP point contributes only when its complete `(start,end]` interval is contained in the selected quota-observation interval.
+The union of accepted contained intervals must begin at the selected start, have no internal gaps, and end at the selected end.
+Overlaps are allowed when their union is complete.
+Observed Zero requires that complete coverage and zero normalized totals.
+Leading, trailing, internal, crossing, and missing-boundary gaps can never become Observed Zero.
 
 The method identity is `claude-code-quota-explanation-v2`.
 It performs subtraction of provider-reported percentages only.
@@ -77,6 +84,7 @@ It never converts token counts to quota percentage and never allocates reported 
 It stores status, exact interval and reset boundary, measured percentage movement, bounded token totals and model counts when available, evidence and observation counts, source and method versions, and fixed reason categories.
 It stores no raw payload, account or session UUID, prompt, code, response, tool detail, terminal output, credential, path, or account label.
 Evidence age is recalculated from the selected interval end at every read and is not treated as frozen persisted evidence.
+The UI always displays the exact selected start and end, a stable privacy-safe interval trace digest, observation and evidence trace counts, method version, and Reported/Calculated/Measured provenance, even when only one interval exists.
 Settings deletes this database's findings independently from quota observations, current provider reports, usage, credentials, alert rules, and notification delivery state.
 
 ## Verification And Limitations

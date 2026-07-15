@@ -147,6 +147,28 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.popUpButtons["claude-explanation-interval"].exists)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "receiver_not_configured")).firstMatch.exists)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "manual signed acceptance unavailable")).firstMatch.exists)
+        let trace = app.staticTexts["claude-explanation-trace"]
+        XCTAssertTrue(trace.exists)
+        let traceText = (trace.value as? String) ?? trace.label
+        XCTAssertTrue(traceText.contains("Exact selected interval:"))
+        XCTAssertTrue(traceText.contains("interval trace: \(String(repeating: "f", count: 64))"))
+        XCTAssertTrue(traceText.contains("Reported observation traces: 2"))
+        XCTAssertTrue(traceText.contains("Measured evidence traces: 0"))
+        XCTAssertTrue(traceText.contains("Calculated method: claude-code-quota-explanation-v2"))
+        XCTAssertTrue(traceText.contains("provenance: Reported percentages, Calculated movement, Measured local breakdown"))
+    }
+
+    func testClaudeExplanationAlwaysShowsExactIntervalTraceForOneInterval() {
+        launch(screen: "claude-explanation-single")
+
+        let trace = app.staticTexts["claude-explanation-trace"]
+        XCTAssertTrue(trace.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.popUpButtons["claude-explanation-interval"].exists)
+        let text = (trace.value as? String) ?? trace.label
+        XCTAssertTrue(text.contains("Exact selected interval:"))
+        XCTAssertTrue(text.contains("interval trace: \(String(repeating: "f", count: 64))"))
+        XCTAssertTrue(text.contains("Reported observation traces: 2"))
+        XCTAssertTrue(text.contains("Calculated method: claude-code-quota-explanation-v2"))
     }
 
     func testPlanningSurfaceAcceptsBoundedInputAndExplainsUnavailableHistory() {

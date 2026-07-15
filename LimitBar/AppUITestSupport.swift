@@ -146,6 +146,8 @@ private struct LimitBarUITestHostView: View {
             CodexExplanationUITestView()
         case "claude-explanation":
             ClaudeExplanationUITestView()
+        case "claude-explanation-single":
+            ClaudeExplanationUITestView(includeCompleted: false)
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
@@ -154,6 +156,7 @@ private struct LimitBarUITestHostView: View {
 }
 
 private struct ClaudeExplanationUITestView: View {
+    var includeCompleted = true
     private let reset = Date(timeIntervalSince1970: 2_000_000_000)
 
     var body: some View {
@@ -178,15 +181,14 @@ private struct ClaudeExplanationUITestView: View {
 
     private var explanationCatalog: ClaudeQuotaExplanationCatalog {
         guard let identity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset) else { return .empty }
-        let interval = ClaudeQuotaExplanationInterval(id: "fixture", identity: identity, intervalStart: Date(timeIntervalSince1970: 1_900_000_000), intervalEnd: Date(timeIntervalSince1970: 1_900_000_100), lifecycle: .active)
+        let interval = ClaudeQuotaExplanationInterval(id: String(repeating: "f", count: 64), identity: identity, intervalStart: Date(timeIntervalSince1970: 1_900_000_000), intervalEnd: Date(timeIntervalSince1970: 1_900_000_100), lifecycle: .active)
         let state = ClaudeQuotaExplanationState.unavailable(.quotaAccountScopeUnavailable)
         guard let completedIdentity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: Date(timeIntervalSince1970: 1_800_000_200)) else { return .empty }
         let completed = ClaudeQuotaExplanationInterval(id: "completed-fixture", identity: completedIdentity, intervalStart: Date(timeIntervalSince1970: 1_800_000_000), intervalEnd: Date(timeIntervalSince1970: 1_800_000_100), lifecycle: .completed)
+        let active = ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
+        let historical = ClaudeQuotaExplanationSelection(interval: completed, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
         return ClaudeQuotaExplanationCatalog(
-            selections: [
-                ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable]),
-                ClaudeQuotaExplanationSelection(interval: completed, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
-            ],
+            selections: includeCompleted ? [active, historical] : [active],
             defaultSelectionID: interval.id
         )
     }
