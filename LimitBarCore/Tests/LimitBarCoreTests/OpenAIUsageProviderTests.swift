@@ -6,7 +6,7 @@ import Testing
 struct OpenAIUsageProviderTests {
     @Test("OAuth feasibility validates organization usage access")
     func feasibilityRequest() async throws {
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false}"#.utf8)))
         let client = OpenAIOrganizationClient(httpClient: http)
 
         let outcome = await client.validateOAuth(accessToken: "super-secret", interval: DateInterval(start: Date(timeIntervalSince1970: 100), end: Date(timeIntervalSince1970: 200)))
@@ -31,14 +31,14 @@ struct OpenAIUsageProviderTests {
         (500, OpenAIFeasibilityOutcome.failed(.refreshFailed))
     ])
     func feasibilityStatuses(status: Int, expected: OpenAIFeasibilityOutcome) async {
-        let client = OpenAIOrganizationClient(httpClient: OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw".utf8))))
+        let client = OpenAIOrganizationClient(httpClient: UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw".utf8))))
         let outcome = await client.validateOAuth(accessToken: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 1))
         #expect(outcome == expected)
     }
 
     @Test("cancellation is not reported as an OpenAI provider failure")
     func cancellationIsTyped() async {
-        let client = OpenAIOrganizationClient(httpClient: OpenAIRecordingHTTPClient(error: CancellationError()))
+        let client = OpenAIOrganizationClient(httpClient: UsageProviderRecordingHTTPClient(error: CancellationError()))
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
 
         #expect(await client.validateOAuth(accessToken: "secret", interval: interval) == .cancelled)
@@ -145,7 +145,7 @@ struct OpenAIUsageProviderTests {
 
     @Test("cost fetch requests the immutable UTC billing week")
     func costFetchRequestsUTCBillingWeek() async throws {
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
         let client = OpenAIOrganizationClient(httpClient: http)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
@@ -163,7 +163,7 @@ struct OpenAIUsageProviderTests {
     @Test("usage fetch ends at now while retaining the full exact window")
     func usageFetchEndsAtNow() async throws {
         let response = Data(#"{"data":[{"start_time":1783526400,"end_time":1783530000,"results":[{"project_id":"proj","model":"gpt","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = OpenAIOrganizationClient(httpClient: http)
         let now = Date(timeIntervalSince1970: 1_783_389_296)
         let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
@@ -180,7 +180,7 @@ struct OpenAIUsageProviderTests {
     @Test("pagination rejects repeated tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
     func paginationRejectsRepeatedTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
-        let http = OpenAIRecordingHTTPClient(responses: [page, page])
+        let http = UsageProviderRecordingHTTPClient(responses: [page, page])
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -191,7 +191,7 @@ struct OpenAIUsageProviderTests {
     @Test("pagination rejects missing tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
     func paginationRejectsMissingTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
-        let http = OpenAIRecordingHTTPClient(response: page)
+        let http = UsageProviderRecordingHTTPClient(response: page)
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -204,7 +204,7 @@ struct OpenAIUsageProviderTests {
         let responses = (1...100).map { index in
             HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
         }
-        let http = OpenAIRecordingHTTPClient(responses: responses)
+        let http = UsageProviderRecordingHTTPClient(responses: responses)
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -344,31 +344,4 @@ enum UsageProviderEndpoint: CaseIterable, CustomTestStringConvertible, Sendable 
     case cost
 
     var testDescription: String { String(describing: self) }
-}
-
-private actor OpenAIRecordingHTTPClient: HTTPClient {
-    private var responses: [HTTPResponse]
-    private let error: Error?
-    private(set) var requests: [HTTPRequest] = []
-
-    init(response: HTTPResponse) {
-        responses = [response]
-        error = nil
-    }
-
-    init(responses: [HTTPResponse]) {
-        self.responses = responses
-        error = nil
-    }
-
-    init(error: Error) {
-        responses = []
-        self.error = error
-    }
-
-    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        requests.append(request)
-        if let error { throw error }
-        return responses.removeFirst()
-    }
 }
