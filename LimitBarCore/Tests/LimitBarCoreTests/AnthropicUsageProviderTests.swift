@@ -111,10 +111,11 @@ struct AnthropicUsageProviderTests {
 
         let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
+        let expectedAmount = try #require(Decimal(string: "2.00"))
 
         #expect(metric.modelLabel == "Claude API Usage")
         #expect(metric.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
-        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+        #expect(metric.cost == Cost(amount: expectedAmount, currencyCode: "USD", source: .providerReported))
     }
 
     @Test("cost report skips negative and non-finite amounts")
