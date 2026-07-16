@@ -150,5 +150,3 @@ struct ClaudeCodeOTLPEvidenceTests {
         return try Data(contentsOf: file)
     }
 }
-
-private func digest(_ character: Character) -> String { String(repeating: character, count: 64) }
