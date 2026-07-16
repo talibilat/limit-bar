@@ -148,7 +148,7 @@ public enum CollectorSchemaV2 {
         var object: [String: Any] = [
             "schemaVersion": CollectorEventV2.schemaVersion,
             "eventID": event.eventID.uuidString.lowercased(),
-            "timestamp": formatTimestamp(event.timestamp),
+            "timestamp": CollectorSchemaV1.formatTimestamp(event.timestamp),
             "model": event.model,
             "inputTokens": event.inputTokens,
             "outputTokens": event.outputTokens
@@ -222,12 +222,6 @@ public enum CollectorSchemaV2 {
         guard let attribution else { return }
         object["\(prefix)ID"] = attribution.id
         if let label = attribution.label { object["\(prefix)Label"] = label }
-    }
-
-    private static func formatTimestamp(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
     }
 
     private static func integer(_ value: Any?) -> Int? {

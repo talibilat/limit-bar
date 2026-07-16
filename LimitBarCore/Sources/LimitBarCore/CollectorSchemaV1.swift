@@ -159,7 +159,7 @@ public enum CollectorSchemaV1 {
         return normalized
     }
 
-    private static func formatTimestamp(_ date: Date) -> String {
+    static func formatTimestamp(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
