@@ -49,7 +49,7 @@ struct OpenAIUsageProviderTests {
     func usageMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":"proj_1","project_name":"Codex Enterprise","model":"gpt-5.1-codex","input_tokens":10,"cached_input_tokens":2,"output_tokens":4}]}]}"#.utf8)
 
-        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
+        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let metric = try #require(metrics.first { $0.timeWindow == .today })
 
         #expect(metric.accountLabel == "org_123")
@@ -79,15 +79,15 @@ struct OpenAIUsageProviderTests {
     @Test("usage fixture rejects missing identity")
     func usageMappingRejectsMissingIdentity() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":null,"model":"gpt","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: utcCalendar()).isEmpty)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: utcCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: gregorianGMTCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: gregorianGMTCalendar()).isEmpty)
     }
 
     @Test("cost fixture maps provider-reported project spend")
     func costMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783684800,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Ignored","amount":null}]},{"start_time":1783684800,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":0.75,"currency":"usd"}}]}]}"#.utf8)
 
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
         let expectedAmount = try #require(Decimal(string: "2.00"))
 
@@ -100,7 +100,7 @@ struct OpenAIUsageProviderTests {
     @Test("multi-currency cost rows persist independently")
     func multiCurrencyCostsPersistIndependently() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Completions","amount":{"value":2.5,"currency":"eur"}}]}]}"#.utf8)
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let store = try SQLiteUsageMetricStore.inMemory()
 
         _ = try OpenAIRefreshPersistence.apply(.success(metrics), to: store)
@@ -112,7 +112,7 @@ struct OpenAIUsageProviderTests {
     @Test("cost aggregation overflow is rejected")
     func costAggregationOverflowIsRejected() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let amount = OpenAICostMapper.Amount(value: Decimal.greatestFiniteMagnitude, currency: "USD")
         let row = OpenAICostMapper.Row(projectID: "project", lineItem: "usage", amount: amount)
         let bucket = OpenAICostMapper.Bucket(
@@ -129,7 +129,7 @@ struct OpenAIUsageProviderTests {
     @Test("cost mapping skips negative and non-finite amounts")
     func costMappingRejectsInvalidAmounts() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let rows = [
             OpenAICostMapper.Row(projectID: "project", lineItem: "negative", amount: .init(value: -1, currency: "USD")),
             OpenAICostMapper.Row(projectID: "project", lineItem: "nan", amount: .init(value: .nan, currency: "USD"))
@@ -166,7 +166,7 @@ struct OpenAIUsageProviderTests {
         let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = OpenAIOrganizationClient(httpClient: http)
         let now = Date(timeIntervalSince1970: 1_783_389_296)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
 
         let result = await client.fetchUsage(credential: "secret", organization: "org", windows: windows, now: now)
         let request = try #require(await http.requests.first)
@@ -235,7 +235,7 @@ struct OpenAIUsageProviderTests {
     func usageSuccessCostFailurePersistsPartialOutcome() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let oldUsage = boundedMetric(model: "old usage", window: windows.today, cost: nil)
         let oldCost = boundedMetric(model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
         let priorWindow = try ExactUsageWindow(timeWindow: .currentWeek, start: windows.utcBillingWeek.start.addingTimeInterval(-604_800), end: windows.utcBillingWeek.end.addingTimeInterval(-604_800), basis: .utcBilling)
@@ -265,7 +265,7 @@ struct OpenAIUsageProviderTests {
     func costSuccessUsageFailurePersistsPartialOutcome() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let oldUsage = boundedMetric(model: "old usage", window: windows.today, cost: nil)
         let oldCost = boundedMetric(model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
         let freshCost = boundedMetric(model: "fresh cost", window: windows.utcBillingWeek, cost: Cost(amount: 4, currencyCode: "USD", source: .providerReported))
@@ -302,7 +302,7 @@ struct OpenAIUsageProviderTests {
     func cancelledBatchPreservesRows() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let retained = boundedMetric(model: "retained", window: windows.today, cost: nil)
         try store.save([retained])
         let initializedBefore = try store.hasInitializedMetrics()
@@ -337,11 +337,6 @@ struct OpenAIUsageProviderTests {
         }
     }
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        return calendar
-    }
 }
 
 enum OpenAIEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
