@@ -927,7 +927,7 @@ struct UsageDatabaseTests {
     @Test("removing a custom source clears its attribution component failure")
     func removingCustomSourceClearsAttributionFailure() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
