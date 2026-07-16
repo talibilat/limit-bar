@@ -132,7 +132,7 @@ struct ClaudeRateLimitsTests {
 
         let result = await client.fetchRateLimits(accessToken: "secret-token", now: Date(timeIntervalSince1970: 100))
 
-        let request = try #require(await stub.lastRequest())
+        let request = try #require(await stub.recorder.request)
         #expect(request.url.absoluteString == "https://api.anthropic.com/api/oauth/usage")
         #expect(request.headers["Authorization"] == "Bearer secret-token")
         #expect(request.headers["anthropic-beta"] == "oauth-2025-04-20")
@@ -152,7 +152,7 @@ private actor RequestRecorder {
 private struct StubHTTPClient: HTTPClient {
     var response: HTTPResponse?
     var error: Error?
-    private let recorder = RequestRecorder()
+    let recorder = RequestRecorder()
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         await recorder.record(request)
@@ -160,9 +160,5 @@ private struct StubHTTPClient: HTTPClient {
             throw error
         }
         return response ?? HTTPResponse(statusCode: 500, data: Data())
-    }
-
-    func lastRequest() async -> HTTPRequest? {
-        await recorder.request
     }
 }
