@@ -273,7 +273,6 @@ struct DiagnosticExportTests {
 
         #expect(object["generatedAt"] as? String == "2024-07-03T09:46:00Z")
         #expect(try artifact.preview.contains("2024-07-03T09:46:00Z"))
-        #expect(try artifact.preview.contains("2024-07-03T09:46:00Z"))
     }
 
     @Test("preview bytes exactly equal explicitly saved bytes")
