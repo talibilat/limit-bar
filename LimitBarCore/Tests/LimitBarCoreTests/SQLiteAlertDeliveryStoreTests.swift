@@ -92,8 +92,9 @@ struct SQLiteAlertDeliveryStoreTests {
 
     private func quotaOccurrence(thresholds: [Int], identifier: String = "primary") throws -> AlertOccurrence {
         let identity = try QuotaWindowIdentity(product: .codex, identifier: identifier, resetBoundary: now.addingTimeInterval(60))
+        let ruleID = try #require(UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D"))
         return AlertOccurrence(
-            ruleID: UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D")!,
+            ruleID: ruleID,
             window: .quota(identity),
             thresholds: thresholds
         )
