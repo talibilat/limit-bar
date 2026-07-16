@@ -89,10 +89,10 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
         now: Date,
         beforeCommit: (() throws -> Void)?
     ) throws {
-        guard now.timeIntervalSince1970.isFinite,
-              let payload = String(data: try JSONEncoder().encode(StoredClaudeExplanation(state)), encoding: .utf8) else {
+        guard now.timeIntervalSince1970.isFinite else {
             throw ClaudeExplanationStoreError.writeFailed
         }
+        let payload = String(decoding: try JSONEncoder().encode(StoredClaudeExplanation(state)), as: UTF8.self)
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             let statement = try prepare("INSERT INTO claude_explanation_findings (recorded_at, payload) VALUES (?, ?);")
