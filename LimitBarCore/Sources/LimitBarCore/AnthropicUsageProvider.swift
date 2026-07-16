@@ -142,23 +142,22 @@ public struct AnthropicAdminClient: Sendable {
     }
 
     private func request(apiKey: String, interval: DateInterval, page: String? = nil, path: String = "v1/organizations/usage_report/messages") -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         let formatter = ISO8601DateFormatter()
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "starting_at", value: formatter.string(from: interval.start)),
             URLQueryItem(name: "ending_at", value: formatter.string(from: interval.end))
         ]
         if path.contains("usage_report") {
-            components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "model"))
-            components.queryItems?.append(URLQueryItem(name: "bucket_width", value: "1m"))
+            queryItems.append(URLQueryItem(name: "group_by[]", value: "model"))
+            queryItems.append(URLQueryItem(name: "bucket_width", value: "1m"))
         } else {
-            components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "description"))
+            queryItems.append(URLQueryItem(name: "group_by[]", value: "description"))
         }
         if let page {
-            components.queryItems?.append(URLQueryItem(name: "page", value: page))
+            queryItems.append(URLQueryItem(name: "page", value: page))
         }
         return HTTPRequest(
-            url: components.url!,
+            url: baseURL.appendingPathComponent(path).appending(queryItems: queryItems),
             method: .get,
             headers: ["x-api-key": apiKey, "anthropic-version": "2023-06-01"]
         )
