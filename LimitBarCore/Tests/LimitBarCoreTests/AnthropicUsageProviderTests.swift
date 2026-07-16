@@ -11,7 +11,7 @@ struct AnthropicUsageProviderTests {
         let interval = DateInterval(start: try date("2026-07-06T00:00:00Z"), end: try date("2026-07-13T00:00:00Z"))
 
         let outcome = await client.validate(apiKey: "super-secret-value", interval: interval)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
 
         #expect(outcome == .connected)
         #expect(request.method == .get)
@@ -210,7 +210,7 @@ struct AnthropicUsageProviderTests {
 
         let now = try date("2026-07-08T12:34:56Z")
         _ = await client.fetchCost(apiKey: "secret", windows: windows, now: now)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
         let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
 
         #expect(query.first { $0.name == "starting_at" }?.value == "2026-07-06T00:00:00Z")
@@ -226,7 +226,7 @@ struct AnthropicUsageProviderTests {
         let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
 
         let result = await client.fetchUsage(apiKey: "secret", windows: windows, now: now)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
         let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
         guard case let .success(metrics) = result else { Issue.record("Expected success"); return }
 
@@ -423,8 +423,6 @@ actor UsageProviderRecordingHTTPClient: HTTPClient {
     private var responses: [HTTPResponse]
     private let error: Error?
     private(set) var requests: [HTTPRequest] = []
-
-    var lastRequest: HTTPRequest? { requests.last }
 
     init(response: HTTPResponse) {
         responses = [response]
