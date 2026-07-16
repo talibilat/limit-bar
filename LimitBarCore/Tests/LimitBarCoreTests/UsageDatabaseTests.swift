@@ -1091,10 +1091,6 @@ struct UsageDatabaseTests {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
 
-    private func temporaryDatabasePath() -> String {
-        FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
-    }
-
     private func attributionDatabasePath(for currentPath: String) -> String {
         let currentURL = URL(fileURLWithPath: currentPath)
         let stem = currentURL.deletingPathExtension().lastPathComponent

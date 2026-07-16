@@ -775,10 +775,6 @@ struct LocalUsageEventImporterTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func temporaryDatabasePath() -> String {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
-    }
-
     private func executeSQLite(databasePath: String, sql: String) throws {
         var database: OpaquePointer?
         guard sqlite3_open(databasePath, &database) == SQLITE_OK else {

@@ -925,10 +925,6 @@ struct SQLiteUsageMetricStoreTests {
         )
     }
 
-    private func temporaryDatabasePath() -> String {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
-    }
-
     private func createV1Database(at path: String) throws {
         var database: OpaquePointer?
         try openDatabase(at: path, into: &database)

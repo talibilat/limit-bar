@@ -338,3 +338,7 @@ func temporaryFile(contents: String) throws -> URL {
     try contents.write(to: url, atomically: true, encoding: .utf8)
     return url
 }
+
+func temporaryDatabasePath() -> String {
+    FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
+}

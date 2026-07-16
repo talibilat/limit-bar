@@ -110,10 +110,6 @@ struct UsageAttributionStoreTests {
         try #require(ISO8601DateFormatter().date(from: value))
     }
 
-    private func temporaryDatabasePath() -> String {
-        FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
-    }
-
     private func execute(_ sql: String, path: String) throws {
         var database: OpaquePointer?
         guard sqlite3_open(path, &database) == SQLITE_OK else { throw UsageAttributionStoreError.openFailed }
