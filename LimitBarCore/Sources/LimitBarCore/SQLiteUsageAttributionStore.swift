@@ -237,9 +237,10 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
               CollectorSchemaV2.validAttribution(value.project),
               CollectorSchemaV2.validAttribution(value.agent) else { throw UsageAttributionStoreError.writeFailed }
         let eventData = try JSONEncoder().encode(value.eventIDs.map { $0.uuidString.lowercased() })
-        guard eventData.count <= Self.maximumEventIdentityBytes, let eventText = String(data: eventData, encoding: .utf8) else {
+        guard eventData.count <= Self.maximumEventIdentityBytes else {
             throw UsageAttributionStoreError.writeFailed
         }
+        let eventText = String(decoding: eventData, as: UTF8.self)
         let statement = try prepare("""
         INSERT INTO usage_attribution_breakdowns
             (source_kind, source_identifier, source_revision, provider, time_window, window_start, window_end,
