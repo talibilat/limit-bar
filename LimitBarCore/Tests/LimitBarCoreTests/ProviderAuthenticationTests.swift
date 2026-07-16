@@ -70,7 +70,7 @@ struct ProviderAuthenticationTests {
             localImportState: .healthy
         )
 
-        let json = try #require(String(data: JSONEncoder().encode(report), encoding: .utf8))
+        let json = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
         #expect(json.contains("anthropic"))
         #expect(json.contains("authenticationRejected"))
         #expect(!json.contains(secretSentinel))
