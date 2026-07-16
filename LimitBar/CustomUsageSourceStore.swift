@@ -24,7 +24,11 @@ struct CustomUsageSourceStore {
     }
 
     var sources: [CustomUsageSource] {
-        get { Self.sources(from: defaults.string(forKey: Self.storageKey) ?? Self.defaultJSON) }
+        get {
+            let json = defaults.string(forKey: Self.storageKey) ?? Self.defaultJSON
+            guard let data = json.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([CustomUsageSource].self, from: data)) ?? []
+        }
         nonmutating set {
             defaults.set(Self.json(from: newValue), forKey: Self.storageKey)
             NotificationCenter.default.post(name: .customUsageSourcesDidChange, object: nil)
@@ -50,13 +54,6 @@ struct CustomUsageSourceStore {
 
     func remove(id: UUID) {
         sources = sources.filter { $0.id != id }
-    }
-
-    static func sources(from json: String) -> [CustomUsageSource] {
-        guard let data = json.data(using: .utf8) else {
-            return []
-        }
-        return (try? JSONDecoder().decode([CustomUsageSource].self, from: data)) ?? []
     }
 
     private static func json(from sources: [CustomUsageSource]) -> String {
