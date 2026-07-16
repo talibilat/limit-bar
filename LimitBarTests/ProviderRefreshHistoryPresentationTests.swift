@@ -349,7 +349,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let successfulState = makeState(attributionStore: successfulStore)
 
         let succeeded = await successfulState.deleteProjectAgentAttribution()
-        let successfulCalls = await successfulStore.callCount()
+        let successfulCalls = await successfulStore.calls
         XCTAssertTrue(succeeded)
         XCTAssertEqual(successfulCalls, 1)
         XCTAssertEqual(
@@ -360,7 +360,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let failingStore = AttributionDeletionStub(shouldFail: true)
         let failingState = makeState(attributionStore: failingStore)
         let failed = await failingState.deleteProjectAgentAttribution()
-        let failingCalls = await failingStore.callCount()
+        let failingCalls = await failingStore.calls
         XCTAssertFalse(failed)
         XCTAssertEqual(failingCalls, 1)
         XCTAssertEqual(
@@ -461,7 +461,7 @@ private struct PlanningCurrentEvidenceFixture {
 
 private actor AttributionDeletionStub: AttributionEvidenceDeleting {
     private let shouldFail: Bool
-    private var calls = 0
+    private(set) var calls = 0
 
     init(shouldFail: Bool) {
         self.shouldFail = shouldFail
@@ -471,8 +471,6 @@ private actor AttributionDeletionStub: AttributionEvidenceDeleting {
         calls += 1
         if shouldFail { throw AttributionDeletionTestError.failed }
     }
-
-    func callCount() -> Int { calls }
 }
 
 private enum AttributionDeletionTestError: Error {
