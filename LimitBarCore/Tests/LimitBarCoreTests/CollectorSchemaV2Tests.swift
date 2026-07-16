@@ -28,7 +28,7 @@ struct CollectorSchemaV2Tests {
     }
 
     @Test("accepts maximum bounded ASCII attribution")
-    func acceptsMaximumBounds() throws {
+    func acceptsMaximumBounds() {
         let identifier = "a" + String(repeating: "b", count: CollectorSchemaV2.maximumAttributionBytes - 1)
         let label = "A" + String(repeating: "b", count: CollectorSchemaV2.maximumAttributionBytes - 1)
         let request = validJSON()
