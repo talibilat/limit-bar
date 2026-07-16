@@ -121,7 +121,7 @@ struct ProviderAuthenticationTests {
 
         #expect(decoded.map(\.provider) == [.anthropic, .azureOpenAI, .openAI])
         #expect(decoded[0].state == .connected)
-        let json = try #require(String(data: encoded, encoding: .utf8))
+        let json = String(decoding: encoded, as: UTF8.self)
         for forbidden in ["apiKey", "accessToken", "refreshToken", "secret", "rawProviderResponse"] {
             #expect(!json.contains(forbidden))
         }
