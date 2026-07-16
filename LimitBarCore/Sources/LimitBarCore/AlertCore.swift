@@ -532,7 +532,7 @@ public enum CostBudgetObservationBuilder {
 
     private struct TotalKey: Hashable {
         let product: ProviderProduct
-        let source: String
+        let source: CostSource
         let window: ExactUsageWindow
         let currency: String
     }
@@ -606,7 +606,7 @@ public enum CostBudgetObservationBuilder {
         return totals.map { key, total in
             CostBudgetObservation(
                 product: key.product,
-                source: CostSource(rawValue: key.source)!,
+                source: key.source,
                 window: key.window,
                 currencyCode: key.currency,
                 amount: total.amount,
@@ -640,7 +640,7 @@ public enum CostBudgetObservationBuilder {
         to totals: inout [TotalKey: (amount: Decimal, observedAt: Date)],
         invalidTotals: inout Set<TotalKey>
     ) {
-        let key = TotalKey(product: product, source: cost.source.rawValue, window: window, currency: cost.currencyCode.uppercased())
+        let key = TotalKey(product: product, source: cost.source, window: window, currency: cost.currencyCode.uppercased())
         guard !invalidTotals.contains(key) else { return }
         guard let existing = totals[key] else {
             totals[key] = (cost.amount, observedAt)
