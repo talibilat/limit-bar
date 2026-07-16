@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Collector writer")
 struct CollectorWriterTests {
-    private let now = CollectorSchemaV1.parseTimestamp("2026-07-12T12:00:00Z")!
+    private let now = Date(timeIntervalSince1970: 1_783_857_600)
 
     @Test("identical UUID and payload is idempotent and consumes capacity once")
     func duplicateIsIdempotent() throws {
