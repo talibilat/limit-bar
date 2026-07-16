@@ -88,7 +88,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         await state.recordCodexInsights(snapshot, now: now.addingTimeInterval(60))
         XCTAssertEqual(state.quotaAnalysis, initial)
         XCTAssertFalse(state.quotaInsightsStorageAvailable)
-        let attemptedAnalysis = await service.attemptedAnalysis
+        let attemptedAnalysis = service.attemptedAnalysis
         XCTAssertEqual(attemptedAnalysis, attempted)
     }
 
@@ -357,7 +357,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
 
 private actor FailingQuotaInsightsService: QuotaInsightsServing {
     private let initial: QuotaFindingAnalysisSnapshot
-    private(set) var attemptedAnalysis: QuotaFindingAnalysisSnapshot
+    let attemptedAnalysis: QuotaFindingAnalysisSnapshot
     private var callCount = 0
 
     init(initial: QuotaFindingAnalysisSnapshot, attempted: QuotaFindingAnalysisSnapshot) {
