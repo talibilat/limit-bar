@@ -147,8 +147,7 @@ public struct OpenAIOrganizationClient: Sendable {
     }
 
     private func request(credential: String, interval: DateInterval, page: String? = nil) -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/usage/completions"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
             URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
             URLQueryItem(name: "bucket_width", value: "1m"),
@@ -156,21 +155,28 @@ public struct OpenAIOrganizationClient: Sendable {
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "model")
         ]
-        if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
-        return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
+        if let page { queryItems.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(
+            url: baseURL.appendingPathComponent("v1/organization/usage/completions").appending(queryItems: queryItems),
+            method: .get,
+            headers: ["Authorization": "Bearer \(credential)"]
+        )
     }
 
     private func costRequest(credential: String, interval: DateInterval, page: String?) -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/costs"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
             URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
             URLQueryItem(name: "bucket_width", value: "1d"),
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "line_item")
         ]
-        if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
-        return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
+        if let page { queryItems.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(
+            url: baseURL.appendingPathComponent("v1/organization/costs").appending(queryItems: queryItems),
+            method: .get,
+            headers: ["Authorization": "Bearer \(credential)"]
+        )
     }
 }
 
