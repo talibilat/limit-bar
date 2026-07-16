@@ -321,7 +321,11 @@ struct ProviderSettingsView: View {
                   Data(SHA256.hash(data: currentCredential)) == startedFingerprint else {
                 return execution(.cancelled)
             }
-            let diagnostic = await anthropicRefreshService.apply(result)
+            let diagnostic = await UsageDatabase.shared.applyAnthropic(
+                result.result,
+                windows: result.windows,
+                expectedGeneration: result.generation
+            )
             guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
             guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(result.generation, for: .anthropic) else { return execution(.cancelled) }
             settings[index].state = diagnostic.state
