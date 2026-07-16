@@ -357,20 +357,6 @@ final class LimitBarState {
         }
     }
 
-    private func reevaluateClaudeInsights(now: Date) async {
-        guard let quotaInsightsService else { return }
-        do {
-            let analysis = try await quotaInsightsService.reevaluateClaudeAnalysis(now: now)
-            publish(analysis, for: .claudeCode)
-            quotaInsightsStorageAvailable = true
-        } catch {
-            quotaInsightsStorageAvailable = false
-            if pendingInvestigationRefresh == nil {
-                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
-            }
-        }
-    }
-
     func recordCodexInsights(_ snapshot: CodexRateLimitSnapshot, now: Date) async {
         guard let quotaInsightsService else { return }
         do {
