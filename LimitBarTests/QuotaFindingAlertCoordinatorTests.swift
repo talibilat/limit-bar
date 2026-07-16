@@ -455,7 +455,7 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
         added.append(Added(identifier: identifier, title: title, body: body))
     }
 
-    func pendingIdentifiers() async -> [String] { added.map(\.identifier) }
+    func pendingIdentifiers() -> [String] { added.map(\.identifier) }
     func deliveredIdentifiers() -> [String] { [] }
     func removePending(identifiers: [String]) {}
     func removeDelivered(identifiers: [String]) {}
