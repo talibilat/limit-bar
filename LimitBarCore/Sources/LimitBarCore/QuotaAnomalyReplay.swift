@@ -360,8 +360,8 @@ public enum QuotaAnomalyCandidateEvaluator {
             return .unavailable
         }
         if selected.allSatisfy({ $0.percentageUsed == 0 }) { return .observedZero }
+        guard let current = intervals.last?.value else { return .unavailable }
         let baseline = Array(intervals.prefix(shape.baselineSampleCount).map(\.value))
-        let current = intervals.last!.value
         let scoreMethod: QuotaAnomalyScoreMethod = method == .trailingMedianRatio
             ? .trailingMedianRatio
             : .medianAbsoluteDeviation
