@@ -32,9 +32,6 @@ final class LimitBarUITests: XCTestCase {
         app.terminate()
         UserDefaults(suiteName: defaultsSuiteName)?.removePersistentDomain(forName: defaultsSuiteName)
         try? FileManager.default.removeItem(at: fixtureDirectory)
-        fixtureURL = nil
-        fixtureDirectory = nil
-        defaultsSuiteName = nil
         try super.tearDownWithError()
     }
 
