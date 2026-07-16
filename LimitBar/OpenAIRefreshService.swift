@@ -52,8 +52,4 @@ struct OpenAIRefreshService {
     func apply(_ result: OpenAIRefreshResult, windows: CurrentUsageWindows, generation: UInt64) async -> ProviderDiagnostic {
         await UsageDatabase.shared.applyOpenAI(result, windows: windows, expectedGeneration: generation)
     }
-
-    func apply(_ batch: OpenAIRefreshBatch, windows: CurrentUsageWindows, generation: UInt64) async -> ProviderDiagnostic {
-        await UsageDatabase.shared.applyOpenAI(batch, windows: windows, expectedGeneration: generation)
-    }
 }

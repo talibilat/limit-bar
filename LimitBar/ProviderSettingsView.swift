@@ -391,7 +391,11 @@ struct ProviderSettingsView: View {
             let outcome: ProviderRefreshOutcome
             switch batch.result {
             case let .supported(refreshResult):
-                let diagnostic = await openAIRefreshService.apply(refreshResult, windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(
+                    refreshResult,
+                    windows: batch.windows,
+                    expectedGeneration: batch.generation
+                )
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 if method == .openAIOAuth {
                     settings[index].openAIOAuthFeasibility = .supported
