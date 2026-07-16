@@ -255,8 +255,9 @@ struct QuotaFindingAlertTests {
     func durableExactWindowSemantics() throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: path) }
+        let ruleID = try #require(UUID(uuidString: "A5AC0BBA-EA56-4E15-A56B-54DE25BFBB56"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "A5AC0BBA-EA56-4E15-A56B-54DE25BFBB56")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([70])
         )
