@@ -297,10 +297,11 @@ struct CodexRolloutEvidenceTests {
             #"{"timestamp":"2026-07-15T10:00:00Z","type":"session_meta","payload":{"session_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","cli_version":"0.144.4"}}"#,
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_784_109_600))
         ]).write(to: nested.appendingPathComponent("rollout.jsonl"))
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z"))
 
         let publication = try CodexSessionEvidenceReader.scan(
             sessionsDirectory: sessions,
-            now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+            now: now,
             identityKey: Data("key".utf8),
             fileManager: fileManager
         )
