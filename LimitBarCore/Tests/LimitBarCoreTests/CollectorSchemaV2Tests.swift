@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Collector schema v2")
 struct CollectorSchemaV2Tests {
-    private let eventID = UUID(uuidString: "fa2d37c5-1c49-49c8-88c4-6eebe339c6c7")!
+    private let eventID = "FA2D37C5-1C49-49C8-88C4-6EEBE339C6C7"
 
     @Test("round trips explicit project and agent attribution")
     func roundTripsAttribution() throws {
@@ -108,6 +108,6 @@ struct CollectorSchemaV2Tests {
     }
 
     private func validJSON() -> String {
-        "{\"schemaVersion\":2,\"eventID\":\"\(eventID.uuidString)\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"gpt-5\",\"inputTokens\":10,\"outputTokens\":2,\"projectID\":\"project-alpha\",\"projectLabel\":\"Project Alpha\",\"agentID\":\"reviewer-1\",\"agentLabel\":\"Reviewer 1\"}"
+        "{\"schemaVersion\":2,\"eventID\":\"\(eventID)\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"gpt-5\",\"inputTokens\":10,\"outputTokens\":2,\"projectID\":\"project-alpha\",\"projectLabel\":\"Project Alpha\",\"agentID\":\"reviewer-1\",\"agentLabel\":\"Reviewer 1\"}"
     }
 }
