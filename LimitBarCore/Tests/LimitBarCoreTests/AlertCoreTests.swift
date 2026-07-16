@@ -303,13 +303,14 @@ struct AlertCoreTests {
     @Test("cost rules require exact matching basis currency and source and produce privacy-safe copy")
     func costEvaluationAndNotificationPrivacy() throws {
         let window = try ExactUsageWindow(timeWindow: .today, start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60), basis: .utcBilling)
+        let cap = try #require(Decimal(string: "13.37"))
         let rule = try CostBudgetAlertRule(
             product: .openAIAPI,
             currencyCode: "usd",
             source: .calculatedEstimate,
             timeWindow: .today,
             basis: .utcBilling,
-            cap: Decimal(string: "13.37")!,
+            cap: cap,
             thresholds: PercentageThresholds([50, 80])
         )
         let preferences = try AlertPreferences(quotaRules: [], costBudgetRules: [rule])
@@ -332,13 +333,14 @@ struct AlertCoreTests {
     @Test("provider-reported notification copy identifies the measure without exposing amounts")
     func providerReportedNotificationPrivacy() throws {
         let window = try ExactUsageWindow(timeWindow: .today, start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60), basis: .utcBilling)
+        let cap = try #require(Decimal(string: "123.45"))
         let rule = try CostBudgetAlertRule(
             product: .anthropicAPI,
             currencyCode: "EUR",
             source: .providerReported,
             timeWindow: .today,
             basis: .utcBilling,
-            cap: Decimal(string: "123.45")!,
+            cap: cap,
             thresholds: PercentageThresholds([70])
         )
         let preferences = try AlertPreferences(quotaRules: [], costBudgetRules: [rule])
