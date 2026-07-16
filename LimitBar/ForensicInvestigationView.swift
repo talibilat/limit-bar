@@ -840,7 +840,7 @@ struct ForensicInvestigationView: View {
             }
         }
         .frame(minWidth: 420, idealWidth: 760, minHeight: 520, idealHeight: 760)
-        .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+        .environment(\.timeZone, .gmt)
         .animation((reduceMotionOverride ?? reduceMotion) ? nil : .easeInOut(duration: 0.15), value: selectedProduct)
     }
 
