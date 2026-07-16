@@ -89,11 +89,12 @@ struct OpenAIUsageProviderTests {
 
         let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
+        let expectedAmount = try #require(Decimal(string: "2.00"))
 
         #expect(metric.accountLabel == "org_123")
         #expect(metric.projectLabel == "proj_1")
         #expect(metric.modelLabel == "Completions")
-        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+        #expect(metric.cost == Cost(amount: expectedAmount, currencyCode: "USD", source: .providerReported))
     }
 
     @Test("multi-currency cost rows persist independently")
