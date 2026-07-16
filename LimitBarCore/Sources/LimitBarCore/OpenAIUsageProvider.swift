@@ -237,7 +237,7 @@ public enum OpenAIUsageMapper {
                 let projectName = row.projectName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let model = row.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !projectID.isEmpty, !model.isEmpty, row.inputTokens >= 0, row.outputTokens >= 0 else { continue }
-                let project = projectName?.isEmpty == false ? projectName! : projectID
+                let project = projectName.flatMap { $0.isEmpty ? nil : $0 } ?? projectID
                 for window in windows {
                     guard start >= window.start, end <= window.end else { continue }
                     let key = Key(window: window, project: project, model: model)
