@@ -464,7 +464,7 @@ private final class BoundedReaderSpy: @unchecked Sendable {
     init(data: Data) { self.data = [data] }
     init(data: [Data]) { self.data = data }
 
-    func read(_ url: URL, byteCount: Int) throws -> Data {
+    func read(_ url: URL, byteCount: Int) -> Data {
         lock.withLock {
             requestedByteCounts.append(byteCount)
             return data.removeFirst()
