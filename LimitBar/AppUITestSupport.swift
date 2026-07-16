@@ -268,14 +268,9 @@ private final class AppUITestDiagnosticLocalEffects: DiagnosticExportLocalEffect
         writeAttempts += 1
         approvedBytes = approvedBytes ?? artifact.bytes
         if writeAttempts == 1 {
-            do {
-                try artifact.save(to: destination)
-                try? FileManager.default.removeItem(at: destination)
-                throw WriteFailure.expectedDirectoryFailure
-            } catch {
-                try? FileManager.default.removeItem(at: destination)
-                throw error
-            }
+            defer { try? FileManager.default.removeItem(at: destination) }
+            try artifact.save(to: destination)
+            throw WriteFailure.expectedDirectoryFailure
         }
         try artifact.save(to: destination)
         bytesEqual = try Data(contentsOf: destination) == approvedBytes
