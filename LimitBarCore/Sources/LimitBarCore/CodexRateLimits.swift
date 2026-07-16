@@ -272,9 +272,6 @@ public enum CodexSessionRateLimitReader {
             guard contents.count <= remainingReadSize else { break }
             totalReadSize += contents.count
             guard contents.count <= maximumFileSize else { continue }
-            guard !contents.isEmpty else {
-                continue
-            }
             for line in contents.split(separator: 0x0A) {
                 try Task.checkCancellation()
                 guard let snapshot = try? CodexRateLimitMapper.parseLine(Data(line)) else {
