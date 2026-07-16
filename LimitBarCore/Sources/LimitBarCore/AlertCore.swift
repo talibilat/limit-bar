@@ -626,10 +626,10 @@ public enum CostBudgetObservationBuilder {
     }
 
     private static func hasCalculatedMeasure(_ metric: UsageMetric) -> Bool {
-        if metric.cost?.source == .calculatedEstimate { return true }
-        return metric.tokenUsage.inputTokens >= 0
-            && metric.tokenUsage.outputTokens >= 0
-            && (metric.tokenUsage.inputTokens > 0 || metric.tokenUsage.outputTokens > 0)
+        metric.cost?.source == .calculatedEstimate
+            || (metric.tokenUsage.inputTokens >= 0
+                && metric.tokenUsage.outputTokens >= 0
+                && (metric.tokenUsage.inputTokens > 0 || metric.tokenUsage.outputTokens > 0))
     }
 
     private static func add(
