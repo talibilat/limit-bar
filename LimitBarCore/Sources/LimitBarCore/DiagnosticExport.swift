@@ -723,7 +723,7 @@ public struct DiagnosticQuotaEvidenceReport: Codable, Equatable, Sendable {
         self.publicationGeneration = publicationGeneration
         self.publicationTime = publicationTime
         self.apiProviderEvidence = apiProviderEvidence
-        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceInputRecords).prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
+        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
         recordLimit = DiagnosticExport.maximumQuotaEvidenceRecords
         projectionRecordLimit = DiagnosticExport.maximumQuotaEvidenceInputRecords
         candidateRecordLimit = DiagnosticExport.maximumQuotaEvidenceCandidateRecords
