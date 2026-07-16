@@ -19,6 +19,7 @@ struct QuotaFindingAlertTests {
             resetBoundary: now.addingTimeInterval(3_600)
         )
         let inputs = try traceInputs(identity: identity, percentage: 10)
+        let latestInput = try #require(inputs.last)
         let finding = QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: 4,
@@ -27,7 +28,7 @@ struct QuotaFindingAlertTests {
             createdAt: now,
             evidenceAge: 60,
             inputObservationIdentities: inputs,
-            latestObservationIdentity: inputs.last!,
+            latestObservationIdentity: latestInput,
             latestObservationAt: now.addingTimeInterval(-60),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
