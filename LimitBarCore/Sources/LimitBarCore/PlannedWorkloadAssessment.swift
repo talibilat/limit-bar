@@ -595,8 +595,9 @@ public enum WorkloadPlanning {
                 options: options
             ))
         }
+        guard let indeterminate else { return unavailable(.incompatibleCurrentQuotaEvidence) }
         return .indeterminate(IndeterminateWorkloadPlanningAssessment(
-            reason: indeterminate!,
+            reason: indeterminate,
             requirementPercent: requirement,
             durationSeconds: duration,
             currentEvidence: summary,
