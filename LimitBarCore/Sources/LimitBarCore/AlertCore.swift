@@ -759,8 +759,8 @@ public enum AlertEvaluator {
             }
             for observation in observations {
                 let window = AlertWindowIdentity.quota(observation.identity)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: observation.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: observation.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
                         notification: AlertNotification(
@@ -774,8 +774,8 @@ public enum AlertEvaluator {
             }
             for finding in findingObservations {
                 let window = AlertWindowIdentity.quota(finding.identity)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: finding.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: finding.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
                         notification: findingNotification(finding, product: rule.product, threshold: highest),
@@ -792,8 +792,8 @@ public enum AlertEvaluator {
             for observation in observations {
                 let percentage = NSDecimalNumber(decimal: observation.amount / rule.cap * 100).doubleValue
                 let window = AlertWindowIdentity.cost(observation.window)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: percentage, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: percentage, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     let prefix = rule.source == .providerReported ? "Provider-reported \(rule.product.displayName)" : "Estimated \(rule.product.displayName)"
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
