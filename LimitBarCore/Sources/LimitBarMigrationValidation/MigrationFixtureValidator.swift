@@ -412,7 +412,6 @@ private struct Fixture: Decodable {
     let store: String
     let logicalSchema: String
     let sqliteUserVersion: Int
-    let releaseRange: String
     let origin: String
     let file: String
     let expected: Expected
