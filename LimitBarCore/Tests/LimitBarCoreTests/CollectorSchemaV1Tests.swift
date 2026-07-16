@@ -4,13 +4,15 @@ import Testing
 
 @Suite("Collector schema v1")
 struct CollectorSchemaV1Tests {
-    private let eventID = UUID(uuidString: "fa2d37c5-1c49-49c8-88c4-6eebe339c6c7")!
+    private let eventID = "FA2D37C5-1C49-49C8-88C4-6EEBE339C6C7"
 
     @Test("round trips provider and custom-source identities")
     func roundTripsIdentities() throws {
         let timestamp = try #require(CollectorSchemaV1.parseTimestamp("2026-07-12T10:00:00Z"))
-        let provider = CollectorEventV1(eventID: eventID, identity: .provider(.azureOpenAI), timestamp: timestamp, model: "gpt-4o", deployment: "production", inputTokens: 12, outputTokens: 3)
-        let custom = CollectorEventV1(eventID: eventID, identity: .customSource(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!), timestamp: timestamp, model: "local", inputTokens: 1, outputTokens: 2)
+        let typedEventID = try #require(UUID(uuidString: eventID))
+        let customSourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
+        let provider = CollectorEventV1(eventID: typedEventID, identity: .provider(.azureOpenAI), timestamp: timestamp, model: "gpt-4o", deployment: "production", inputTokens: 12, outputTokens: 3)
+        let custom = CollectorEventV1(eventID: typedEventID, identity: .customSource(customSourceID), timestamp: timestamp, model: "local", inputTokens: 1, outputTokens: 2)
 
         #expect(try CollectorSchemaV1.decode(CollectorSchemaV1.encode(provider)) == provider)
         #expect(try CollectorSchemaV1.decode(CollectorSchemaV1.encode(custom)) == custom)
@@ -61,6 +63,6 @@ struct CollectorSchemaV1Tests {
     }
 
     private func validJSON(inserting field: String = "") -> String {
-        "{\(field)\"schemaVersion\":1,\"eventID\":\"\(eventID.uuidString)\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"gpt-4o\",\"inputTokens\":1,\"outputTokens\":2}"
+        "{\(field)\"schemaVersion\":1,\"eventID\":\"\(eventID)\",\"provider\":\"openAI\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"gpt-4o\",\"inputTokens\":1,\"outputTokens\":2}"
     }
 }
