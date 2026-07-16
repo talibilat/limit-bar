@@ -34,7 +34,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = defaultCustomUsageLoader
     }
@@ -48,7 +48,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = customUsageLoader
     }
@@ -924,7 +924,7 @@ public struct CustomUsageRefreshDiagnostic: Equatable, Sendable {
     }
 }
 
-private func historicalDatabasePath(from currentPath: String) throws -> String {
+private func historicalDatabasePath(from currentPath: String) -> String {
     if currentPath == ":memory:" { return ":memory:" }
     return currentPath + ".history.sqlite"
 }
