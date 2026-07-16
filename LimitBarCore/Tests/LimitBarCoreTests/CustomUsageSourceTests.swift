@@ -180,7 +180,7 @@ struct CustomUsageSourceTests {
 
     @Test("custom-source v2 attribution retains its source identity")
     func customV2Attribution() async throws {
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#)
         let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
 
