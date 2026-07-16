@@ -218,7 +218,7 @@ struct HistoricalUsageTrendStoreTests {
     }
 
     @Test("legacy metrics cannot be assigned invented historical dates")
-    func legacyMetricsAreRejected() throws {
+    func legacyMetricsAreRejected() {
         let legacy = UsageMetric(
             provider: .anthropic,
             accountLabel: "not persisted",
