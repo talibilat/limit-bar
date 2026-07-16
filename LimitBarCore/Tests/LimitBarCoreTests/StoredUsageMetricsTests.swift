@@ -119,7 +119,7 @@ private final class TemporaryApplicationSupportFileManager: FileManager, @unchec
         in domain: FileManager.SearchPathDomainMask,
         appropriateFor url: URL?,
         create shouldCreate: Bool
-    ) throws -> URL {
+    ) -> URL {
         applicationSupport
     }
 }
