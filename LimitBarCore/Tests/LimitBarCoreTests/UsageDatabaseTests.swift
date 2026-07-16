@@ -1033,7 +1033,7 @@ struct UsageDatabaseTests {
         let database = UsageDatabase(
             pathFactory: { path },
             localEventsURL: missingEventsURL(),
-            customUsageLoader: { _, _, _, _ in try await gate.load() }
+            customUsageLoader: { _, _, _, _ in await gate.load() }
         )
 
         let olderRefresh = Task {
@@ -1111,7 +1111,7 @@ private actor SuspendedCustomLoader {
         self.result = result
     }
 
-    func load() async throws -> CustomUsageLoadResult {
+    func load() async -> CustomUsageLoadResult {
         await withCheckedContinuation { continuation = $0 }
         return result
     }
