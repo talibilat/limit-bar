@@ -70,6 +70,24 @@ struct ClaudeCodeOTLPEvidenceTests {
         #expect(generic.evidence.isEmpty)
     }
 
+    @Test("malformed resource attributes fail closed")
+    func rejectsMalformedResource() throws {
+        var payload = try #require(
+            JSONSerialization.jsonObject(with: try fixture("valid-token-metrics")) as? [String: Any]
+        )
+        var resources = try #require(payload["resourceMetrics"] as? [[String: Any]])
+        resources[0]["resource"] = ["attributes": "invalid"]
+        payload["resourceMetrics"] = resources
+
+        let result = ClaudeCodeOTLPEvidenceAdapter.scan(
+            data: try JSONSerialization.data(withJSONObject: payload),
+            identityKey: Data("key".utf8)
+        )
+
+        #expect(result.sourceStatus == .malformed)
+        #expect(result.evidence.isEmpty)
+    }
+
     @Test("mixed invalid points fail closed regardless of point order")
     func mixedPointsFailClosed() throws {
         let fixtureText = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))

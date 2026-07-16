@@ -284,10 +284,11 @@ struct DiagnosticExportTests {
         let destination = directory.appendingPathComponent("diagnostic.json")
 
         try artifact.save(to: destination)
+        let preview = try artifact.preview
 
         #expect(artifact.previewBytes == artifact.bytes)
         #expect(try Data(contentsOf: destination) == artifact.previewBytes)
-        #expect(Data(artifact.preview.utf8) == artifact.bytes)
+        #expect(Data(preview.utf8) == artifact.bytes)
     }
 
     @Test("optional history is absent by default and bounded when supplied")

@@ -10,8 +10,9 @@ struct PricingTests {
         let table = PricingTable(entries: [price(input: try decimal("3.00"), output: try decimal("15.00"))])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("10.50")
 
-        #expect(cost.amount == try decimal("10.50"))
+        #expect(cost.amount == expectedAmount)
         #expect(cost.currencyCode == "USD")
         #expect(cost.source == .calculatedEstimate)
     }
@@ -32,8 +33,9 @@ struct PricingTests {
         let table = PricingTable(entries: [price(input: try decimal("4.00"), output: try decimal("1.00"))])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("4.00")
 
-        #expect(cost.amount == try decimal("4.00"))
+        #expect(cost.amount == expectedAmount)
         #expect(cost.source == .calculatedEstimate)
     }
 
@@ -47,8 +49,9 @@ struct PricingTests {
         ])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("4.00")
 
-        #expect(cost.amount == try decimal("4.00"))
+        #expect(cost.amount == expectedAmount)
     }
 
     @Test("missing pricing does not produce fake cost")
