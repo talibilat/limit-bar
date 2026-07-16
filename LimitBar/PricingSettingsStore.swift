@@ -66,9 +66,9 @@ struct PricingSettingsStore {
     private static func json(from entries: [PricingEntry]) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(entries), let json = String(data: data, encoding: .utf8) else {
+        guard let data = try? encoder.encode(entries) else {
             return Self.defaultJSON
         }
-        return json
+        return String(decoding: data, as: UTF8.self)
     }
 }
