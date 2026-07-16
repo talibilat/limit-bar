@@ -382,21 +382,19 @@ public enum AnthropicCostMapper {
             guard let start = formatter.date(from: bucket.startingAt), let end = formatter.date(from: bucket.endingAt) else { return nil }
             return (bucket, start, end)
         }
-        for window in [window] {
-            let contained = datedBuckets.filter { $0.1 >= window.start && $0.2 <= window.end }.sorted { $0.1 < $1.1 }
-            for (bucket, _, end) in contained {
-                for row in bucket.results {
-                    let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !label.isEmpty,
-                          let cents = Decimal(string: row.amount),
-                          cents.isFinite,
-                          cents >= 0 else { continue }
-                    let key = Key(window: window, label: label, currency: row.currency)
-                    var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
-                    aggregate.cents = try checkedAdd(aggregate.cents, cents)
-                    aggregate.latest = max(aggregate.latest, end)
-                    aggregates[key] = aggregate
-                }
+        let contained = datedBuckets.filter { $0.1 >= window.start && $0.2 <= window.end }.sorted { $0.1 < $1.1 }
+        for (bucket, _, end) in contained {
+            for row in bucket.results {
+                let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !label.isEmpty,
+                      let cents = Decimal(string: row.amount),
+                      cents.isFinite,
+                      cents >= 0 else { continue }
+                let key = Key(window: window, label: label, currency: row.currency)
+                var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
+                aggregate.cents = try checkedAdd(aggregate.cents, cents)
+                aggregate.latest = max(aggregate.latest, end)
+                aggregates[key] = aggregate
             }
         }
         let metrics = aggregates.map { key, aggregate in
