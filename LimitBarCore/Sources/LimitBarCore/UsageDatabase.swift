@@ -741,7 +741,7 @@ public actor UsageDatabase {
             )
         try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
-        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        let attributionURL = URL(fileURLWithPath: attributionDatabasePath(from: databaseURL.path))
         var locks: [OpaquePointer] = []
         do {
             for url in [databaseURL, attributionURL] {
@@ -814,7 +814,7 @@ public actor UsageDatabase {
     }
 
     private func removeDatabaseSet(at databaseURL: URL) throws {
-        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        let attributionURL = URL(fileURLWithPath: attributionDatabasePath(from: databaseURL.path))
         for url in [databaseURL, attributionURL] {
             for candidate in [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
                 where FileManager.default.fileExists(atPath: candidate.path) {
@@ -929,7 +929,7 @@ private func historicalDatabasePath(from currentPath: String) throws -> String {
     return currentPath + ".history.sqlite"
 }
 
-private func attributionDatabasePath(from currentPath: String) throws -> String {
+private func attributionDatabasePath(from currentPath: String) -> String {
     let currentURL = URL(fileURLWithPath: currentPath)
     let stem = currentURL.deletingPathExtension().lastPathComponent
     return currentURL.deletingLastPathComponent().appendingPathComponent("\(stem)-attribution.sqlite").path
