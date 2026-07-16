@@ -404,11 +404,7 @@ public enum AnthropicCostMapper {
                 freshness: .fresh
             )
         }
-        return metrics.sorted { lhs, rhs in
-            let left = lhs.timeWindow == .today ? 0 : 1
-            let right = rhs.timeWindow == .today ? 0 : 1
-            return (left, lhs.modelLabel) < (right, rhs.modelLabel)
-        }
+        return metrics.sorted { $0.modelLabel < $1.modelLabel }
     }
 
     private static func checkedAdd(_ lhs: Decimal, _ rhs: Decimal) throws -> Decimal {
