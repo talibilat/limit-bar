@@ -49,7 +49,7 @@ struct OpenAIUsageProviderTests {
     func usageMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":"proj_1","project_name":"Codex Enterprise","model":"gpt-5.1-codex","input_tokens":10,"cached_input_tokens":2,"output_tokens":4}]}]}"#.utf8)
 
-        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.timeWindow == .today })
 
         #expect(metric.accountLabel == "org_123")
@@ -79,15 +79,15 @@ struct OpenAIUsageProviderTests {
     @Test("usage fixture rejects missing identity")
     func usageMappingRejectsMissingIdentity() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":null,"model":"gpt","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: try utcCalendar()).isEmpty)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: try utcCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: utcCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: utcCalendar()).isEmpty)
     }
 
     @Test("cost fixture maps provider-reported project spend")
     func costMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783684800,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Ignored","amount":null}]},{"start_time":1783684800,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":0.75,"currency":"usd"}}]}]}"#.utf8)
 
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
 
         #expect(metric.accountLabel == "org_123")
@@ -99,7 +99,7 @@ struct OpenAIUsageProviderTests {
     @Test("multi-currency cost rows persist independently")
     func multiCurrencyCostsPersistIndependently() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Completions","amount":{"value":2.5,"currency":"eur"}}]}]}"#.utf8)
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: utcCalendar())
         let store = try SQLiteUsageMetricStore.inMemory()
 
         _ = try OpenAIRefreshPersistence.apply(.success(metrics), to: store)
@@ -165,7 +165,7 @@ struct OpenAIUsageProviderTests {
         let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = OpenAIOrganizationClient(httpClient: http)
         let now = Date(timeIntervalSince1970: 1_783_389_296)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: try utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
 
         let result = await client.fetchUsage(credential: "secret", organization: "org", windows: windows, now: now)
         let request = try #require(await http.requests.first)
@@ -336,9 +336,9 @@ struct OpenAIUsageProviderTests {
         }
     }
 
-    private func utcCalendar() throws -> Calendar {
+    private func utcCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         return calendar
     }
 }
