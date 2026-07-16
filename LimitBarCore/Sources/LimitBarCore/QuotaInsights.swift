@@ -300,12 +300,12 @@ public enum QuotaInsightAnalytics {
         maximumAge: TimeInterval,
         expectedIdentity: QuotaWindowIdentity? = nil
     ) -> QuotaInsightState {
+        let ordered = observations.sorted {
+            ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
+        }
+        var seen = Set<QuotaObservationIdentity>()
+        let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
         guard now.timeIntervalSince1970.isFinite else {
-            let ordered = observations.sorted {
-                ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
-            }
-            var seen = Set<QuotaObservationIdentity>()
-            let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
             let identities = orderedIdentities(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })
             let span = unique.count < 2 ? 0 : unique.last!.observedAt.timeIntervalSince(unique.first!.observedAt)
             return .unavailable(UnavailableQuotaInsight(
@@ -320,11 +320,6 @@ public enum QuotaInsightAnalytics {
                 interpretationVersions: Array(Set(unique.map(\.interpretationVersion))).sorted { $0.rawValue < $1.rawValue }
             ))
         }
-        let ordered = observations.sorted {
-            ($0.observedAt, $0.stableIdentity.digest) < ($1.observedAt, $1.stableIdentity.digest)
-        }
-        var seen = Set<QuotaObservationIdentity>()
-        let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
         let implicatedIdentities = orderedIdentities(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })
         let span = max(0, (unique.last?.observedAt ?? now).timeIntervalSince(unique.first?.observedAt ?? now))
         let evidenceAge = unique.last.map { now.timeIntervalSince($0.observedAt) }
