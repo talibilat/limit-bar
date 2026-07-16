@@ -133,6 +133,6 @@ struct PricingTests {
     }
 
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
-        Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: month, day: day))!
+        Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: .gmt, year: year, month: month, day: day))!
     }
 }
