@@ -159,5 +159,3 @@ struct ClaudeQuotaExplanationReviewTests {
         try ClaudeCodeOTLPEvidence.validated(identity: digest(identity), accountIdentity: digest("a"), sessionIdentity: digest("b"), intervalStart: date(start), intervalEnd: date(end), model: "claude-sonnet-4-5", tokenType: .input, tokenCount: count, sourceVersion: ClaudeCodeOTLPEvidenceAdapter.supportedSourceVersion, adapterVersion: ClaudeCodeOTLPEvidenceAdapter.adapterVersion)
     }
 }
-
-private func date(_ value: TimeInterval) -> Date { Date(timeIntervalSince1970: value) }

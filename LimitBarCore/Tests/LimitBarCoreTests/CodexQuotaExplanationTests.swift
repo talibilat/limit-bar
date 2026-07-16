@@ -264,7 +264,3 @@ struct CodexQuotaExplanationTests {
         )
     }
 }
-
-private func date(_ timestamp: TimeInterval) -> Date {
-    Date(timeIntervalSince1970: timestamp)
-}
