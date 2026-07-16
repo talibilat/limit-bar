@@ -319,6 +319,7 @@ struct UsageModelTests {
         freshness: Freshness = .fresh,
         provenance: UsageSnapshotProvenance? = nil
     ) -> UsageMetric {
+        let cost = Cost(amount: Decimal(123) / 100, currencyCode: "USD", source: .providerReported)
         let common = (
             provider: ProviderKind.anthropic,
             accountLabel: "Personal",
@@ -326,7 +327,7 @@ struct UsageModelTests {
             modelLabel: "claude-sonnet",
             deploymentLabel: Optional<String>.none,
             tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 20),
-            cost: Cost(amount: Decimal(string: "1.23")!, currencyCode: "USD", source: .providerReported),
+            cost: cost,
             limitStatus: limitStatus ?? .confirmed(used: used, limit: 100),
             refreshedAt: Optional(Date(timeIntervalSince1970: 1_783_683_200)),
             freshness: freshness
@@ -356,7 +357,7 @@ struct UsageModelTests {
             deploymentLabel: nil,
             timeWindow: .today,
             tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 20),
-            cost: Cost(amount: Decimal(string: "1.23")!, currencyCode: "USD", source: .providerReported),
+            cost: cost,
             limitStatus: limitStatus ?? .confirmed(used: used, limit: 100),
             refreshedAt: Date(timeIntervalSince1970: 1_783_683_200),
             freshness: freshness
