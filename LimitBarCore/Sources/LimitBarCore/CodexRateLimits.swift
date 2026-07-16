@@ -160,15 +160,11 @@ public enum CodexRateLimitMapper {
             return Date(timeIntervalSince1970: value)
         }
         return CodexRateLimitWindow(
-            limitID: normalizedLimitID(limitID),
+            limitID: limitID ?? "codex",
             percentUsed: percent,
             windowMinutes: minutes,
             resetsAt: reset
         )
-    }
-
-    private static func normalizedLimitID(_ value: String?) -> String {
-        CodexRateLimitWindow.normalizedLimitID(value)
     }
 
     private static func credits(from raw: RawEntry.RawPayload.RawCredits?) -> CodexCredits? {
