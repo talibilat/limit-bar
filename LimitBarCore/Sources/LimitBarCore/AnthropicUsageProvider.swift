@@ -437,7 +437,6 @@ public enum AnthropicRefreshPersistence {
         try store.markMetricsInitialized()
         var succeeded = false
         var failure: ProviderFailureReason?
-        var wasCancelled = false
 
         switch batch.usage {
         case let .success(metrics):
@@ -453,7 +452,7 @@ public enum AnthropicRefreshPersistence {
             )
             failure = reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         switch batch.cost {
@@ -467,15 +466,11 @@ public enum AnthropicRefreshPersistence {
             try ProviderCostRefreshPersistence.markFailed(provider: .anthropic, in: store, window: windows.utcBillingWeek)
             failure = failure ?? reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         let state: ProviderConnectionState = if succeeded {
             .connected
-        } else if failure != nil {
-            .failed
-        } else if wasCancelled {
-            .cancelled
         } else {
             .failed
         }
