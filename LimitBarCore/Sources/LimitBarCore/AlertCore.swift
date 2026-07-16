@@ -532,7 +532,7 @@ public enum CostBudgetObservationBuilder {
 
     private struct TotalKey: Hashable {
         let product: ProviderProduct
-        let source: String
+        let source: CostSource
         let window: ExactUsageWindow
         let currency: String
     }
@@ -544,7 +544,7 @@ public enum CostBudgetObservationBuilder {
         now: Date = Date(),
         maximumMeasurementAge: TimeInterval = CostBudgetObservationBuilder.maximumMeasurementAge
     ) -> [CostBudgetObservation] {
-        let eligible = metrics.compactMap { metric -> (UsageMetric, ProviderProduct, ExactUsageWindow, UsageMetricSource)? in
+        let eligible = metrics.compactMap { metric -> (UsageMetric, ProviderProduct, ExactUsageWindow, UsageMetricSource, Date)? in
             guard !metric.freshness.isStale,
                   let product = ProviderProduct(provider: metric.provider),
                   case let .bounded(source, window) = metric.provenance,
@@ -555,7 +555,7 @@ public enum CostBudgetObservationBuilder {
                   refreshedAt <= now,
                   now.timeIntervalSince(refreshedAt) <= maximumMeasurementAge,
                   now < window.end else { return nil }
-            return (metric, product, window, source)
+            return (metric, product, window, source, refreshedAt)
         }
         let grouped = Dictionary(grouping: eligible) { SelectionKey(product: $0.1, window: $0.2) }
         var totals: [TotalKey: (amount: Decimal, observedAt: Date)] = [:]
@@ -565,7 +565,7 @@ public enum CostBudgetObservationBuilder {
             let apiEntries = entries.filter { $0.3 == .providerAPI }
             let localEntries = entries.filter { $0.3 == .builtInLocalLog }
 
-            for (metric, product, window, _) in apiEntries {
+            for (metric, product, window, _, refreshedAt) in apiEntries {
                 if let stored = metric.cost,
                    stored.source == .providerReported,
                    valid(cost: stored) {
@@ -573,7 +573,7 @@ public enum CostBudgetObservationBuilder {
                         stored,
                         product: product,
                         window: window,
-                        observedAt: metric.refreshedAt!,
+                        observedAt: refreshedAt,
                         to: &totals,
                         invalidTotals: &invalidTotals
                     )
@@ -583,7 +583,7 @@ public enum CostBudgetObservationBuilder {
             let apiCalculated = apiEntries.filter { hasCalculatedMeasure($0.0) }
             let localCalculated = localEntries.filter { hasCalculatedMeasure($0.0) }
             let calculatedEntries = apiCalculated.isEmpty ? localCalculated : apiCalculated
-            for (metric, product, window, _) in calculatedEntries {
+            for (metric, product, window, _, refreshedAt) in calculatedEntries {
                 let calculated: Cost?
                 if let stored = metric.cost, stored.source == .calculatedEstimate {
                     calculated = stored
@@ -595,7 +595,7 @@ public enum CostBudgetObservationBuilder {
                         calculated,
                         product: product,
                         window: window,
-                        observedAt: metric.refreshedAt!,
+                        observedAt: refreshedAt,
                         to: &totals,
                         invalidTotals: &invalidTotals
                     )
@@ -606,7 +606,7 @@ public enum CostBudgetObservationBuilder {
         return totals.map { key, total in
             CostBudgetObservation(
                 product: key.product,
-                source: CostSource(rawValue: key.source)!,
+                source: key.source,
                 window: key.window,
                 currencyCode: key.currency,
                 amount: total.amount,
@@ -626,10 +626,10 @@ public enum CostBudgetObservationBuilder {
     }
 
     private static func hasCalculatedMeasure(_ metric: UsageMetric) -> Bool {
-        if metric.cost?.source == .calculatedEstimate { return true }
-        return metric.tokenUsage.inputTokens >= 0
-            && metric.tokenUsage.outputTokens >= 0
-            && (metric.tokenUsage.inputTokens > 0 || metric.tokenUsage.outputTokens > 0)
+        metric.cost?.source == .calculatedEstimate
+            || (metric.tokenUsage.inputTokens >= 0
+                && metric.tokenUsage.outputTokens >= 0
+                && (metric.tokenUsage.inputTokens > 0 || metric.tokenUsage.outputTokens > 0))
     }
 
     private static func add(
@@ -640,7 +640,7 @@ public enum CostBudgetObservationBuilder {
         to totals: inout [TotalKey: (amount: Decimal, observedAt: Date)],
         invalidTotals: inout Set<TotalKey>
     ) {
-        let key = TotalKey(product: product, source: cost.source.rawValue, window: window, currency: cost.currencyCode.uppercased())
+        let key = TotalKey(product: product, source: cost.source, window: window, currency: cost.currencyCode.uppercased())
         guard !invalidTotals.contains(key) else { return }
         guard let existing = totals[key] else {
             totals[key] = (cost.amount, observedAt)
@@ -759,8 +759,8 @@ public enum AlertEvaluator {
             }
             for observation in observations {
                 let window = AlertWindowIdentity.quota(observation.identity)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: observation.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: observation.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
                         notification: AlertNotification(
@@ -774,8 +774,8 @@ public enum AlertEvaluator {
             }
             for finding in findingObservations {
                 let window = AlertWindowIdentity.quota(finding.identity)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: finding.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: finding.percentageUsed, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
                         notification: findingNotification(finding, product: rule.product, threshold: highest),
@@ -792,8 +792,8 @@ public enum AlertEvaluator {
             for observation in observations {
                 let percentage = NSDecimalNumber(decimal: observation.amount / rule.cap * 100).doubleValue
                 let window = AlertWindowIdentity.cost(observation.window)
-                if let thresholds = newlyQualified(rule.thresholds.values, percentage: percentage, ruleID: rule.id, window: window, satisfied: satisfied) {
-                    let highest = thresholds.last!
+                if let thresholds = newlyQualified(rule.thresholds.values, percentage: percentage, ruleID: rule.id, window: window, satisfied: satisfied),
+                   let highest = thresholds.last {
                     let prefix = rule.source == .providerReported ? "Provider-reported \(rule.product.displayName)" : "Estimated \(rule.product.displayName)"
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
@@ -861,8 +861,8 @@ public enum AlertEvaluator {
     ) -> AlertNotification {
         let classifications = Set(finding.traces.map(\.valueClassification))
         let classification: String
-        if classifications.count == 1 {
-            classification = switch classifications.first! {
+        if classifications.count == 1, let soleClassification = classifications.first {
+            classification = switch soleClassification {
             case .reported: "Provider-reported"
             case .measured: "Measured"
             case .calculated: "Calculated"

@@ -106,7 +106,7 @@ struct CustomUsageSourceTests {
         let now = try date("2026-07-12T18:00:00Z")
 
         let source = CustomUsageSource(name: "Aider", filePath: fileURL.path)
-        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: source, now: now, calendar: utcCalendar())
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: source, now: now, calendar: gregorianGMTCalendar())
 
         let today = metrics.filter { $0.timeWindow == .today }
         #expect(today.allSatisfy { $0.provider == .custom && $0.accountLabel == "Aider" })
@@ -134,7 +134,7 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-12T18:00:00Z")
 
-        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(name: "Aider", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
 
         // One valid event, aggregated into both the Today and Current Week windows it falls in.
         #expect(metrics.count == 2)
@@ -146,8 +146,8 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":1,"outputTokens":2}"#)
         let id = UUID()
         let now = try date("2026-07-12T18:00:00Z")
-        let before = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
-        let after = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Renamed", filePath: fileURL.path), now: now, calendar: utcCalendar())
+        let before = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Aider", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
+        let after = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Renamed", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
 
         #expect(before.allSatisfy { $0.provenance.source == .custom(id) })
         #expect(after.allSatisfy { $0.provenance.source == .custom(id) })
@@ -169,7 +169,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar()
+            calendar: gregorianGMTCalendar()
         )
 
         #expect(result.metrics.count == 2)
@@ -180,12 +180,12 @@ struct CustomUsageSourceTests {
 
     @Test("custom-source v2 attribution retains its source identity")
     func customV2Attribution() async throws {
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#)
         let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
 
         let result = try await CustomUsageAggregator.loadMetrics(
-            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar()
+            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: gregorianGMTCalendar()
         )
 
         #expect(result.attributionBreakdowns.count == 2)
@@ -235,7 +235,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar()
+            calendar: gregorianGMTCalendar()
         )
 
         #expect(Set(result.metrics.map(\.modelLabel)) == ["boundary"])
@@ -257,7 +257,7 @@ struct CustomUsageSourceTests {
                 from: fileURL,
                 source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
                 now: try date("2026-07-12T18:00:00Z"),
-                calendar: utcCalendar()
+                calendar: gregorianGMTCalendar()
             )
         }
     }
@@ -274,14 +274,14 @@ struct CustomUsageSourceTests {
                 from: fileURL,
                 source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
                 now: try date("2026-07-12T18:00:00Z"),
-                calendar: utcCalendar()
+                calendar: gregorianGMTCalendar()
             )
         }
     }
 
     @Test("custom parent and attribution aggregates share one ten-thousand-key bound")
     func customCombinedAggregateLimit() async throws {
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let jsonl = (0...2_500).map { index in
             "{\"schemaVersion\":2,\"eventID\":\"\(String(format: "00000000-0000-0000-0000-%012d", index + 1))\",\"customSourceID\":\"\(sourceID.uuidString)\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1,\"agentID\":\"agent-\(index)\"}"
         }.joined(separator: "\n")
@@ -289,13 +289,13 @@ struct CustomUsageSourceTests {
         let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
 
         await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
-            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
+            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: gregorianGMTCalendar())
         }
     }
 
     @Test("custom source revision hashes the exact bytes read across atomic path replacement")
     func customRevisionMatchesImportedBytesDuringReplacement() async throws {
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-a","inputTokens":1,"outputTokens":1,"projectID":"alpha"}"#
         let eventB = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-12T10:00:00Z","model":"model-b","inputTokens":2,"outputTokens":2,"projectID":"beta"}"#
         let bytesA = Data((eventA + String(repeating: "\n", count: 70_000)).utf8)
@@ -309,7 +309,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: source,
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar(),
+            calendar: gregorianGMTCalendar(),
             onChunkRead: { _ in
                 guard !replaced else { return }
                 replaced = true
@@ -322,19 +322,14 @@ struct CustomUsageSourceTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func temporaryFile(contents: String) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        return url
-    }
+}
 
-    private func date(_ iso8601: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: iso8601))
-    }
+func temporaryFile(contents: String) throws -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    return url
+}
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
-        return calendar
-    }
+func temporaryDatabasePath() -> String {
+    FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
 }

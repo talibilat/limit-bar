@@ -10,9 +10,9 @@ struct PlannedWorkloadAssessmentTests {
     func comparableRuns() throws {
         let fixture = try Fixture(start: start)
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10),
+            try fixture.plan(units: 10),
             historicalRuns: try fixture.runs(requirements: [18, 20, 22, 24]),
-            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            currentEvidence: try fixture.current(used: 30, burn: 5...10),
             now: fixture.now
         )
 
@@ -52,8 +52,8 @@ struct PlannedWorkloadAssessmentTests {
         runs.append(try fixture.run(index: 14, requirement: 10, format: fixture.otherFormat))
 
         guard case let .available(value) = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         ) else {
             Issue.record("Expected compatible runs to remain available")
             return
@@ -78,8 +78,8 @@ struct PlannedWorkloadAssessmentTests {
             requirement: 26
         )
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: [original, corrected] + runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: [original, corrected] + runs,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
 
         guard case let .available(value) = result else {
@@ -105,8 +105,8 @@ struct PlannedWorkloadAssessmentTests {
             concurrency: 1
         )
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: high + retryFlood + [alternatives[1], conflict],
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: high + retryFlood + [alternatives[1], conflict],
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
 
         guard case let .available(value) = result else {
@@ -123,10 +123,10 @@ struct PlannedWorkloadAssessmentTests {
     func latestCurrentObservation() throws {
         let fixture = try Fixture(start: start)
         let runs = try fixture.runs(requirements: [18, 20, 22, 24])
-        let older = fixture.current(used: 30, burn: 5...10, passOlderObservation: true)
+        let older = try fixture.current(used: 30, burn: 5...10, passOlderObservation: true)
 
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs, currentEvidence: older, now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: runs, currentEvidence: older, now: fixture.now
         )
         #expect(result.unavailable?.reason == .incompatibleCurrentQuotaEvidence)
         #expect(result.unavailable?.currentEvidence?.latestObservationIdentity == older.latestObservation.stableIdentity)
@@ -139,16 +139,16 @@ struct PlannedWorkloadAssessmentTests {
         let fixture = try Fixture(start: start)
         let runs = try fixture.runs(requirements: [18, 20, 22, 24])
         let unqualified = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.unqualified(), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: try fixture.unqualified(), now: fixture.now
         )
         let stale = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.staleCurrent(), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: try fixture.staleCurrent(), now: fixture.now
         )
         let expired = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            try fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10),
             now: fixture.currentIdentity.resetBoundary
         )
 
@@ -167,24 +167,24 @@ struct PlannedWorkloadAssessmentTests {
         let long = try fixture.runs(requirements: [18, 20, 22, 24], durations: [15_000, 15_100, 15_200, 15_300])
 
         let exhaustionFirst = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 10, burn: 60...90), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: try fixture.current(used: 10, burn: 60...90), now: fixture.now
         )
         let resetFirst = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         let straddling = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: try fixture.current(used: 10, burn: 20...40), now: fixture.now
         )
         let equal = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 30, burn: 10...20), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: long,
+            currentEvidence: try fixture.current(used: 30, burn: 10...20), now: fixture.now
         )
         let completesBeforeOverlap = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: short,
-            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: short,
+            currentEvidence: try fixture.current(used: 10, burn: 20...40), now: fixture.now
         )
 
         #expect(exhaustionFirst.available?.conclusion == .likelyExhaustionBeforeCompletion)
@@ -203,8 +203,8 @@ struct PlannedWorkloadAssessmentTests {
         let exactDuration = fixture.currentIdentity.resetBoundary.timeIntervalSince(fixture.now)
         let runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: Array(repeating: exactDuration, count: 4))
         let result = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: runs,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         #expect(result.indeterminate?.reason == .completionOverlapsReset)
     }
@@ -214,12 +214,12 @@ struct PlannedWorkloadAssessmentTests {
         let fixture = try Fixture(start: start)
         let high = try fixture.runs(requirements: [75, 78, 81, 84])
         let resetFirst = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: high,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: high,
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         let exhaustionFirst = WorkloadPlanning.assess(
-            fixture.plan(units: 10), historicalRuns: high,
-            currentEvidence: fixture.current(used: 30, burn: 60...90), now: fixture.now
+            try fixture.plan(units: 10), historicalRuns: high,
+            currentEvidence: try fixture.current(used: 30, burn: 60...90), now: fixture.now
         )
 
         let option = resetFirst.available?.options.first { $0.kind == .deferUntilReset }
@@ -253,12 +253,12 @@ private struct Fixture {
     let weeklyIdentity: QuotaWindowIdentity
     let otherProductIdentity: QuotaWindowIdentity
     let historicalWindowStart: Date
-    let adapter = WorkloadAdapterVersion(uuid(1))
-    let otherAdapter = WorkloadAdapterVersion(uuid(2))
-    let client = WorkloadClientVersion(uuid(3))
-    let otherClient = WorkloadClientVersion(uuid(4))
-    let format = WorkloadProviderFormatVersion(uuid(5))
-    let otherFormat = WorkloadProviderFormatVersion(uuid(6))
+    let adapter: WorkloadAdapterVersion
+    let otherAdapter: WorkloadAdapterVersion
+    let client: WorkloadClientVersion
+    let otherClient: WorkloadClientVersion
+    let format: WorkloadProviderFormatVersion
+    let otherFormat: WorkloadProviderFormatVersion
 
     init(start: Date) throws {
         self.start = start
@@ -276,10 +276,16 @@ private struct Fixture {
             product: .claudeCode, identifier: "session:session", resetBoundary: start.addingTimeInterval(10 * 60)
         )
         historicalWindowStart = start.addingTimeInterval(-300 * 60)
+        adapter = WorkloadAdapterVersion(try uuid(1))
+        otherAdapter = WorkloadAdapterVersion(try uuid(2))
+        client = WorkloadClientVersion(try uuid(3))
+        otherClient = WorkloadClientVersion(try uuid(4))
+        format = WorkloadProviderFormatVersion(try uuid(5))
+        otherFormat = WorkloadProviderFormatVersion(try uuid(6))
     }
 
-    func plan(units: Int) -> PlannedWorkload {
-        try! PlannedWorkload(
+    func plan(units: Int) throws -> PlannedWorkload {
+        try PlannedWorkload(
             product: .codex, kind: .codingAgentOperations, quotaWindowKind: .session,
             executionMode: .interactive, concurrency: 2, workUnits: units,
             source: .normalizedCompletedRunAdapter, adapterVersion: adapter,
@@ -319,8 +325,8 @@ private struct Fixture {
             source: quotaIdentity.product == .codex ? .codexLocalReport : .claudeProviderReport
         )
         return try MeasuredHistoricalRun(
-            identity: HistoricalRunIdentity(uuid(index + 100)),
-            revisionIdentity: revisionIdentity ?? HistoricalRunRevisionIdentity(uuid((revision ?? index) + 1_000)),
+            identity: HistoricalRunIdentity(try uuid(index + 100)),
+            revisionIdentity: revisionIdentity ?? HistoricalRunRevisionIdentity(try uuid((revision ?? index) + 1_000)),
             supersedesRevisionIdentity: supersedes,
             quotaWindowIdentity: quotaIdentity,
             quotaWindowStart: historicalWindowStart,
@@ -338,7 +344,7 @@ private struct Fixture {
             clientVersion: client ?? self.client,
             providerFormatVersion: format ?? self.format,
             observationIdentities: [observation.stableIdentity],
-            evidenceIdentities: [WorkloadEvidenceIdentity(uuid(index + 2_000))]
+            evidenceIdentities: [WorkloadEvidenceIdentity(try uuid(index + 2_000))]
         )
     }
 
@@ -346,12 +352,12 @@ private struct Fixture {
         used: Double,
         burn: ClosedRange<Double>,
         passOlderObservation: Bool = false
-    ) -> CurrentWorkloadQuotaEvidence {
-        let older = try! MeasuredQuotaObservation(
+    ) throws -> CurrentWorkloadQuotaEvidence {
+        let older = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: max(0, used - 1),
             observedAt: start.addingTimeInterval(20 * 60), source: .codexLocalReport
         )
-        let latest = try! MeasuredQuotaObservation(
+        let latest = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: used,
             observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
@@ -375,8 +381,8 @@ private struct Fixture {
         )
     }
 
-    func unqualified() -> CurrentWorkloadQuotaEvidence {
-        let observation = try! MeasuredQuotaObservation(
+    func unqualified() throws -> CurrentWorkloadQuotaEvidence {
+        let observation = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: 30,
             observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
@@ -396,8 +402,8 @@ private struct Fixture {
         )
     }
 
-    func staleCurrent() -> CurrentWorkloadQuotaEvidence {
-        let observation = try! MeasuredQuotaObservation(
+    func staleCurrent() throws -> CurrentWorkloadQuotaEvidence {
+        let observation = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: 30,
             observedAt: start.addingTimeInterval(-7 * 60 * 60), source: .codexLocalReport
         )
@@ -416,6 +422,6 @@ private struct Fixture {
 
 }
 
-private func uuid(_ value: Int) -> UUID {
-    UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value))!
+func uuid(_ value: Int) throws -> UUID {
+    try #require(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value)))
 }

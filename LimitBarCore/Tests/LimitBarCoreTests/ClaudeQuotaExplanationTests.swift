@@ -65,5 +65,5 @@ struct ClaudeQuotaExplanationTests {
     }
 }
 
-private func date(_ value: TimeInterval) -> Date { Date(timeIntervalSince1970: value) }
-private func digest(_ character: Character) -> String { String(repeating: character, count: 64) }
+func date(_ value: TimeInterval) -> Date { Date(timeIntervalSince1970: value) }
+func digest(_ character: Character) -> String { String(repeating: character, count: 64) }

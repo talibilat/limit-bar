@@ -8,7 +8,7 @@ struct UsagePresentationTests {
     func separatesLocalCardsFromUTCBillingCosts() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
         let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
         let token = metric(window: windows.today, cost: nil)
         let cost = metric(window: windows.utcBillingWeek, cost: Cost(amount: 2, currencyCode: "USD", source: .providerReported))

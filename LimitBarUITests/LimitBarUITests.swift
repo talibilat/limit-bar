@@ -1,8 +1,7 @@
 import XCTest
 
 final class LimitBarUITests: XCTestCase {
-    private var app: XCUIApplication!
-    private var runIdentifier: String!
+    private lazy var app = XCUIApplication()
     private var defaultsSuiteName: String!
     private var fixtureDirectory: URL!
     private var fixtureURL: URL!
@@ -11,8 +10,8 @@ final class LimitBarUITests: XCTestCase {
         try super.setUpWithError()
         continueAfterFailure = false
 
-        runIdentifier = UUID().uuidString
-        defaultsSuiteName = "com.talibilat.LimitBar.ui-tests.\(runIdentifier!)"
+        let runIdentifier = UUID().uuidString
+        defaultsSuiteName = "com.talibilat.LimitBar.ui-tests.\(runIdentifier)"
         fixtureDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("limitbar-ui-tests", isDirectory: true)
             .appendingPathComponent(runIdentifier, isDirectory: true)
@@ -20,7 +19,6 @@ final class LimitBarUITests: XCTestCase {
         fixtureURL = fixtureDirectory.appendingPathComponent("usage.jsonl")
         try Data().write(to: fixtureURL, options: .atomic)
 
-        app = XCUIApplication()
         app.launchArguments = ["--limitbar-testing", "--limitbar-ui-testing"]
         app.launchEnvironment["LIMITBAR_UI_TEST_RUN_ID"] = runIdentifier
         app.launchEnvironment["LIMITBAR_UI_TEST_CUSTOM_SOURCE_PATH"] = fixtureURL.path
@@ -31,14 +29,9 @@ final class LimitBarUITests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        app?.terminate()
+        app.terminate()
         UserDefaults(suiteName: defaultsSuiteName)?.removePersistentDomain(forName: defaultsSuiteName)
         try? FileManager.default.removeItem(at: fixtureDirectory)
-        app = nil
-        fixtureURL = nil
-        fixtureDirectory = nil
-        defaultsSuiteName = nil
-        runIdentifier = nil
         try super.tearDownWithError()
     }
 

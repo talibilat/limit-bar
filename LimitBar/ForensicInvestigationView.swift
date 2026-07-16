@@ -143,13 +143,13 @@ enum ForensicInvestigationPresentation {
             return InvestigationFindingPresentation(
                 status: "Qualified",
                 summary: "Calculated burn \(PercentRateLimitPresentation.burnRange(value.calculatedBurnPercentPerHour)). \(exhaustion).",
-                details: "\(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(duration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
+                details: "\(value.measuredObservationCount) Measured observations over \(wholeSecondDuration(value.measuredSpan)); evidence age \(wholeSecondDuration(value.evidenceAge)); latest \(exact(value.latestObservationAt)); method \(value.forecastMethod.rawValue); qualification qualified; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
             )
         case let .unavailable(value):
             return InvestigationFindingPresentation(
                 status: "Unavailable",
                 summary: "Unavailable - no point estimate is shown.",
-                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(duration(value.measuredSpan)); evidence age \(value.evidenceAge.map(duration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
+                details: "Reason \(value.reason.rawValue); \(value.measuredObservationCount) Measured observations over \(wholeSecondDuration(value.measuredSpan)); evidence age \(value.evidenceAge.map(wholeSecondDuration) ?? "unavailable"); method \(value.forecastMethod.rawValue); qualification unavailable; traces \(traceList(value.inputObservationIdentities)); interpretation \(value.interpretationVersions.map(\.rawValue).joined(separator: ", ")); method limitations: \(forecastLimitations(value.forecastMethod))."
             )
         }
     }
@@ -229,14 +229,14 @@ enum ForensicInvestigationPresentation {
         }
     }
 
-    static func duration(_ interval: TimeInterval) -> String {
-        let seconds = max(0, Int(interval.rounded()))
-        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
-        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
-        return "\(seconds)s"
-    }
-
     private static func decimal(_ value: Double) -> String { String(format: "%.2f", value) }
+}
+
+func wholeSecondDuration(_ interval: TimeInterval) -> String {
+    let seconds = max(0, Int(interval.rounded()))
+    if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+    if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+    return "\(seconds)s"
 }
 
 struct ForensicInvestigationInput {
@@ -427,9 +427,9 @@ enum ForensicInvestigationAssembler {
             forecast: ForensicInvestigationPresentation.forecast(forecasts[selection.interval.identity]),
             anomaly: ForensicInvestigationPresentation.anomaly(anomalies[selection.interval.identity]),
             version: "Explanation method \(value?.methodVersion ?? ClaudeQuotaExplanationEngine.methodVersion); source adapter \(value?.sourceAdapterVersion ?? ClaudeCodeOTLPEvidenceAdapter.adapterVersion); source/client version \(value?.sourceVersion ?? "unavailable - not captured").",
-            limitations: "Limitations: \(limitations.isEmpty ? "none recorded" : limitations). Exact source traces: \(value?.observationIdentityCount ?? 0) Reported observations and \(value?.evidenceIdentityCount ?? 0) Measured evidence items; observation span \(value.map { ForensicInvestigationPresentation.duration($0.observationSpan) } ?? "unavailable"); evidence age \(value.map { ForensicInvestigationPresentation.duration($0.evidenceAge) } ?? "unavailable").",
+            limitations: "Limitations: \(limitations.isEmpty ? "none recorded" : limitations). Exact source traces: \(value?.observationIdentityCount ?? 0) Reported observations and \(value?.evidenceIdentityCount ?? 0) Measured evidence items; observation span \(value.map { wholeSecondDuration($0.observationSpan) } ?? "unavailable"); evidence age \(value.map { wholeSecondDuration($0.evidenceAge) } ?? "unavailable").",
             traces: explanationTraces(observations: value?.observationIdentities ?? [], evidence: value?.evidenceIdentities ?? []),
-            freshness: value.map { "Source evidence age \(ForensicInvestigationPresentation.duration($0.evidenceAge)); \($0.lifecycle.rawValue) Quota window with an Exact boundary." } ?? "Source freshness unavailable.",
+            freshness: value.map { "Source evidence age \(wholeSecondDuration($0.evidenceAge)); \($0.lifecycle.rawValue) Quota window with an Exact boundary." } ?? "Source freshness unavailable.",
             isGap: value == nil || value.map { if case .unavailable = $0.attribution { true } else { false } } == true,
             isObservedZero: observedZero
         )
@@ -840,7 +840,7 @@ struct ForensicInvestigationView: View {
             }
         }
         .frame(minWidth: 420, idealWidth: 760, minHeight: 520, idealHeight: 760)
-        .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+        .environment(\.timeZone, .gmt)
         .animation((reduceMotionOverride ?? reduceMotion) ? nil : .easeInOut(duration: 0.15), value: selectedProduct)
     }
 

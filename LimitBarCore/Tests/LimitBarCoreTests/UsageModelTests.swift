@@ -13,7 +13,7 @@ struct UsageModelTests {
     @Test("today window covers the local day containing the reference date")
     func todayWindowCoversReferenceDay() throws {
         let calendar = Calendar(identifier: .gregorian)
-        let reference = try #require(calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 7, day: 10, hour: 15, minute: 30)))
+        let reference = try #require(calendar.date(from: DateComponents(timeZone: .gmt, year: 2026, month: 7, day: 10, hour: 15, minute: 30)))
 
         let interval = TimeWindow.today.interval(containing: reference, calendar: calendar)
 
@@ -25,7 +25,7 @@ struct UsageModelTests {
     @Test("current week always starts Monday even when the calendar starts weeks on Sunday")
     func currentWeekAlwaysStartsMonday() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 1
         let reference = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 10, hour: 15)))
         let expectedStart = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 6)))
@@ -41,7 +41,7 @@ struct UsageModelTests {
     @Test("current week ends at the exclusive following Monday boundary")
     func currentWeekEndIsExclusiveFollowingMonday() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 1
         let followingMonday = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 13)))
 
@@ -90,7 +90,7 @@ struct UsageModelTests {
         localCalendar.timeZone = try #require(TimeZone(identifier: "Pacific/Kiritimati"))
         localCalendar.firstWeekday = 1
         var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        utcCalendar.timeZone = .gmt
         let reference = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 12, hour: 23, minute: 59)))
         let expectedStart = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 6)))
         let expectedEnd = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
@@ -319,6 +319,7 @@ struct UsageModelTests {
         freshness: Freshness = .fresh,
         provenance: UsageSnapshotProvenance? = nil
     ) -> UsageMetric {
+        let cost = Cost(amount: Decimal(123) / 100, currencyCode: "USD", source: .providerReported)
         let common = (
             provider: ProviderKind.anthropic,
             accountLabel: "Personal",
@@ -326,7 +327,7 @@ struct UsageModelTests {
             modelLabel: "claude-sonnet",
             deploymentLabel: Optional<String>.none,
             tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 20),
-            cost: Cost(amount: Decimal(string: "1.23")!, currencyCode: "USD", source: .providerReported),
+            cost: cost,
             limitStatus: limitStatus ?? .confirmed(used: used, limit: 100),
             refreshedAt: Optional(Date(timeIntervalSince1970: 1_783_683_200)),
             freshness: freshness
@@ -356,7 +357,7 @@ struct UsageModelTests {
             deploymentLabel: nil,
             timeWindow: .today,
             tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 20),
-            cost: Cost(amount: Decimal(string: "1.23")!, currencyCode: "USD", source: .providerReported),
+            cost: cost,
             limitStatus: limitStatus ?? .confirmed(used: used, limit: 100),
             refreshedAt: Date(timeIntervalSince1970: 1_783_683_200),
             freshness: freshness

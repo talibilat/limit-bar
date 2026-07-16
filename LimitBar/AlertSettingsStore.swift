@@ -51,14 +51,6 @@ struct AlertSettingsStore {
         return replaceRules(with: updated)
     }
 
-    @discardableResult
-    func replaceCostBudgetRules(_ rules: [CostBudgetAlertRule]) -> Bool {
-        guard let updated = try? AlertPreferences(quotaRules: preferences.quotaRules, costBudgetRules: rules) else {
-            return false
-        }
-        return replaceRules(with: updated)
-    }
-
     func reset() {
         _ = replaceRules(with: Self.defaultPreferences)
     }

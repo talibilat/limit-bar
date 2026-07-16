@@ -10,7 +10,7 @@ struct UsageAttributionStoreTests {
         let store = try SQLiteUsageAttributionStore.inMemory()
         let now = try date("2026-07-12T12:00:00Z")
         let builtIn = try breakdown(source: .builtInLocalLog, project: "alpha", observedAt: now)
-        let customID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let customID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let custom = try breakdown(source: .custom(customID), project: "custom", observedAt: now)
 
         try store.replace([builtIn], source: .builtInLocalLog, sourceRevision: "revision-a", now: now)
@@ -59,7 +59,7 @@ struct UsageAttributionStoreTests {
     func customSourceDeletionIsScoped() throws {
         let store = try SQLiteUsageAttributionStore.inMemory()
         let now = try date("2026-07-12T12:00:00Z")
-        let customID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let customID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         try store.replace([try breakdown(source: .builtInLocalLog, project: "built-in", observedAt: now)], source: .builtInLocalLog, sourceRevision: "built-in", now: now)
         try store.replace([try breakdown(source: .custom(customID), project: "custom", observedAt: now)], source: .custom(customID), sourceRevision: "custom", now: now)
 
@@ -101,17 +101,9 @@ struct UsageAttributionStoreTests {
             project: CollectorAttribution(id: project, label: project.capitalized),
             agent: CollectorAttribution(id: "reviewer", label: "Reviewer"),
             tokenUsage: TokenUsage(inputTokens: 3, outputTokens: 2),
-            eventIDs: [UUID(uuidString: "00000000-0000-0000-0000-000000000001")!],
+            eventIDs: [try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))],
             observedAt: observedAt
         )
-    }
-
-    private func date(_ value: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: value))
-    }
-
-    private func temporaryDatabasePath() -> String {
-        FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
     }
 
     private func execute(_ sql: String, path: String) throws {

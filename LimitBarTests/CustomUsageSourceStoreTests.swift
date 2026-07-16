@@ -4,24 +4,19 @@ import XCTest
 @testable import LimitBar
 
 final class CustomUsageSourceStoreTests: XCTestCase {
-    private var suiteName: String!
+    private let suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
     private var defaults: UserDefaults!
-    private var fixtureURL: URL!
+    private let fixtureURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
 
-    override func setUp() {
-        super.setUp()
-        suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         defaults = UserDefaults(suiteName: suiteName)
-        fixtureURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
-        try! Data().write(to: fixtureURL)
+        try Data().write(to: fixtureURL)
     }
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
         try? FileManager.default.removeItem(at: fixtureURL)
-        fixtureURL = nil
-        suiteName = nil
         super.tearDown()
     }
 

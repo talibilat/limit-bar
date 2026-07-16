@@ -3,19 +3,16 @@ import XCTest
 @testable import LimitBar
 
 final class LocalRefreshSettingsStoreTests: XCTestCase {
-    private var suiteName: String!
+    private let suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
     private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
-        suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
     }
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
         super.tearDown()
     }
 
@@ -36,7 +33,7 @@ final class LocalRefreshSettingsStoreTests: XCTestCase {
         XCTAssertEqual(LocalRefreshSettingsStore(defaults: defaults).cadence, .thirtySeconds)
     }
 
-    func testInvalidPersistedPreferencesReturnToFiveSecondDefault() throws {
+    func testInvalidPersistedPreferencesReturnToFiveSecondDefault() {
         let invalidValues = [
             #"{"version":1,"cadenceSeconds":1}"#,
             #"{"version":2,"cadenceSeconds":15}"#,
@@ -45,7 +42,7 @@ final class LocalRefreshSettingsStoreTests: XCTestCase {
         ]
 
         for value in invalidValues {
-            defaults.set(try XCTUnwrap(value.data(using: .utf8)), forKey: LocalRefreshSettingsStore.storageKey)
+            defaults.set(Data(value.utf8), forKey: LocalRefreshSettingsStore.storageKey)
             XCTAssertEqual(LocalRefreshSettingsStore(defaults: defaults).cadence, .fiveSeconds)
         }
     }

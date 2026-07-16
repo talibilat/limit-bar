@@ -100,7 +100,7 @@ struct LocalUsageEventImporterTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-10T18:00:00Z")
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 2
 
         let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
@@ -137,7 +137,7 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":120,"outputTokens":45}"#)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
 
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         try #"{"provider":"azureOpenAI","timestamp":"2026-07-10T13:30:00Z","model":"gpt-4.1-mini","deployment":"batch-review","inputTokens":20,"outputTokens":10}"#.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -155,7 +155,7 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","deployment":"team-tools","inputTokens":120,"outputTokens":45}"#)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
 
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         try FileManager.default.removeItem(at: fileURL)
@@ -177,7 +177,7 @@ struct LocalUsageEventImporterTests {
         ].joined(separator: "\n")
         let fileURL = try temporaryFile(contents: jsonl)
 
-        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
 
         #expect(result.validEventCount == 1)
         #expect(result.malformedEvents.map(\.lineNumber) == [2])
@@ -200,7 +200,7 @@ struct LocalUsageEventImporterTests {
             from: fileURL,
             to: store,
             now: try date("2026-07-10T18:00:00Z"),
-            calendar: try utcCalendar()
+            calendar: utcCalendar()
         )
 
         #expect(result.validEventCount == 2)
@@ -219,7 +219,7 @@ struct LocalUsageEventImporterTests {
                 from: fileURL,
                 to: store,
                 now: try date("2026-07-10T18:00:00Z"),
-                calendar: try utcCalendar()
+                calendar: utcCalendar()
             )
             Issue.record("Expected no-valid-events failure")
         } catch let LocalUsageEventError.noValidEvents(diagnostics, rejectedLineCount, _) {
@@ -241,7 +241,7 @@ struct LocalUsageEventImporterTests {
             from: fileURL,
             to: store,
             now: try date("2026-07-10T18:00:00Z"),
-            calendar: try utcCalendar()
+            calendar: utcCalendar()
         )
 
         #expect(result.validEventCount == 1)
@@ -254,7 +254,7 @@ struct LocalUsageEventImporterTests {
     func oversizedFilePreservesPreviousSnapshot() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         let handle = try FileHandle(forWritingTo: fileURL)
@@ -274,7 +274,7 @@ struct LocalUsageEventImporterTests {
     func aggregateLimitPreservesPreviousSnapshot() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         let events = (0...5_000).map {
@@ -310,7 +310,7 @@ struct LocalUsageEventImporterTests {
         let databasePath = temporaryDatabasePath()
         let store = try SQLiteUsageMetricStore(path: databasePath)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
 
@@ -336,7 +336,7 @@ struct LocalUsageEventImporterTests {
         let databasePath = temporaryDatabasePath()
         let store = try SQLiteUsageMetricStore(path: databasePath)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let initialURL = try temporaryFile(contents: #"{"provider":"openAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
         try LocalUsageEventImporter.importEvents(from: initialURL, to: store, now: now, calendar: calendar)
         let largeURL = try temporaryFile(contents: "")
@@ -380,7 +380,7 @@ struct LocalUsageEventImporterTests {
             #"{"provider":"openAI","timestamp":"2026-07-12T10:00:00Z","model":"later-week","inputTokens":1,"outputTokens":1}"#
         ].joined(separator: "\n"))
 
-        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: try utcCalendar())
+        let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: utcCalendar())
 
         #expect(result.validEventCount == 1)
         #expect(result.malformedEventCount == 2)
@@ -398,7 +398,7 @@ struct LocalUsageEventImporterTests {
             from: fileURL,
             to: store,
             now: try date("2026-07-10T23:55:00Z"),
-            calendar: try utcCalendar()
+            calendar: utcCalendar()
         )
 
         #expect(try store.metrics(for: .today).isEmpty)
@@ -410,7 +410,7 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":120,"outputTokens":45}"#)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
 
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         try FileManager.default.removeItem(at: fileURL)
@@ -430,7 +430,7 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore.inMemory()
         let initialURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":2}"#)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         try LocalUsageEventImporter.importEvents(from: initialURL, to: store, now: now, calendar: calendar)
 
         let protectedDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -456,7 +456,7 @@ struct LocalUsageEventImporterTests {
         let store = try SQLiteUsageMetricStore(path: databasePath)
         let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"gpt-4.1","inputTokens":120,"outputTokens":45}"#)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
 
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         try executeSQLite(databasePath: databasePath, sql: """
@@ -481,7 +481,7 @@ struct LocalUsageEventImporterTests {
     func tokenAggregationOverflowFailsWithoutReplacingPreviousSnapshot() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: #"{"provider":"azureOpenAI","timestamp":"2026-07-10T10:30:00Z","model":"existing","inputTokens":1,"outputTokens":1}"#)
         try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
         let overflowing = [
@@ -504,7 +504,7 @@ struct LocalUsageEventImporterTests {
         let databasePath = temporaryDatabasePath()
         let store = try SQLiteUsageMetricStore(path: databasePath)
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: [
             #"{"provider":"anthropic","timestamp":"2026-07-10T10:00:00Z","model":"old-anthropic","inputTokens":1,"outputTokens":1}"#,
             #"{"provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"old-openai","inputTokens":1,"outputTokens":1}"#
@@ -629,7 +629,7 @@ struct LocalUsageEventImporterTests {
     func localReplacementIsSourceScoped() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let window = try CurrentUsageWindows.resolve(at: now, calendar: calendar).today
         let apiMetric = UsageMetric(
             provider: .anthropic, accountLabel: nil, projectLabel: nil, modelLabel: "api", deploymentLabel: nil,
@@ -653,7 +653,7 @@ struct LocalUsageEventImporterTests {
     func aggregatesV2AttributionSeparately() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: [
             #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":10,"outputTokens":2,"projectID":"alpha","projectLabel":"Alpha","agentID":"reviewer","agentLabel":"Reviewer"}"#,
             #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000002","provider":"openAI","timestamp":"2026-07-10T11:00:00Z","model":"gpt-5","inputTokens":5,"outputTokens":1,"projectID":"beta","projectLabel":"Beta","agentID":"builder","agentLabel":"Builder"}"#,
@@ -661,6 +661,8 @@ struct LocalUsageEventImporterTests {
         ].joined(separator: "\n"))
 
         let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        let firstEventID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let secondEventID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
 
         let parent = try #require(store.metrics(for: .today).first { $0.provider == .openAI })
         #expect(parent.tokenUsage == TokenUsage(inputTokens: 18, outputTokens: 4))
@@ -670,10 +672,7 @@ struct LocalUsageEventImporterTests {
         #expect(today.allSatisfy { $0.source == .builtInLocalLog && $0.provider == .openAI && $0.model == "gpt-5" })
         #expect(Set(today.compactMap(\.project?.id)) == ["alpha", "beta"])
         #expect(Set(today.compactMap(\.agent?.id)) == ["reviewer", "builder"])
-        #expect(Set(today.flatMap(\.eventIDs)) == [
-            UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-            UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        ])
+        #expect(Set(today.flatMap(\.eventIDs)) == [firstEventID, secondEventID])
         #expect(today.reduce(0) { $0 + $1.tokenUsage.totalTokens } == 18)
         #expect(parent.tokenUsage.totalTokens == 22)
     }
@@ -682,7 +681,7 @@ struct LocalUsageEventImporterTests {
     func missingAndDeletedAttribution() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = try date("2026-07-10T18:00:00Z")
-        let calendar = try utcCalendar()
+        let calendar = utcCalendar()
         let fileURL = try temporaryFile(contents: #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1}"#)
 
         let initial = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
@@ -763,7 +762,7 @@ struct LocalUsageEventImporterTests {
             from: fileURL,
             to: store,
             now: try date("2026-07-10T18:00:00Z"),
-            calendar: try utcCalendar(),
+            calendar: utcCalendar(),
             onChunkRead: { _ in
                 guard !replaced else { return }
                 replaced = true
@@ -774,16 +773,6 @@ struct LocalUsageEventImporterTests {
         #expect(result.sourceRevision == SHA256.hash(data: bytesA).map { String(format: "%02x", $0) }.joined())
         #expect(result.attributionBreakdowns.allSatisfy { $0.project?.id == "alpha" })
         #expect(try Data(contentsOf: fileURL) == bytesB)
-    }
-
-    private func temporaryFile(contents: String) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        return url
-    }
-
-    private func temporaryDatabasePath() -> String {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
     }
 
     private func executeSQLite(databasePath: String, sql: String) throws {
@@ -807,10 +796,4 @@ struct LocalUsageEventImporterTests {
         return try #require(fractionalFormatter.date(from: iso8601))
     }
 
-    private func utcCalendar() throws -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
-        calendar.firstWeekday = 2
-        return calendar
-    }
 }

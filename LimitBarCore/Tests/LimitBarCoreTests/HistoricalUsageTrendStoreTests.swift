@@ -29,7 +29,7 @@ struct HistoricalUsageTrendStoreTests {
 
         let buckets = try store.buckets(for: [observed, missing])
 
-        #expect(try observations(in: buckets[0]).first?.sample.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
+        #expect(observations(in: buckets[0]).first?.sample.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
         #expect(buckets[1].value == .gap)
     }
 
@@ -40,7 +40,7 @@ struct HistoricalUsageTrendStoreTests {
         let first = try #require(try store.record([try sample(period: day, input: 10)], now: day.window.start).first)
         let correction = try #require(try store.record([try sample(period: day, input: 12)], now: day.window.end).first)
 
-        let current = try observations(in: try #require(store.buckets(for: [day]).first))
+        let current = observations(in: try #require(store.buckets(for: [day]).first))
         let revisions = try store.revisions(for: day)
 
         #expect(first.revision == 1)
@@ -92,7 +92,7 @@ struct HistoricalUsageTrendStoreTests {
         try store.record([try sample(period: nextDay, input: 2)], now: nextDay.window.start)
 
         let bucket = try #require(store.buckets(for: [firstDay]).first)
-        let current = try #require(try observations(in: bucket).first)
+        let current = try #require(observations(in: bucket).first)
         #expect(current.lifecycle == .final)
         #expect(current.sample.tokenUsage.inputTokens == 10)
         #expect(try store.revisions(for: firstDay).map(\.lifecycle) == [.superseded, .final])
@@ -111,7 +111,7 @@ struct HistoricalUsageTrendStoreTests {
             try sample(period: day, coverage: .model("retained"), input: 12)
         ], now: day.window.start.addingTimeInterval(60))
 
-        let current = try observations(in: try #require(store.buckets(for: [day]).first))
+        let current = observations(in: try #require(store.buckets(for: [day]).first))
         let removed = try #require(current.first { $0.sample.coverage == .model("removed") })
         #expect(removed.sample.tokenUsage.totalTokens == 0)
         #expect(removed.revision == 2)
@@ -131,7 +131,7 @@ struct HistoricalUsageTrendStoreTests {
 
         try store.record([], observedScopes: [scope], now: day.window.start.addingTimeInterval(60))
 
-        let current = try observations(in: try #require(store.buckets(for: [day]).first))
+        let current = observations(in: try #require(store.buckets(for: [day]).first))
         #expect(current.count == 1)
         #expect(current.first?.sample.tokenUsage.totalTokens == 0)
         #expect(current.first?.revision == 2)
@@ -149,7 +149,7 @@ struct HistoricalUsageTrendStoreTests {
         ], now: day.window.end)
 
         let bucket = try #require(store.buckets(for: [day]).first)
-        let all = try observations(in: bucket)
+        let all = observations(in: bucket)
 
         #expect(all.count == 4)
         #expect(bucket.authoritativeTotals.count == 1)
@@ -161,23 +161,25 @@ struct HistoricalUsageTrendStoreTests {
     @Test("provider-reported and atomically revisioned calculated costs remain distinct")
     func costSemanticsRemainDistinct() throws {
         let day = try period(2026, 7, 10, calendar: calendar(timeZone: "UTC"))
+        let calculatedAmount = try #require(Decimal(string: "3.10"))
+        let providerReportedAmount = try #require(Decimal(string: "3.25"))
         let calculated = try HistoricalUsageCalculatedCost(
-            cost: Cost(amount: Decimal(string: "3.10")!, currencyCode: "USD", source: .calculatedEstimate),
+            cost: Cost(amount: calculatedAmount, currencyCode: "USD", source: .calculatedEstimate),
             pricingRevision: "prices-2026-07",
             pricingEffectiveAt: try date(2026, 7, 1, calendar: calendar(timeZone: "UTC"))
         )
         let value = try sample(
             period: day,
-            providerCost: Cost(amount: Decimal(string: "3.25")!, currencyCode: "USD", source: .providerReported),
+            providerCost: Cost(amount: providerReportedAmount, currencyCode: "USD", source: .providerReported),
             calculatedCost: calculated
         )
         let store = try HistoricalUsageTrendStore.inMemory()
         try store.record([value], now: day.window.end)
 
         let bucket = try #require(store.buckets(for: [day]).first)
-        let stored = try #require(try observations(in: bucket).first)
+        let stored = try #require(observations(in: bucket).first)
 
-        #expect(stored.sample.providerReportedCost?.amount == Decimal(string: "3.25"))
+        #expect(stored.sample.providerReportedCost?.amount == providerReportedAmount)
         #expect(stored.sample.calculatedCost == calculated)
         #expect(throws: HistoricalUsageCalculatedCost.ValidationError.missingPricingRevision) {
             try HistoricalUsageCalculatedCost(
@@ -216,7 +218,7 @@ struct HistoricalUsageTrendStoreTests {
     }
 
     @Test("legacy metrics cannot be assigned invented historical dates")
-    func legacyMetricsAreRejected() throws {
+    func legacyMetricsAreRejected() {
         let legacy = UsageMetric(
             provider: .anthropic,
             accountLabel: "not persisted",
@@ -371,7 +373,7 @@ struct HistoricalUsageTrendStoreTests {
         )
     }
 
-    private func observations(in bucket: HistoricalUsageTrendBucket) throws -> [HistoricalUsageTrendObservation] {
+    private func observations(in bucket: HistoricalUsageTrendBucket) -> [HistoricalUsageTrendObservation] {
         guard case let .observed(observations) = bucket.value else {
             Issue.record("Expected an observed bucket")
             return []
@@ -406,10 +408,6 @@ struct HistoricalUsageTrendStoreTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: identifier))
         return calendar
-    }
-
-    private func temporaryDatabasePath() -> String {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
     }
 
     private func removeDatabase(at path: String) {

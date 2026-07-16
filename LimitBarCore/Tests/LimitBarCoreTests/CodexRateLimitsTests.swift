@@ -71,7 +71,7 @@ struct CodexRateLimitsTests {
         let now = Date(timeIntervalSince1970: 2_000_000)
         let old = codexLine(timestamp: Date(timeIntervalSince1970: now.timeIntervalSince1970 - 10 * 24 * 60 * 60))
         let future = codexLine(timestamp: now.addingTimeInterval(301))
-        let reader = BoundedReaderSequence(data: [old, future])
+        let reader = BoundedReaderSpy(data: [old, future])
         let files = try metadataFiles(count: 2, modifiedAt: now)
         defer { try? FileManager.default.removeItem(at: files.root) }
         let cursor = EntryCursor(entries: files.files)
@@ -133,7 +133,7 @@ struct CodexRateLimitsTests {
         try #"{"timestamp":"2026-07-10T00:00:00Z","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":40.0,"window_minutes":300,"resets_at":200},"plan_type":"plus"}}}"#
             .write(to: newer, atomically: true, encoding: .utf8)
 
-        let now = ISO8601DateFormatter().date(from: "2026-07-10T00:01:00Z")!
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-10T00:01:00Z"))
         let snapshot = try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: root, now: now, fileManager: fileManager)
 
         #expect(snapshot.primary?.percentUsed == 40.0)
@@ -393,7 +393,7 @@ struct CodexRateLimitsTests {
     @Test("credits estimator prefers current provider API rows without mixing local rows")
     func creditsEstimatorPrefersProviderAPI() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let pricing = creditsPricing()
         let metrics = [
             creditsMetric(tokens: 1_000_000, source: .providerAPI, window: windows.today, refreshedAt: now),
@@ -408,7 +408,7 @@ struct CodexRateLimitsTests {
     @Test("credits estimator falls back to local and ignores legacy expired and cost-only rows")
     func creditsEstimatorFallsBackToCurrentLocal() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let expired = try ExactUsageWindow(timeWindow: .today, start: windows.today.start.addingTimeInterval(-86_400), end: windows.today.end.addingTimeInterval(-86_400), basis: .localCalendar)
         let metrics = [
             creditsMetric(tokens: 2_000_000, source: .builtInLocalLog, window: windows.today, refreshedAt: now),
@@ -428,12 +428,6 @@ struct CodexRateLimitsTests {
 
     private func creditsMetric(tokens: Int, source: UsageMetricSource, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {
         UsageMetric(provider: .openAI, accountLabel: nil, projectLabel: nil, modelLabel: "gpt-5.5", deploymentLabel: nil, provenance: .bounded(source: source, window: window), tokenUsage: TokenUsage(inputTokens: tokens, outputTokens: 0), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
-    }
-
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return calendar
     }
 }
 
@@ -464,23 +458,17 @@ private final class EntryCursor: @unchecked Sendable {
 
 private final class BoundedReaderSpy: @unchecked Sendable {
     private let lock = NSLock()
-    private let data: Data
+    private var data: [Data]
     private(set) var requestedByteCounts: [Int] = []
 
-    init(data: Data) { self.data = data }
-
-    func read(_ url: URL, byteCount: Int) throws -> Data {
-        lock.withLock { requestedByteCounts.append(byteCount) }
-        return data
-    }
-}
-
-private final class BoundedReaderSequence: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data: [Data]
+    init(data: Data) { self.data = [data] }
     init(data: [Data]) { self.data = data }
-    func read(_ url: URL, byteCount: Int) throws -> Data {
-        lock.withLock { data.removeFirst() }
+
+    func read(_ url: URL, byteCount: Int) -> Data {
+        lock.withLock {
+            requestedByteCounts.append(byteCount)
+            return data.removeFirst()
+        }
     }
 }
 
@@ -490,7 +478,7 @@ private final class BudgetReaderSpy: @unchecked Sendable {
     private(set) var requestedByteCounts: [Int] = []
     private(set) var returnedByteCount = 0
     init(maximumReturnSize: Int) { self.maximumReturnSize = maximumReturnSize }
-    func read(_ url: URL, byteCount: Int) throws -> Data {
+    func read(_ url: URL, byteCount: Int) -> Data {
         lock.withLock {
             requestedByteCounts.append(byteCount)
             let count = min(byteCount, maximumReturnSize)
@@ -505,7 +493,7 @@ private final class URLMappingReader: @unchecked Sendable {
     private let data: [URL: Data]
     private(set) var readURLs: [URL] = []
     init(data: [URL: Data]) { self.data = data }
-    func read(_ url: URL, byteCount: Int) throws -> Data {
+    func read(_ url: URL, byteCount: Int) -> Data {
         lock.withLock {
             readURLs.append(url)
             return Data((data[url] ?? Data()).prefix(byteCount))

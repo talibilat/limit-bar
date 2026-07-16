@@ -513,8 +513,10 @@ public enum QuotaAnomalyAnalytics {
               latest.observedAt.timeIntervalSince(first.observedAt) == baselineDuration + comparisonDuration else {
             return unavailable(.insufficientSpan)
         }
-        guard let currentPeriod = try? QuotaAnomalyPeriod(start: intervals.last!.lower.observedAt, end: intervals.last!.upper.observedAt),
-              let baselinePeriod = try? QuotaAnomalyPeriod(start: intervals.first!.lower.observedAt, end: intervals[minimumBaselineSampleCount - 1].upper.observedAt) else {
+        guard let firstInterval = intervals.first,
+              let lastInterval = intervals.last,
+              let currentPeriod = try? QuotaAnomalyPeriod(start: lastInterval.lower.observedAt, end: lastInterval.upper.observedAt),
+              let baselinePeriod = try? QuotaAnomalyPeriod(start: firstInterval.lower.observedAt, end: intervals[minimumBaselineSampleCount - 1].upper.observedAt) else {
             return unavailable(.insufficientSpan)
         }
         guard !gaps.contains(where: { overlaps($0, currentPeriod) || overlaps($0, baselinePeriod) }) else {
@@ -540,7 +542,9 @@ public enum QuotaAnomalyAnalytics {
         }
 
         let baselineValues = Array(normalized.values.prefix(minimumBaselineSampleCount))
-        let currentValue = normalized.values.last!
+        guard let currentValue = normalized.values.last else {
+            return unavailable(.insufficientSpan)
+        }
         let resultMetadata = metadata(
             qualification: .qualified,
             current: currentPeriod,

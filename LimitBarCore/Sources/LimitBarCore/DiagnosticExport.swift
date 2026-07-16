@@ -501,7 +501,7 @@ public struct DiagnosticEvidenceRemainder: Codable, Equatable, Sendable {
         guard !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
               unit == .percentagePoints,
               (availability == .available) == (value != nil && provenance != nil && unavailableReason == nil),
-              availability == .unavailable || (value?.isFinite == true && value! >= 0 && value! <= 10_000),
+              availability == .unavailable || value.map({ $0.isFinite && (0...10_000).contains($0) }) == true,
               availability == .available || (value == nil && provenance == nil && method == nil && unavailableReason != nil),
               method == nil || provenance == .inferred else { throw DiagnosticExportError.invalidQuotaEvidence }
         self.availability = availability
@@ -723,7 +723,7 @@ public struct DiagnosticQuotaEvidenceReport: Codable, Equatable, Sendable {
         self.publicationGeneration = publicationGeneration
         self.publicationTime = publicationTime
         self.apiProviderEvidence = apiProviderEvidence
-        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceInputRecords).prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
+        self.records = Array(ordered.prefix(DiagnosticExport.maximumQuotaEvidenceRecords))
         recordLimit = DiagnosticExport.maximumQuotaEvidenceRecords
         projectionRecordLimit = DiagnosticExport.maximumQuotaEvidenceInputRecords
         candidateRecordLimit = DiagnosticExport.maximumQuotaEvidenceCandidateRecords
@@ -854,7 +854,6 @@ public struct DiagnosticExportReport: Codable, Equatable, Sendable {
 public typealias DiagnosticExportReportV1 = DiagnosticExportReport
 
 private struct LegacyDiagnosticExportReportV1: Codable {
-    let schemaVersion: Int
     let generatedAt: Date
     let application: DiagnosticExportReport.Application
     let operatingSystem: DiagnosticExportReport.OperatingSystem
@@ -877,7 +876,6 @@ private struct LegacyDiagnosticQuotaFindingV3: Codable {
 }
 
 private struct LegacyDiagnosticExportReportV3: Codable {
-    let schemaVersion: Int
     let generatedAt: Date
     let application: DiagnosticExportReport.Application
     let operatingSystem: DiagnosticExportReport.OperatingSystem
@@ -953,7 +951,7 @@ public enum DiagnosticExport {
             if envelope.schemaVersion == 1 {
                 let legacy = try decoder.decode(LegacyDiagnosticExportReportV1.self, from: bytes)
                 report = DiagnosticExportReport(
-                    schemaVersion: legacy.schemaVersion,
+                    schemaVersion: envelope.schemaVersion,
                     generatedAt: legacy.generatedAt,
                     application: legacy.application,
                     operatingSystem: legacy.operatingSystem,
@@ -986,7 +984,7 @@ public enum DiagnosticExport {
                     )
                 }
                 report = DiagnosticExportReport(
-                    schemaVersion: legacy.schemaVersion,
+                    schemaVersion: envelope.schemaVersion,
                     generatedAt: legacy.generatedAt,
                     application: legacy.application,
                     operatingSystem: legacy.operatingSystem,
@@ -1075,11 +1073,6 @@ public enum DiagnosticExport {
 
     private static func roundedDownToMinute(_ date: Date) -> Date {
         Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / 60) * 60)
-    }
-
-    static func isBoundedEvidenceText(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.count <= maximumEvidenceTextLength
-            && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
     }
 
     static func isSafeEvidenceToken(_ value: String) -> Bool {

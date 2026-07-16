@@ -129,7 +129,7 @@ struct CodexRolloutEvidenceTests {
     }
 
     @Test("rate-limit limit_id participates in exact quota identity")
-    func rateLimitIDParticipatesInIdentity() {
+    func rateLimitIDParticipatesInIdentity() throws {
         let data = rollout([
             #"{"timestamp":"2026-07-15T10:00:00Z","type":"session_meta","payload":{"session_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","cli_version":"0.144.4"}}"#,
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(limitID: "codex", percent: 5, reset: 1_783_716_600)),
@@ -137,9 +137,11 @@ struct CodexRolloutEvidenceTests {
         ])
 
         let result = CodexRolloutEvidenceAdapter.scan(data: data, identityKey: Data("key".utf8))
+        let codexWindow = try #require(result.quotaSnapshots.first?.primary)
+        let teamWindow = try #require(result.quotaSnapshots.last?.primary)
 
-        #expect(QuotaWindowIdentity.codex(slot: "primary", window: result.quotaSnapshots[0].primary!)?.identifier == "codex:primary:300")
-        #expect(QuotaWindowIdentity.codex(slot: "primary", window: result.quotaSnapshots[1].primary!)?.identifier == "team:primary:300")
+        #expect(QuotaWindowIdentity.codex(slot: "primary", window: codexWindow)?.identifier == "codex:primary:300")
+        #expect(QuotaWindowIdentity.codex(slot: "primary", window: teamWindow)?.identifier == "team:primary:300")
     }
 
     @Test("malformed and unsupported records are barriers and token deltas are not bridged across them")
@@ -207,7 +209,7 @@ struct CodexRolloutEvidenceTests {
             tokenLine(at: "2026-07-01T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_783_716_600)),
             tokenLine(at: "2026-07-15T10:10:01Z", info: "null", rateLimits: rateLimits(percent: 6, reset: 1_783_716_600))
         ]).write(to: root.appendingPathComponent("rollout.jsonl"))
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T10:00:00Z")!
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:00:00Z"))
 
         let publication = try CodexSessionEvidenceReader.scan(sessionsDirectory: root, now: now, identityKey: Data("key".utf8), fileManager: fileManager)
 
@@ -226,7 +228,7 @@ struct CodexRolloutEvidenceTests {
             tokenLine(at: "2026-07-15T10:00:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_784_109_690)),
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 6, reset: 1_784_109_690))
         ]).write(to: root.appendingPathComponent("rollout.jsonl"))
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z"))
 
         let publication = try CodexSessionEvidenceReader.scan(sessionsDirectory: root, now: now, identityKey: Data("key".utf8), fileManager: fileManager)
 
@@ -272,11 +274,12 @@ struct CodexRolloutEvidenceTests {
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_783_716_600))
         ]).write(to: outside)
         try fileManager.createSymbolicLink(at: sessions.appendingPathComponent("linked.jsonl"), withDestinationURL: outside)
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z"))
 
         #expect(throws: CodexRateLimitFailure.notFound) {
             try CodexSessionEvidenceReader.scan(
                 sessionsDirectory: sessions,
-                now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+                now: now,
                 identityKey: Data("key".utf8),
                 fileManager: fileManager
             )
@@ -294,10 +297,11 @@ struct CodexRolloutEvidenceTests {
             #"{"timestamp":"2026-07-15T10:00:00Z","type":"session_meta","payload":{"session_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","cli_version":"0.144.4"}}"#,
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_784_109_600))
         ]).write(to: nested.appendingPathComponent("rollout.jsonl"))
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z"))
 
         let publication = try CodexSessionEvidenceReader.scan(
             sessionsDirectory: sessions,
-            now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+            now: now,
             identityKey: Data("key".utf8),
             fileManager: fileManager
         )

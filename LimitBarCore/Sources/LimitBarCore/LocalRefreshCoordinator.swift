@@ -231,7 +231,6 @@ public final class LimitBarLocalStateProjection {
 public actor LocalRefreshCoordinator {
     private struct RefreshExecution {
         let id: UUID
-        let generation: UInt64
         let task: Task<Void, Never>
     }
 
@@ -345,7 +344,7 @@ public actor LocalRefreshCoordinator {
             guard let self else { return }
             await self.runRefreshes(id: id, generation: requestedGeneration, triggeredAt: triggeredAt)
         }
-        refreshExecution = RefreshExecution(id: id, generation: requestedGeneration, task: task)
+        refreshExecution = RefreshExecution(id: id, task: task)
         return task
     }
 
@@ -395,7 +394,7 @@ public actor LocalRefreshCoordinator {
         guard refreshGeneration == generation, !Task.isCancelled else { return }
 
         sequence += 1
-        guard refreshGeneration == generation, !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return }
         continuation.yield(LocalRefreshSnapshot(
             sequence: sequence,
             usage: lastUsage,

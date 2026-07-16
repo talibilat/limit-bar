@@ -4,13 +4,13 @@ import Testing
 
 @Suite("Collector writer")
 struct CollectorWriterTests {
-    private let now = CollectorSchemaV1.parseTimestamp("2026-07-12T12:00:00Z")!
+    private let now = Date(timeIntervalSince1970: 1_783_857_600)
 
     @Test("identical UUID and payload is idempotent and consumes capacity once")
     func duplicateIsIdempotent() throws {
         let output = try temporaryOutput()
         let writer = CollectorWriter(policy: CollectorPolicy(maximumEventsPerMinute: 1))
-        let event = makeEvent(id: 1)
+        let event = try makeEvent(id: 1)
 
         #expect(try writer.append(event, to: output, now: now) == .appended)
         #expect(try writer.append(event, to: output, now: now) == .duplicate)
@@ -20,7 +20,7 @@ struct CollectorWriterTests {
             #expect(permissions.intValue & 0o777 == 0o600)
         }
         #expect(throws: CollectorWriterError.rateLimited) {
-            try writer.append(makeEvent(id: 2), to: output, now: now)
+            try writer.append(try makeEvent(id: 2), to: output, now: now)
         }
     }
 
@@ -28,10 +28,10 @@ struct CollectorWriterTests {
     func reusedIDConflicts() throws {
         let output = try temporaryOutput()
         let writer = CollectorWriter()
-        try writer.append(makeEvent(id: 1), to: output, now: now)
+        try writer.append(try makeEvent(id: 1), to: output, now: now)
 
         #expect(throws: CollectorWriterError.eventIDConflict) {
-            try writer.append(makeEvent(id: 1, inputTokens: 99), to: output, now: now)
+            try writer.append(try makeEvent(id: 1, inputTokens: 99), to: output, now: now)
         }
     }
 
@@ -39,12 +39,12 @@ struct CollectorWriterTests {
     func v2RetriesAndConflicts() throws {
         let output = try temporaryOutput()
         let writer = CollectorWriter()
-        let event = makeV2Event(id: 1)
+        let event = try makeV2Event(id: 1)
 
         #expect(try writer.append(event, to: output, now: now) == .appended)
         #expect(try writer.append(event, to: output, now: now) == .duplicate)
         #expect(throws: CollectorWriterError.eventIDConflict) {
-            try writer.append(makeV2Event(id: 1, projectID: "other-project"), to: output, now: now)
+            try writer.append(try makeV2Event(id: 1, projectID: "other-project"), to: output, now: now)
         }
     }
 
@@ -52,10 +52,10 @@ struct CollectorWriterTests {
     func schemaVersionChangeConflicts() throws {
         let output = try temporaryOutput()
         let writer = CollectorWriter()
-        try writer.append(makeEvent(id: 1), to: output, now: now)
+        try writer.append(try makeEvent(id: 1), to: output, now: now)
 
         #expect(throws: CollectorWriterError.eventIDConflict) {
-            try writer.append(makeV2Event(id: 1, projectID: nil), to: output, now: now)
+            try writer.append(try makeV2Event(id: 1, projectID: nil), to: output, now: now)
         }
     }
 
@@ -64,7 +64,7 @@ struct CollectorWriterTests {
         let output = try temporaryOutput()
         try CollectorSchemaV1.encode(makeEvent(id: 1)).write(to: output)
 
-        try CollectorWriter().append(makeEvent(id: 2), to: output, now: now)
+        try CollectorWriter().append(try makeEvent(id: 2), to: output, now: now)
 
         let lines = try Data(contentsOf: output).split(separator: 0x0A)
         #expect(lines.count == 2)
@@ -75,13 +75,13 @@ struct CollectorWriterTests {
     func enforcesRateLimit() throws {
         let output = try temporaryOutput()
         let writer = CollectorWriter(policy: CollectorPolicy(maximumEventsPerMinute: 2))
-        try writer.append(makeEvent(id: 1), to: output, now: now)
-        try writer.append(makeEvent(id: 2), to: output, now: now.addingTimeInterval(30))
+        try writer.append(try makeEvent(id: 1), to: output, now: now)
+        try writer.append(try makeEvent(id: 2), to: output, now: now.addingTimeInterval(30))
 
         #expect(throws: CollectorWriterError.rateLimited) {
-            try writer.append(makeEvent(id: 3), to: output, now: now.addingTimeInterval(59))
+            try writer.append(try makeEvent(id: 3), to: output, now: now.addingTimeInterval(59))
         }
-        #expect(try writer.append(makeEvent(id: 3), to: output, now: now.addingTimeInterval(61)) == .appended)
+        #expect(try writer.append(try makeEvent(id: 3), to: output, now: now.addingTimeInterval(61)) == .appended)
     }
 
     @Test("concurrent producers leave one coherent line per event")
@@ -91,7 +91,7 @@ struct CollectorWriterTests {
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for id in 1...40 {
-                group.addTask { _ = try writer.append(makeEvent(id: id), to: output, now: now) }
+                group.addTask { _ = try writer.append(try makeEvent(id: id), to: output, now: now) }
             }
             try await group.waitForAll()
         }
@@ -105,7 +105,7 @@ struct CollectorWriterTests {
     @Test("rotation archives all data and retains only recent active events")
     func rotatesWithoutLosingRecentUsage() throws {
         let output = try temporaryOutput()
-        let oldEvents = (1...4).map { makeEvent(id: $0, timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60)) }
+        let oldEvents = try (1...4).map { try makeEvent(id: $0, timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60)) }
         var oldData = Data()
         for event in oldEvents {
             oldData.append(try CollectorSchemaV1.encode(event))
@@ -114,7 +114,7 @@ struct CollectorWriterTests {
         try oldData.write(to: output)
         let writer = CollectorWriter(policy: CollectorPolicy(maximumEventsPerMinute: 10, maximumActiveFileBytes: oldData.count, activeRetention: 8 * 24 * 60 * 60))
 
-        let result = try writer.append(makeEvent(id: 9), to: output, now: now)
+        let result = try writer.append(try makeEvent(id: 9), to: output, now: now)
         guard case let .appendedAfterRotation(archiveURL) = result else {
             Issue.record("Expected rotation")
             return
@@ -130,12 +130,12 @@ struct CollectorWriterTests {
     func v2RetentionAndRotation() throws {
         let output = try temporaryOutput()
         let old = CollectorEventV2(
-            eventID: uuid(1), identity: .provider(.openAI), timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60),
+            eventID: try uuid(1), identity: .provider(.openAI), timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60),
             model: "old", inputTokens: 1, outputTokens: 1,
             project: CollectorAttribution(id: "old-project")
         )
-        let recent = makeV2Event(id: 2)
-        let new = makeV2Event(id: 3)
+        let recent = try makeV2Event(id: 2)
+        let new = try makeV2Event(id: 3)
         var existing = try CollectorSchemaV2.encode(old) + Data([0x0A])
         existing.append(try CollectorSchemaV2.encode(recent))
         existing.append(0x0A)
@@ -149,7 +149,7 @@ struct CollectorWriterTests {
         }
 
         let active = try Data(contentsOf: output).split(separator: 0x0A).map { try CollectorSchemaV2.decode(Data($0)) }
-        #expect(active.map(\.eventID) == [uuid(2), uuid(3)])
+        #expect(active.map(\.eventID) == [try uuid(2), try uuid(3)])
         #expect(active.first?.project?.id == "project-one")
     }
 
@@ -160,7 +160,7 @@ struct CollectorWriterTests {
         let writer = CollectorWriter(policy: CollectorPolicy(maximumActiveFileBytes: 32))
 
         #expect(throws: CollectorWriterError.activeFileTooLargeAfterRetention) {
-            try writer.append(makeEvent(id: 1), to: output, now: now)
+            try writer.append(try makeEvent(id: 1), to: output, now: now)
         }
         #expect(try String(contentsOf: output, encoding: .utf8) == "\nunrecognized-existing-line\n\n")
     }
@@ -181,7 +181,7 @@ struct CollectorWriterTests {
         try existing.write(to: output)
         let writer = CollectorWriter(policy: CollectorPolicy(maximumActiveFileBytes: existing.count, maximumArchiveBytes: existing.count + 10, archiveRetention: 30 * 24 * 60 * 60))
 
-        _ = try writer.append(makeEvent(id: 2), to: output, now: now)
+        _ = try writer.append(try makeEvent(id: 2), to: output, now: now)
 
         #expect(!FileManager.default.fileExists(atPath: expired.path))
         #expect(!FileManager.default.fileExists(atPath: recent.path))
@@ -197,14 +197,14 @@ struct CollectorWriterTests {
         let directory = try temporaryOutput().deletingLastPathComponent()
         let extensionless = directory.appendingPathComponent("usage-events")
         let jsonl = directory.appendingPathComponent("usage-events.jsonl")
-        let old = makeEvent(id: 1, timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60))
+        let old = try makeEvent(id: 1, timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60))
         let oldData = try CollectorSchemaV1.encode(old) + Data([0x0A])
         try oldData.write(to: extensionless)
         try oldData.write(to: jsonl)
         let writer = CollectorWriter(policy: CollectorPolicy(maximumActiveFileBytes: oldData.count))
 
-        guard case let .appendedAfterRotation(firstArchive) = try writer.append(makeEvent(id: 2), to: extensionless, now: now),
-              case let .appendedAfterRotation(secondArchive) = try writer.append(makeEvent(id: 3), to: jsonl, now: now) else {
+        guard case let .appendedAfterRotation(firstArchive) = try writer.append(try makeEvent(id: 2), to: extensionless, now: now),
+              case let .appendedAfterRotation(secondArchive) = try writer.append(try makeEvent(id: 3), to: jsonl, now: now) else {
             Issue.record("Expected both outputs to rotate")
             return
         }
@@ -220,7 +220,7 @@ struct CollectorWriterTests {
         #expect(builtIn.provider == .openAI)
         #expect(builtIn.inputTokens == 1)
 
-        let custom = CollectorEventV1(eventID: uuid(2), identity: .customSource(uuid(99)), timestamp: now, model: "local-model", inputTokens: 3, outputTokens: 4)
+        let custom = CollectorEventV1(eventID: try uuid(2), identity: .customSource(try uuid(99)), timestamp: now, model: "local-model", inputTokens: 3, outputTokens: 4)
         let customData = try CollectorSchemaV1.encode(custom)
         let importedCustom = try CustomUsageEventParser.parseLine(String(decoding: customData, as: UTF8.self))
         #expect(importedCustom.model == "local-model")
@@ -231,47 +231,43 @@ struct CollectorWriterTests {
     func rejectsResourceAbuse() throws {
         let output = try temporaryOutput()
         #expect(throws: CollectorWriterError.futureTimestamp) {
-            try CollectorWriter().append(makeEvent(id: 1, timestamp: now.addingTimeInterval(301)), to: output, now: now)
+            try CollectorWriter().append(try makeEvent(id: 1, timestamp: now.addingTimeInterval(301)), to: output, now: now)
         }
         try Data().write(to: output)
         let link = output.deletingLastPathComponent().appendingPathComponent("linked.jsonl")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: output)
         #expect(throws: CollectorWriterError.outputIsNotRegularFile) {
-            try CollectorWriter().append(makeEvent(id: 2), to: link, now: now)
+            try CollectorWriter().append(try makeEvent(id: 2), to: link, now: now)
         }
         let dangling = output.deletingLastPathComponent().appendingPathComponent("dangling.jsonl")
         try FileManager.default.createSymbolicLink(at: dangling, withDestinationURL: output.deletingLastPathComponent().appendingPathComponent("missing.jsonl"))
         #expect(throws: CollectorWriterError.outputIsNotRegularFile) {
-            try CollectorWriter().append(makeEvent(id: 3), to: dangling, now: now)
+            try CollectorWriter().append(try makeEvent(id: 3), to: dangling, now: now)
         }
         let writer = CollectorWriter()
-        try writer.append(makeEvent(id: 4), to: output, now: now)
+        try writer.append(try makeEvent(id: 4), to: output, now: now)
         let rateState = URL(fileURLWithPath: output.path + ".collector-rate-v1.json")
         try FileManager.default.removeItem(at: rateState)
         try FileManager.default.createSymbolicLink(at: rateState, withDestinationURL: output.deletingLastPathComponent().appendingPathComponent("missing-rate.json"))
         #expect(throws: CollectorWriterError.outputIsNotRegularFile) {
-            try writer.append(makeEvent(id: 4), to: output, now: now)
+            try writer.append(try makeEvent(id: 4), to: output, now: now)
         }
         #expect(throws: CollectorWriterError.invalidPolicy) {
-            try CollectorWriter(policy: CollectorPolicy(maximumEventsPerMinute: 0)).append(makeEvent(id: 5), to: output, now: now)
+            try CollectorWriter(policy: CollectorPolicy(maximumEventsPerMinute: 0)).append(try makeEvent(id: 5), to: output, now: now)
         }
     }
 
-    private func makeEvent(id: Int, timestamp: Date? = nil, inputTokens: Int = 1) -> CollectorEventV1 {
-        CollectorEventV1(eventID: uuid(id), identity: .provider(.openAI), timestamp: timestamp ?? now, model: "model-\(id)", inputTokens: inputTokens, outputTokens: 2)
+    private func makeEvent(id: Int, timestamp: Date? = nil, inputTokens: Int = 1) throws -> CollectorEventV1 {
+        CollectorEventV1(eventID: try uuid(id), identity: .provider(.openAI), timestamp: timestamp ?? now, model: "model-\(id)", inputTokens: inputTokens, outputTokens: 2)
     }
 
-    private func makeV2Event(id: Int, projectID: String? = "project-one") -> CollectorEventV2 {
+    private func makeV2Event(id: Int, projectID: String? = "project-one") throws -> CollectorEventV2 {
         CollectorEventV2(
-            eventID: uuid(id), identity: .provider(.openAI), timestamp: now, model: "model-\(id)",
+            eventID: try uuid(id), identity: .provider(.openAI), timestamp: now, model: "model-\(id)",
             inputTokens: 1, outputTokens: 2,
             project: projectID.map { CollectorAttribution(id: $0, label: "Project One") },
             agent: CollectorAttribution(id: "agent-one", label: "Agent One")
         )
-    }
-
-    private func uuid(_ value: Int) -> UUID {
-        UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value))!
     }
 
     private func temporaryOutput() throws -> URL {

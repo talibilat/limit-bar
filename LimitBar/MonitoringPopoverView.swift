@@ -298,7 +298,7 @@ private struct UTCBillingWeekView: View {
     private var intervalText: String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.timeZone = .gmt
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return "\(formatter.string(from: presentation.interval.start)) - \(formatter.string(from: presentation.interval.end)) UTC"

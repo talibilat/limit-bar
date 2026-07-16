@@ -7,54 +7,57 @@ struct PricingTests {
     @Test("calculates cost from input and output token prices")
     func calculatesCostFromInputAndOutputTokenPrices() throws {
         let metric = usage(inputTokens: 1_000_000, outputTokens: 500_000)
-        let table = PricingTable(entries: [price(input: decimal("3.00"), output: decimal("15.00"))])
+        let table = PricingTable(entries: [price(input: try decimal("3.00"), output: try decimal("15.00"))])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("10.50")
 
-        #expect(cost.amount == decimal("10.50"))
+        #expect(cost.amount == expectedAmount)
         #expect(cost.currencyCode == "USD")
         #expect(cost.source == .calculatedEstimate)
     }
 
     @Test("prefers provider reported cost")
     func prefersProviderReportedCost() throws {
-        let reported = Cost(amount: decimal("2.25"), currencyCode: "USD", source: .providerReported)
+        let reported = Cost(amount: try decimal("2.25"), currencyCode: "USD", source: .providerReported)
         let metric = usage(cost: reported)
-        let table = PricingTable(entries: [price(input: decimal("99"), output: decimal("99"))])
+        let table = PricingTable(entries: [price(input: try decimal("99"), output: try decimal("99"))])
 
         #expect(CostCalculator.cost(for: metric, pricing: table) == reported)
     }
 
     @Test("recalculates existing calculated estimates when pricing changes")
     func recalculatesExistingCalculatedEstimatesWhenPricingChanges() throws {
-        let oldEstimate = Cost(amount: decimal("1.00"), currencyCode: "USD", source: .calculatedEstimate)
+        let oldEstimate = Cost(amount: try decimal("1.00"), currencyCode: "USD", source: .calculatedEstimate)
         let metric = usage(inputTokens: 1_000_000, outputTokens: 0, cost: oldEstimate)
-        let table = PricingTable(entries: [price(input: decimal("4.00"), output: decimal("1.00"))])
+        let table = PricingTable(entries: [price(input: try decimal("4.00"), output: try decimal("1.00"))])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("4.00")
 
-        #expect(cost.amount == decimal("4.00"))
+        #expect(cost.amount == expectedAmount)
         #expect(cost.source == .calculatedEstimate)
     }
 
     @Test("selects latest effective pricing at usage time")
     func selectsLatestEffectivePricingAtUsageTime() throws {
-        let metric = usage(refreshedAt: date(2026, 7, 10), inputTokens: 1_000_000, outputTokens: 0)
+        let metric = usage(refreshedAt: try date(2026, 7, 10), inputTokens: 1_000_000, outputTokens: 0)
         let table = PricingTable(entries: [
-            price(input: decimal("3.00"), output: decimal("1.00"), effectiveAt: date(2026, 1, 1)),
-            price(input: decimal("4.00"), output: decimal("1.00"), effectiveAt: date(2026, 7, 1)),
-            price(input: decimal("5.00"), output: decimal("1.00"), effectiveAt: date(2026, 8, 1))
+            price(input: try decimal("3.00"), output: try decimal("1.00"), effectiveAt: try date(2026, 1, 1)),
+            price(input: try decimal("4.00"), output: try decimal("1.00"), effectiveAt: try date(2026, 7, 1)),
+            price(input: try decimal("5.00"), output: try decimal("1.00"), effectiveAt: try date(2026, 8, 1))
         ])
 
         let cost = try #require(CostCalculator.cost(for: metric, pricing: table))
+        let expectedAmount = try decimal("4.00")
 
-        #expect(cost.amount == decimal("4.00"))
+        #expect(cost.amount == expectedAmount)
     }
 
     @Test("missing pricing does not produce fake cost")
-    func missingPricingDoesNotProduceFakeCost() {
+    func missingPricingDoesNotProduceFakeCost() throws {
         let metric = usage(modelLabel: "unknown-model")
-        let table = PricingTable(entries: [price(modelLabel: "known-model", input: decimal("1"), output: decimal("1"))])
+        let table = PricingTable(entries: [price(modelLabel: "known-model", input: try decimal("1"), output: try decimal("1"))])
 
         #expect(CostCalculator.cost(for: metric, pricing: table) == nil)
     }
@@ -66,9 +69,9 @@ struct PricingTests {
     }
 
     @Test("missing refresh date does not use current pricing")
-    func missingRefreshDateDoesNotUseCurrentPricing() {
+    func missingRefreshDateDoesNotUseCurrentPricing() throws {
         let metric = usage(refreshedAt: nil)
-        let table = PricingTable(entries: [price(input: decimal("1"), output: decimal("1"))])
+        let table = PricingTable(entries: [price(input: try decimal("1"), output: try decimal("1"))])
 
         #expect(CostCalculator.cost(for: metric, pricing: table) == nil)
     }
@@ -77,7 +80,7 @@ struct PricingTests {
     func pricingEffectiveDateIsNormalizedToSelectedDayStart() throws {
         let calendar = Calendar.current
         let selected = try #require(calendar.date(bySettingHour: 15, minute: 30, second: 0, of: Date(timeIntervalSince1970: 1_783_728_000)))
-        let entry = price(input: decimal("2"), output: decimal("2"), effectiveAt: selected)
+        let entry = price(input: try decimal("2"), output: try decimal("2"), effectiveAt: selected)
 
         #expect(entry.effectiveAt == calendar.startOfDay(for: selected))
     }
@@ -128,11 +131,11 @@ struct PricingTests {
         )
     }
 
-    private func decimal(_ string: String) -> Decimal {
-        Decimal(string: string)!
+    private func decimal(_ string: String) throws -> Decimal {
+        try #require(Decimal(string: string))
     }
 
-    private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
-        Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: year, month: month, day: day))!
+    private func date(_ year: Int, _ month: Int, _ day: Int) throws -> Date {
+        try #require(Calendar(identifier: .gregorian).date(from: DateComponents(timeZone: .gmt, year: year, month: month, day: day)))
     }
 }

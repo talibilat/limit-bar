@@ -6,7 +6,7 @@ import Testing
 struct LocalRefreshProductionWiringTests {
     @MainActor
     @Test("live local dependencies publish usage, menu status, and Codex into one state projection")
-    func liveLocalProjection() async {
+    func liveLocalProjection() async throws {
         let metric = UsageMetric(
             provider: .anthropic,
             accountLabel: "Local",
@@ -42,8 +42,8 @@ struct LocalRefreshProductionWiringTests {
         var iterator = coordinator.snapshots.makeAsyncIterator()
 
         await coordinator.requestRefresh()
-        let published = await iterator.next()
-        state.apply(published!)
+        let published = try #require(await iterator.next())
+        state.apply(published)
 
         #expect(await usage.callCount == 1)
         #expect(await codex.callCount == 1)
@@ -71,7 +71,7 @@ private actor LocalCodexSourceSpy: LocalCodexScanning {
 
     init(snapshot: CodexRateLimitSnapshot?) { self.snapshot = snapshot }
 
-    func scan(now: Date) -> CodexRateLimitSnapshot? {
+    func scan(now _: Date) -> CodexRateLimitSnapshot? {
         callCount += 1
         return snapshot
     }

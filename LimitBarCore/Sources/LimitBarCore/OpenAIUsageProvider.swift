@@ -147,8 +147,7 @@ public struct OpenAIOrganizationClient: Sendable {
     }
 
     private func request(credential: String, interval: DateInterval, page: String? = nil) -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/usage/completions"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
             URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
             URLQueryItem(name: "bucket_width", value: "1m"),
@@ -156,21 +155,28 @@ public struct OpenAIOrganizationClient: Sendable {
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "model")
         ]
-        if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
-        return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
+        if let page { queryItems.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(
+            url: baseURL.appendingPathComponent("v1/organization/usage/completions").appending(queryItems: queryItems),
+            method: .get,
+            headers: ["Authorization": "Bearer \(credential)"]
+        )
     }
 
     private func costRequest(credential: String, interval: DateInterval, page: String?) -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent("v1/organization/costs"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "start_time", value: String(Int(interval.start.timeIntervalSince1970))),
             URLQueryItem(name: "end_time", value: String(Int(interval.end.timeIntervalSince1970))),
             URLQueryItem(name: "bucket_width", value: "1d"),
             URLQueryItem(name: "group_by[]", value: "project_id"),
             URLQueryItem(name: "group_by[]", value: "line_item")
         ]
-        if let page { components.queryItems?.append(URLQueryItem(name: "page", value: page)) }
-        return HTTPRequest(url: components.url!, method: .get, headers: ["Authorization": "Bearer \(credential)"])
+        if let page { queryItems.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(
+            url: baseURL.appendingPathComponent("v1/organization/costs").appending(queryItems: queryItems),
+            method: .get,
+            headers: ["Authorization": "Bearer \(credential)"]
+        )
     }
 }
 
@@ -204,7 +210,6 @@ public enum OpenAIUsageMapper {
         let projectName: String?
         let model: String?
         let inputTokens: Int
-        let cachedInputTokens: Int?
         let outputTokens: Int
 
         enum CodingKeys: String, CodingKey {
@@ -212,22 +217,17 @@ public enum OpenAIUsageMapper {
             case projectName = "project_name"
             case model
             case inputTokens = "input_tokens"
-            case cachedInputTokens = "input_cached_tokens"
             case outputTokens = "output_tokens"
         }
     }
 
-    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let model: String }
+    private struct Key: Hashable { let window: ExactUsageWindow; let project: String; let model: String }
     private struct Aggregate { var input = 0; var output = 0; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
 
     public static func metrics(from data: Data, organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
         try metrics(from: decode(data).data, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
-    static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], organization: String, windows current: CurrentUsageWindows) throws -> [UsageMetric] {
@@ -243,10 +243,10 @@ public enum OpenAIUsageMapper {
                 let projectName = row.projectName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let model = row.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !projectID.isEmpty, !model.isEmpty, row.inputTokens >= 0, row.outputTokens >= 0 else { continue }
-                let project = projectName?.isEmpty == false ? projectName! : projectID
+                let project = projectName.flatMap { $0.isEmpty ? nil : $0 } ?? projectID
                 for window in windows {
                     guard start >= window.start, end <= window.end else { continue }
-                    let key = Key(window: window, organization: organization, project: project, model: model)
+                    let key = Key(window: window, project: project, model: model)
                     var aggregate = aggregates[key] ?? Aggregate(latest: end)
                     aggregate.input = try checkedSum(aggregate.input, row.inputTokens)
                     aggregate.output = try checkedSum(aggregate.output, row.outputTokens)
@@ -257,8 +257,8 @@ public enum OpenAIUsageMapper {
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
-        }.sorted { ($0.timeWindow.rawValue, $0.accountLabel ?? "", $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.accountLabel ?? "", $1.projectLabel ?? "", $1.modelLabel) }
+            UsageMetric(provider: .openAI, accountLabel: organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+        }.sorted { ($0.timeWindow.rawValue, $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.projectLabel ?? "", $1.modelLabel) }
     }
 
     private static func checkedSum(_ lhs: Int, _ rhs: Int) throws -> Int {
@@ -293,17 +293,13 @@ public enum OpenAICostMapper {
         enum CodingKeys: String, CodingKey { case projectID = "project_id"; case lineItem = "line_item"; case amount }
     }
     struct Amount: Decodable { let value: Decimal; let currency: String }
-    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let lineItem: String; let currency: String }
+    private struct Key: Hashable { let project: String; let lineItem: String; let currency: String }
     private struct Aggregate { var amount: Decimal; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
 
     public static func metrics(from data: Data, organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
         try metrics(from: decode(data).data, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
-    static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], organization: String, windows: CurrentUsageWindows) throws -> [UsageMetric] {
@@ -322,18 +318,16 @@ public enum OpenAICostMapper {
                       let amount = row.amount,
                       amount.value.isFinite,
                       amount.value >= 0 else { continue }
-                for window in [window] {
-                    guard start >= window.start, end <= window.end else { continue }
-                    let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
-                    var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
-                    aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
-                    aggregate.latest = max(aggregate.latest, end)
-                    aggregates[key] = aggregate
-                }
+                guard start >= window.start, end <= window.end else { continue }
+                let key = Key(project: project, lineItem: lineItem, currency: amount.currency.uppercased())
+                var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
+                aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
+                aggregate.latest = max(aggregate.latest, end)
+                aggregates[key] = aggregate
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+            UsageMetric(provider: .openAI, accountLabel: organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
         }
     }
 
@@ -361,7 +355,6 @@ public enum OpenAIRefreshPersistence {
         try store.markMetricsInitialized()
         var succeeded = false
         var failure: ProviderFailureReason?
-        var wasCancelled = false
 
         switch batch.usage {
         case let .success(metrics):
@@ -377,7 +370,7 @@ public enum OpenAIRefreshPersistence {
             )
             failure = reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         switch batch.cost {
@@ -391,15 +384,11 @@ public enum OpenAIRefreshPersistence {
             try ProviderCostRefreshPersistence.markFailed(provider: .openAI, in: store, window: windows.utcBillingWeek)
             failure = failure ?? reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         let state: ProviderConnectionState = if succeeded {
             .connected
-        } else if failure != nil {
-            .failed
-        } else if wasCancelled {
-            .cancelled
         } else {
             .failed
         }

@@ -67,11 +67,9 @@ public enum LocalUsageEventParser {
     }
 
     public static func parseLine(_ line: String) throws -> LocalUsageEvent {
-        guard let data = line.data(using: .utf8) else {
-            throw LocalUsageEventError.malformedJSON
-        }
+        let data = Data(line.utf8)
 
-        if hasStrictV2Schema(in: data) {
+        if CollectorSchemaV2.hasStrictSchema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .provider(provider) = event.identity,
                   let normalizedProvider = ProviderKind(rawValue: provider.rawValue) else {
                 throw LocalUsageEventError.malformedJSON
@@ -98,7 +96,8 @@ public enum LocalUsageEventParser {
             throw LocalUsageEventError.unsupportedProvider
         }
 
-        guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
+        guard let timestampText = raw.timestamp,
+              let timestamp = CollectorSchemaV1.parseTimestamp(timestampText) else {
             throw LocalUsageEventError.missingRequiredField("timestamp")
         }
 
@@ -146,23 +145,6 @@ public enum LocalUsageEventParser {
         )
     }
 
-    private static func parseTimestamp(_ timestampText: String) -> Date? {
-        let standardFormatter = ISO8601DateFormatter()
-        if let timestamp = standardFormatter.date(from: timestampText) {
-            return timestamp
-        }
-
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractionalFormatter.date(from: timestampText)
-    }
-
-    private static func hasStrictV2Schema(in data: Data) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let number = object["schemaVersion"] as? NSNumber else { return false }
-        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
-            && number.intValue == CollectorEventV2.schemaVersion
-    }
 }
 
 public enum LocalUsageEventImporter {

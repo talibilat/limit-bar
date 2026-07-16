@@ -111,10 +111,8 @@ public enum CustomUsageEventParser {
     }
 
     public static func parseLine(_ line: String) throws -> CustomUsageEvent {
-        guard let data = line.data(using: .utf8) else {
-            throw CustomUsageEventError.malformedJSON
-        }
-        if hasStrictV2Schema(in: data) {
+        let data = Data(line.utf8)
+        if CollectorSchemaV2.hasStrictSchema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .customSource(sourceID) = event.identity else {
                 throw CustomUsageEventError.malformedJSON
             }
@@ -132,7 +130,8 @@ public enum CustomUsageEventParser {
         guard let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
             throw CustomUsageEventError.malformedJSON
         }
-        guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
+        guard let timestampText = raw.timestamp,
+              let timestamp = CollectorSchemaV1.parseTimestamp(timestampText) else {
             throw CustomUsageEventError.missingRequiredField("timestamp")
         }
         guard let rawModel = raw.model else {
@@ -155,19 +154,6 @@ public enum CustomUsageEventParser {
             eventID: nil, customSourceID: nil, timestamp: timestamp, model: model,
             inputTokens: inputTokens, outputTokens: outputTokens, project: nil, agent: nil
         )
-    }
-
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractionalFormatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
-    }
-
-    private static func hasStrictV2Schema(in data: Data) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let number = object["schemaVersion"] as? NSNumber else { return false }
-        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
-            && number.intValue == CollectorEventV2.schemaVersion
     }
 }
 
@@ -373,9 +359,7 @@ public enum CustomUsageAggregator {
                 }
                 await Task.yield()
             }
-            if discardingOverlongLine {
-                // The diagnostic was recorded when the limit was crossed.
-            } else if !line.isEmpty {
+            if !discardingOverlongLine, !line.isEmpty {
                 try consumeLine()
             }
         } catch let error as CustomUsageLoadError {

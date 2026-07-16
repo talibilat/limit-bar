@@ -6,12 +6,12 @@ import Testing
 struct AnthropicUsageProviderTests {
     @Test("validation sends bounded Admin usage request and returns connected")
     func validationRequest() async throws {
-        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
         let client = AnthropicAdminClient(httpClient: http)
         let interval = DateInterval(start: try date("2026-07-06T00:00:00Z"), end: try date("2026-07-13T00:00:00Z"))
 
         let outcome = await client.validate(apiKey: "super-secret-value", interval: interval)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
 
         #expect(outcome == .connected)
         #expect(request.method == .get)
@@ -32,7 +32,7 @@ struct AnthropicUsageProviderTests {
         (500, ProviderFailureReason.refreshFailed)
     ])
     func validationStatus(status: Int, reason: ProviderFailureReason) async {
-        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw-secret-response".utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw-secret-response".utf8)))
         let client = AnthropicAdminClient(httpClient: http)
 
         let outcome = await client.validate(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60))
@@ -43,7 +43,7 @@ struct AnthropicUsageProviderTests {
 
     @Test("validation maps transport errors safely")
     func validationTransportError() async {
-        let client = AnthropicAdminClient(httpClient: RecordingHTTPClient(error: TestHTTPError.failed))
+        let client = AnthropicAdminClient(httpClient: UsageProviderRecordingHTTPClient(error: TestHTTPError.failed))
 
         let outcome = await client.validate(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60))
 
@@ -52,7 +52,7 @@ struct AnthropicUsageProviderTests {
 
     @Test("cancellation is not reported as an Anthropic provider failure")
     func cancellationIsTyped() async {
-        let client = AnthropicAdminClient(httpClient: RecordingHTTPClient(error: CancellationError()))
+        let client = AnthropicAdminClient(httpClient: UsageProviderRecordingHTTPClient(error: CancellationError()))
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
 
         #expect(await client.validate(apiKey: "secret", interval: interval) == .cancelled)
@@ -74,7 +74,7 @@ struct AnthropicUsageProviderTests {
         }
         """#.utf8)
 
-        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
         let today = metrics.filter { $0.timeWindow == .today }
         let sonnet = try #require(today.first { $0.modelLabel == "Claude Sonnet" })
         let cloudDesign = try #require(today.first { $0.modelLabel == "Cloud Design" })
@@ -109,12 +109,13 @@ struct AnthropicUsageProviderTests {
     func costReportMapping() throws {
         let data = Data(#"{"data":[{"starting_at":"2026-07-10T00:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T12:00:00Z","ending_at":"2026-07-11T00:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
 
-        let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
+        let expectedAmount = try #require(Decimal(string: "2.00"))
 
         #expect(metric.modelLabel == "Claude API Usage")
         #expect(metric.tokenUsage == TokenUsage(inputTokens: 0, outputTokens: 0))
-        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+        #expect(metric.cost == Cost(amount: expectedAmount, currencyCode: "USD", source: .providerReported))
     }
 
     @Test("cost report skips negative and non-finite amounts")
@@ -137,7 +138,7 @@ struct AnthropicUsageProviderTests {
     func usageFetchFollowsPagination() async {
         let first = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"page-2"}"#.utf8))
         let second = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false,"next_page":null}"#.utf8))
-        let http = RecordingHTTPClient(responses: [first, second])
+        let http = UsageProviderRecordingHTTPClient(responses: [first, second])
         let client = AnthropicAdminClient(httpClient: http)
 
         let result = await client.fetchUsage(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60), now: Date(timeIntervalSince1970: 30), calendar: .current)
@@ -148,10 +149,10 @@ struct AnthropicUsageProviderTests {
         #expect(requests[1].url.absoluteString.contains("page=page-2"))
     }
 
-    @Test("pagination rejects a repeated token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
-    func paginationRejectsRepeatedToken(endpoint: AnthropicEndpoint) async {
+    @Test("pagination rejects a repeated token on every Anthropic endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsRepeatedToken(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
-        let http = RecordingHTTPClient(responses: [page, page])
+        let http = UsageProviderRecordingHTTPClient(responses: [page, page])
 
         let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
 
@@ -159,10 +160,10 @@ struct AnthropicUsageProviderTests {
         #expect(await http.requests.count == 2)
     }
 
-    @Test("pagination rejects a missing token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
-    func paginationRejectsMissingToken(endpoint: AnthropicEndpoint) async {
+    @Test("pagination rejects a missing token on every Anthropic endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsMissingToken(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
-        let http = RecordingHTTPClient(response: page)
+        let http = UsageProviderRecordingHTTPClient(response: page)
 
         let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
 
@@ -170,12 +171,12 @@ struct AnthropicUsageProviderTests {
         #expect(await http.requests.count == 1)
     }
 
-    @Test("pagination permits at most 100 pages including the initial Anthropic request", arguments: AnthropicEndpoint.allCases)
-    func paginationIsBounded(endpoint: AnthropicEndpoint) async {
+    @Test("pagination permits at most 100 pages including the initial Anthropic request", arguments: UsageProviderEndpoint.allCases)
+    func paginationIsBounded(endpoint: UsageProviderEndpoint) async {
         let responses = (1...100).map { index in
             HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
         }
-        let http = RecordingHTTPClient(responses: responses)
+        let http = UsageProviderRecordingHTTPClient(responses: responses)
 
         let result = await fetch(endpoint, client: AnthropicAdminClient(httpClient: http))
 
@@ -187,7 +188,7 @@ struct AnthropicUsageProviderTests {
     func costFetchFollowsPagination() async {
         let first = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"cost-2"}"#.utf8))
         let second = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false,"next_page":null}"#.utf8))
-        let http = RecordingHTTPClient(responses: [first, second])
+        let http = UsageProviderRecordingHTTPClient(responses: [first, second])
         let client = AnthropicAdminClient(httpClient: http)
 
         let result = await client.fetchCost(apiKey: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60), now: Date(timeIntervalSince1970: 30), calendar: .current)
@@ -201,7 +202,7 @@ struct AnthropicUsageProviderTests {
 
     @Test("cost fetch requests the immutable UTC billing week")
     func costFetchRequestsUTCBillingWeek() async throws {
-        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
         let client = AnthropicAdminClient(httpClient: http)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
@@ -209,7 +210,7 @@ struct AnthropicUsageProviderTests {
 
         let now = try date("2026-07-08T12:34:56Z")
         _ = await client.fetchCost(apiKey: "secret", windows: windows, now: now)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
         let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
 
         #expect(query.first { $0.name == "starting_at" }?.value == "2026-07-06T00:00:00Z")
@@ -219,13 +220,13 @@ struct AnthropicUsageProviderTests {
     @Test("usage fetch ends at now while retaining the full exact window")
     func usageFetchEndsAtNow() async throws {
         let response = Data(#"{"data":[{"starting_at":"2026-07-08T10:00:00Z","ending_at":"2026-07-08T11:00:00Z","results":[{"model":"claude","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = AnthropicAdminClient(httpClient: http)
         let now = try date("2026-07-08T12:34:56Z")
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: try utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
 
         let result = await client.fetchUsage(apiKey: "secret", windows: windows, now: now)
-        let request = try #require(await http.lastRequest)
+        let request = try #require(await http.requests.last)
         let query = try #require(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
         guard case let .success(metrics) = result else { Issue.record("Expected success"); return }
 
@@ -237,7 +238,7 @@ struct AnthropicUsageProviderTests {
     func fixtureMappingRejectsUnlabeledRows() throws {
         let data = Data(#"{"data":[{"starting_at":"2026-07-10T10:00:00Z","ending_at":"2026-07-10T11:00:00Z","results":[{"input_tokens":1,"output_tokens":2}]}]}"#.utf8)
 
-        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
 
         #expect(metrics.isEmpty)
     }
@@ -395,7 +396,7 @@ struct AnthropicUsageProviderTests {
         UsageMetric(provider: provider, accountLabel: nil, projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: cost == nil ? 1 : 0, outputTokens: 0), cost: cost, limitStatus: .unsupportedByProviderAPI, refreshedAt: window.start, freshness: .fresh)
     }
 
-    private func fetch(_ endpoint: AnthropicEndpoint, client: AnthropicAdminClient) async -> AnthropicRefreshResult {
+    private func fetch(_ endpoint: UsageProviderEndpoint, client: AnthropicAdminClient) async -> AnthropicRefreshResult {
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
         switch endpoint {
         case .usage:
@@ -405,31 +406,23 @@ struct AnthropicUsageProviderTests {
         }
     }
 
-    private func date(_ value: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: value))
-    }
-
-    private func utcCalendar() throws -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
-        calendar.firstWeekday = 2
-        return calendar
-    }
 }
 
-enum AnthropicEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
-    case usage
-    case cost
-
-    var testDescription: String { String(describing: self) }
+func date(_ value: String) throws -> Date {
+    try #require(ISO8601DateFormatter().date(from: value))
 }
 
-private actor RecordingHTTPClient: HTTPClient {
+func utcCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .gmt
+    calendar.firstWeekday = 2
+    return calendar
+}
+
+actor UsageProviderRecordingHTTPClient: HTTPClient {
     private var responses: [HTTPResponse]
     private let error: Error?
     private(set) var requests: [HTTPRequest] = []
-
-    var lastRequest: HTTPRequest? { requests.last }
 
     init(response: HTTPResponse) {
         responses = [response]
@@ -446,7 +439,7 @@ private actor RecordingHTTPClient: HTTPClient {
         self.error = error
     }
 
-    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+    func send(_ request: HTTPRequest) throws -> HTTPResponse {
         requests.append(request)
         if let error { throw error }
         return responses.removeFirst()

@@ -5,8 +5,7 @@ import Testing
 @Suite("Rate limit time formatting")
 struct RateLimitTimeFormattingTests {
     private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        var calendar = gregorianGMTCalendar()
         calendar.locale = Locale(identifier: "en_US_POSIX")
         return calendar
     }
@@ -36,10 +35,10 @@ struct RateLimitTimeFormattingTests {
     }
 
     @Test("shows weekday and time at or beyond a day away")
-    func showsWeekdayAndTime() {
+    func showsWeekdayAndTime() throws {
         let calendar = utcCalendar()
-        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 12))!
-        let resetsAt = calendar.date(from: DateComponents(year: 2026, month: 7, day: 14, hour: 19))!
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 11, hour: 12)))
+        let resetsAt = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 14, hour: 19)))
 
         let text = RateLimitTimeFormatting.remainingText(now: now, resetsAt: resetsAt, calendar: calendar)
 

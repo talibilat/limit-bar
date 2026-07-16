@@ -159,7 +159,7 @@ public enum ClaudeUsageResponseMapper {
                 group: ClaudeRateLimitGroup(rawGroup: rawLimit.group),
                 percentUsed: percent,
                 severity: ClaudeRateLimitSeverity(rawSeverity: rawLimit.severity),
-                resetsAt: rawLimit.resets_at.flatMap(parseTimestamp),
+                resetsAt: rawLimit.resets_at.flatMap(CollectorSchemaV1.parseTimestamp),
                 scopeDisplayName: rawLimit.scope.flatMap { $0.model?.display_name ?? $0.surface?.display_name },
                 isActive: rawLimit.is_active ?? false
             )
@@ -173,7 +173,7 @@ public enum ClaudeUsageResponseMapper {
                     group: .session,
                     percentUsed: utilization,
                     severity: .unknown,
-                    resetsAt: fiveHour.resets_at.flatMap(parseTimestamp),
+                    resetsAt: fiveHour.resets_at.flatMap(CollectorSchemaV1.parseTimestamp),
                     scopeDisplayName: nil,
                     isActive: false
                 ))
@@ -185,7 +185,7 @@ public enum ClaudeUsageResponseMapper {
                     group: .weekly,
                     percentUsed: utilization,
                     severity: .unknown,
-                    resetsAt: sevenDay.resets_at.flatMap(parseTimestamp),
+                    resetsAt: sevenDay.resets_at.flatMap(CollectorSchemaV1.parseTimestamp),
                     scopeDisplayName: nil,
                     isActive: false
                 ))
@@ -197,15 +197,6 @@ public enum ClaudeUsageResponseMapper {
         }
 
         return ClaudeRateLimitSnapshot(limits: limits, fetchedAt: fetchedAt)
-    }
-
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractionalFormatter.date(from: text) {
-            return date
-        }
-        return ISO8601DateFormatter().date(from: text)
     }
 }
 
@@ -256,8 +247,6 @@ public struct ClaudeOAuthUsageClient: Sendable, ClaudeRateLimitsFetching {
             }
         case 401:
             return .failure(.expiredLogin)
-        case 403:
-            return .failure(.requestRejected)
         default:
             return .failure(.requestRejected)
         }

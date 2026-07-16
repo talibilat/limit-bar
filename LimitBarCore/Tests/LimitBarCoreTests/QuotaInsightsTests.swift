@@ -8,7 +8,7 @@ struct QuotaInsightsTests {
     private let base = Date(timeIntervalSince1970: 1_800_000_000)
 
     @Test("adapters retain only supported account-wide and individual-plan percentages")
-    func adapters() throws {
+    func adapters() {
         let reset = base.addingTimeInterval(7_200)
         let claude = ClaudeRateLimitSnapshot(limits: [
             ClaudeRateLimit(kind: "session", group: .session, percentUsed: 20, severity: .normal, resetsAt: reset, scopeDisplayName: nil, isActive: true),

@@ -218,7 +218,7 @@ public enum MigrationFixtureValidator {
             result = sqlite3_step(metadata)
         }
         guard result == SQLITE_DONE else { throw ValidationError.sqlite }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return sha256Digest(of: data)
     }
 
     private static func quotaObservationRecordDigest(in database: OpaquePointer?) throws -> String {
@@ -232,7 +232,7 @@ public enum MigrationFixtureValidator {
             in: database,
             to: &data
         )
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return sha256Digest(of: data)
     }
 
     private static func providerRefreshHistoryRecordDigest(in database: OpaquePointer?) throws -> String {
@@ -254,7 +254,7 @@ public enum MigrationFixtureValidator {
             in: database,
             to: &data
         )
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return sha256Digest(of: data)
     }
 
     private static func codexExplanationRecordDigest(in database: OpaquePointer?) throws -> String {
@@ -270,7 +270,11 @@ public enum MigrationFixtureValidator {
             in: database,
             to: &data
         )
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return sha256Digest(of: data)
+    }
+
+    private static func sha256Digest(of data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func appendRows(

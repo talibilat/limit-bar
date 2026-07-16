@@ -21,8 +21,4 @@ struct AnthropicRefreshService {
         guard !Task.isCancelled else { return nil }
         return Batch(result: AnthropicRefreshBatch(usage: usageResult, cost: costResult), windows: windows, generation: generation)
     }
-
-    func apply(_ batch: Batch) async -> ProviderDiagnostic {
-        await UsageDatabase.shared.applyAnthropic(batch.result, windows: batch.windows, expectedGeneration: batch.generation)
-    }
 }

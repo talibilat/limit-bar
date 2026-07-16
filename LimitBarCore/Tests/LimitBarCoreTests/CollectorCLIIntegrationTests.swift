@@ -45,21 +45,21 @@ struct CollectorCLIIntegrationTests {
 
         let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T18:00:00Z"))
         let database = UsageDatabase(pathFactory: { databasePath }, localEventsURL: activeFile)
-        let imported = await database.snapshot(now: now, calendar: utcCalendar())
+        let imported = await database.snapshot(now: now, calendar: gregorianGMTCalendar())
         #expect(imported.localImport.validEventCount == 1)
         #expect(imported.attributionBreakdowns.count == 2)
         #expect(imported.attributionBreakdowns.allSatisfy { $0.project?.id == "limitbar" && $0.agent?.id == "reviewer-1" })
         let parentMetrics = imported.metrics
         let activeBytes = try Data(contentsOf: activeFile)
         let deliveryStore = try SQLiteAlertDeliveryStore(path: databasePath)
-        let ruleID = UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D")!
+        let ruleID = try #require(UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D"))
         let window = try QuotaWindowIdentity(product: .codex, identifier: "primary", resetBoundary: now.addingTimeInterval(3_600))
         let occurrence = AlertOccurrence(ruleID: ruleID, window: .quota(window), thresholds: [75])
         let reservation = try #require(try deliveryStore.reserve(occurrence, now: now))
         try deliveryStore.markDelivered(reservation, at: now)
 
         try await database.deleteAllAttributionEvidence(now: now)
-        let deleted = await database.snapshot(now: now.addingTimeInterval(1), calendar: utcCalendar())
+        let deleted = await database.snapshot(now: now.addingTimeInterval(1), calendar: gregorianGMTCalendar())
         #expect(deleted.attributionBreakdowns.isEmpty)
         #expect(deleted.metrics == parentMetrics)
         #expect(try Data(contentsOf: activeFile) == activeBytes)
@@ -69,7 +69,7 @@ struct CollectorCLIIntegrationTests {
         #expect(try SQLiteAlertDeliveryStore(path: databasePath).satisfactions(for: ruleID, window: .quota(window)).map(\.threshold) == [75])
 
         let restarted = UsageDatabase(pathFactory: { databasePath }, localEventsURL: activeFile)
-        let afterRestart = await restarted.snapshot(now: now.addingTimeInterval(2), calendar: utcCalendar())
+        let afterRestart = await restarted.snapshot(now: now.addingTimeInterval(2), calendar: gregorianGMTCalendar())
         #expect(afterRestart.attributionBreakdowns.isEmpty)
         #expect(afterRestart.metrics == parentMetrics)
     }
@@ -95,12 +95,12 @@ struct CollectorCLIIntegrationTests {
             String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         )
     }
+}
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return calendar
-    }
+func gregorianGMTCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .gmt
+    return calendar
 }
 
 private extension Array where Element == String {

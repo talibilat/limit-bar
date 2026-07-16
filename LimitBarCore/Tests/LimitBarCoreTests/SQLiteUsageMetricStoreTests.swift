@@ -46,11 +46,12 @@ struct SQLiteUsageMetricStoreTests {
     @Test("round trip preserves cost and confirmed limit fields")
     func roundTripPreservesCostAndConfirmedLimitFields() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
+        let amount = try #require(Decimal(string: "12.34"))
         let stored = metric(
             provider: .openAI,
             timeWindow: .today,
             modelLabel: "gpt-5.1-codex",
-            cost: Cost(amount: Decimal(string: "12.34")!, currencyCode: "USD", source: .providerReported),
+            cost: Cost(amount: amount, currencyCode: "USD", source: .providerReported),
             limitStatus: .confirmed(used: 72, limit: 100)
         )
 
@@ -922,10 +923,6 @@ struct SQLiteUsageMetricStoreTests {
             basis: window.basis,
             aggregationVersion: window.aggregationVersion
         )
-    }
-
-    private func temporaryDatabasePath() -> String {
-        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
     }
 
     private func createV1Database(at path: String) throws {

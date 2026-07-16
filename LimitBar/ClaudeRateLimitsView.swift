@@ -166,7 +166,7 @@ struct ClaudeRateLimitsView: View {
         }
         let source = value.sourceVersion.map { "source \($0)" } ?? "source not configured"
         let limitations = selectedSelection?.limitations.map(\.rawValue).joined(separator: ", ") ?? "none"
-        return "Reported inputs: \(value.observationIdentityCount); calculated method: \(value.methodVersion); measured evidence trace: \(value.evidenceIdentityCount); evidence age \(duration(value.evidenceAge)); \(source); limitations: \(limitations); manual acceptance unavailable; source last verified \(ClaudeCodeOTLPEvidenceAdapter.lastVerified)."
+        return "Reported inputs: \(value.observationIdentityCount); calculated method: \(value.methodVersion); measured evidence trace: \(value.evidenceIdentityCount); evidence age \(wholeSecondDuration(value.evidenceAge)); \(source); limitations: \(limitations); manual acceptance unavailable; source last verified \(ClaudeCodeOTLPEvidenceAdapter.lastVerified)."
     }
 
     private var selectedSelection: ClaudeQuotaExplanationSelection? {
@@ -193,13 +193,6 @@ struct ClaudeRateLimitsView: View {
         case .unavailable: evidenceCount = 0
         }
         return "Exact selected interval: \(selection.interval.intervalStart.formatted(date: .abbreviated, time: .standard)) to \(selection.interval.intervalEnd.formatted(date: .abbreviated, time: .standard)); interval trace: \(selection.interval.id); Reported observation traces: 2; Measured evidence traces: \(evidenceCount); Calculated method: \(ClaudeQuotaExplanationEngine.methodVersion); provenance: Reported percentages, Calculated movement, Measured local breakdown when available."
-    }
-
-    private func duration(_ interval: TimeInterval) -> String {
-        let seconds = max(0, Int(interval.rounded()))
-        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
-        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
-        return "\(seconds)s"
     }
 }
 

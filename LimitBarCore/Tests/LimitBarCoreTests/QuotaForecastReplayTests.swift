@@ -38,7 +38,7 @@ struct QuotaForecastReplayTests {
         let incompatible = try replayFixture(observations: [first[0], second[1]], evaluationTime: evaluation, outcome: .censored, condition: .incompatibleWindow)
         #expect(QuotaInsightAnalytics.analyze(incompatible.observations, now: evaluation, maximumAge: 600).unavailableReason == .incompatibleEvidence)
         #expect(throws: QuotaForecastReplayError.invalidFixture) {
-            try replayFixture(observations: first + [try observation(identity: first[0].identity, minute: 32, percent: 78)], evaluationTime: evaluation, outcome: .censored)
+            try replayFixture(observations: first + [try measuredQuotaObservation(base: base, identity: first[0].identity, minute: 32, percent: 78)], evaluationTime: evaluation, outcome: .censored)
         }
         #expect(throws: QuotaForecastReplayError.invalidFixture) {
             try replayFixture(observations: first, evaluationTime: evaluation, outcome: .exhausted(at: evaluation.addingTimeInterval(-1)))
@@ -118,8 +118,8 @@ struct QuotaForecastReplayTests {
         #expect(missing.observationSpansMinutes == [0])
         #expect(missing.missingObservationSampleCount == 1)
         let missingFixture = try #require(fixtures.first { $0.evidenceCondition == .missing })
-        #expect(missingFixture.expectedIdentity != nil)
-        #expect(QuotaInsightAnalytics.analyze(missingFixture.observations, now: missingFixture.evaluationTime, maximumAge: missingFixture.maximumEvidenceAge, expectedIdentity: missingFixture.expectedIdentity).unavailableIdentities == [missingFixture.expectedIdentity!])
+        let expectedIdentity = try #require(missingFixture.expectedIdentity)
+        #expect(QuotaInsightAnalytics.analyze(missingFixture.observations, now: missingFixture.evaluationTime, maximumAge: missingFixture.maximumEvidenceAge, expectedIdentity: expectedIdentity).unavailableIdentities == [expectedIdentity])
         let sparse = try #require(report.composition.first { $0.evidenceCondition == .sparse })
         #expect(sparse.cadenceMinutes == [[20]])
         #expect(sparse.outcomeAvailability == [.censored: 1])
@@ -257,17 +257,8 @@ struct QuotaForecastReplayTests {
     private func observations(reset: Date) throws -> [MeasuredQuotaObservation] {
         let identity = try QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: reset)
         return try zip([0.0, 10, 20, 30], [70.0, 72, 74, 76]).map {
-            try observation(identity: identity, minute: $0.0, percent: $0.1)
+            try measuredQuotaObservation(base: base, identity: identity, minute: $0.0, percent: $0.1)
         }
-    }
-
-    private func observation(identity: QuotaWindowIdentity, minute: Double, percent: Double) throws -> MeasuredQuotaObservation {
-        try MeasuredQuotaObservation(
-            identity: identity,
-            percentageUsed: percent,
-            observedAt: base.addingTimeInterval(minute * 60),
-            source: .codexLocalReport
-        )
     }
 
     private func replayFixture(
@@ -290,6 +281,20 @@ struct QuotaForecastReplayTests {
             expectedIdentity: expectedIdentity ?? observations.first?.identity
         )
     }
+}
+
+func measuredQuotaObservation(
+    base: Date,
+    identity: QuotaWindowIdentity,
+    minute: Double,
+    percent: Double
+) throws -> MeasuredQuotaObservation {
+    try MeasuredQuotaObservation(
+        identity: identity,
+        percentageUsed: percent,
+        observedAt: base.addingTimeInterval(minute * 60),
+        source: .codexLocalReport
+    )
 }
 
 private extension QuotaInsightState {

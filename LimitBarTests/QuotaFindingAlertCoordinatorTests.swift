@@ -13,7 +13,6 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         for path in databasePaths {
             try? FileManager.default.removeItem(atPath: path)
         }
-        databasePaths = []
         super.tearDown()
     }
 
@@ -89,7 +88,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         await state.recordCodexInsights(snapshot, now: now.addingTimeInterval(60))
         XCTAssertEqual(state.quotaAnalysis, initial)
         XCTAssertFalse(state.quotaInsightsStorageAvailable)
-        let attemptedAnalysis = await service.attemptedAnalysis
+        let attemptedAnalysis = service.attemptedAnalysis
         XCTAssertEqual(attemptedAnalysis, attempted)
     }
 
@@ -248,8 +247,9 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let settings = AlertSettingsStore(defaults: defaults, notificationCenter: NotificationCenter())
+        let ruleID = try XCTUnwrap(UUID(uuidString: "E4633E94-0687-467F-9779-E1C2B0FD4847"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "E4633E94-0687-467F-9779-E1C2B0FD4847")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([70])
         )
@@ -357,7 +357,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
 
 private actor FailingQuotaInsightsService: QuotaInsightsServing {
     private let initial: QuotaFindingAnalysisSnapshot
-    private(set) var attemptedAnalysis: QuotaFindingAnalysisSnapshot
+    let attemptedAnalysis: QuotaFindingAnalysisSnapshot
     private var callCount = 0
 
     init(initial: QuotaFindingAnalysisSnapshot, attempted: QuotaFindingAnalysisSnapshot) {
@@ -371,10 +371,10 @@ private actor FailingQuotaInsightsService: QuotaInsightsServing {
         throw FixtureError.analysisFailed
     }
 
-    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot { initial }
-    func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { initial }
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot { initial }
+    func reevaluateClaudeAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { initial }
     func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { throw FixtureError.analysisFailed }
-    func deleteAll() throws {}
+    func deleteAll() {}
 }
 
 private actor SequenceQuotaInsightsService: QuotaInsightsServing {
@@ -384,14 +384,14 @@ private actor SequenceQuotaInsightsService: QuotaInsightsServing {
         self.recordResults = recordResults
     }
 
-    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot {
+    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot {
         recordResults.removeFirst()
     }
 
-    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func deleteAll() throws {}
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateClaudeAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateCodexAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func deleteAll() {}
 }
 
 private actor GatedQuotaInsightsService: QuotaInsightsServing {
@@ -436,10 +436,9 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
     struct Added {
         let identifier: String
         let title: String
-        let body: String
     }
 
-    var status: UNAuthorizationStatus
+    let status: UNAuthorizationStatus
     var shouldFailDelivery = false
     private(set) var added: [Added] = []
 
@@ -447,16 +446,16 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
         self.status = status
     }
 
-    func authorizationStatus() async -> UNAuthorizationStatus { status }
-    func requestAuthorization() async throws -> Bool { status == .authorized }
+    func authorizationStatus() -> UNAuthorizationStatus { status }
+    func requestAuthorization() -> Bool { status == .authorized }
 
-    func add(identifier: String, title: String, body: String) async throws {
+    func add(identifier: String, title: String, body _: String) throws {
         if shouldFailDelivery { throw FixtureError.deliveryFailed }
-        added.append(Added(identifier: identifier, title: title, body: body))
+        added.append(Added(identifier: identifier, title: title))
     }
 
-    func pendingIdentifiers() async -> [String] { added.map(\.identifier) }
-    func deliveredIdentifiers() async -> [String] { [] }
+    func pendingIdentifiers() -> [String] { added.map(\.identifier) }
+    func deliveredIdentifiers() -> [String] { [] }
     func removePending(identifiers: [String]) {}
     func removeDelivered(identifiers: [String]) {}
 }

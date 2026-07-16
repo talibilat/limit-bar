@@ -6,7 +6,7 @@ import Testing
 struct OpenAIUsageProviderTests {
     @Test("OAuth feasibility validates organization usage access")
     func feasibilityRequest() async throws {
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":false}"#.utf8)))
         let client = OpenAIOrganizationClient(httpClient: http)
 
         let outcome = await client.validateOAuth(accessToken: "super-secret", interval: DateInterval(start: Date(timeIntervalSince1970: 100), end: Date(timeIntervalSince1970: 200)))
@@ -31,14 +31,14 @@ struct OpenAIUsageProviderTests {
         (500, OpenAIFeasibilityOutcome.failed(.refreshFailed))
     ])
     func feasibilityStatuses(status: Int, expected: OpenAIFeasibilityOutcome) async {
-        let client = OpenAIOrganizationClient(httpClient: OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw".utf8))))
+        let client = OpenAIOrganizationClient(httpClient: UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: status, data: Data("raw".utf8))))
         let outcome = await client.validateOAuth(accessToken: "secret", interval: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 1))
         #expect(outcome == expected)
     }
 
     @Test("cancellation is not reported as an OpenAI provider failure")
     func cancellationIsTyped() async {
-        let client = OpenAIOrganizationClient(httpClient: OpenAIRecordingHTTPClient(error: CancellationError()))
+        let client = OpenAIOrganizationClient(httpClient: UsageProviderRecordingHTTPClient(error: CancellationError()))
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
 
         #expect(await client.validateOAuth(accessToken: "secret", interval: interval) == .cancelled)
@@ -49,7 +49,7 @@ struct OpenAIUsageProviderTests {
     func usageMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":"proj_1","project_name":"Codex Enterprise","model":"gpt-5.1-codex","input_tokens":10,"cached_input_tokens":2,"output_tokens":4}]}]}"#.utf8)
 
-        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAIUsageMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let metric = try #require(metrics.first { $0.timeWindow == .today })
 
         #expect(metric.accountLabel == "org_123")
@@ -79,27 +79,28 @@ struct OpenAIUsageProviderTests {
     @Test("usage fixture rejects missing identity")
     func usageMappingRejectsMissingIdentity() throws {
         let data = Data(#"{"data":[{"start_time":1783687200,"end_time":1783690800,"results":[{"project_id":null,"model":"gpt","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: try utcCalendar()).isEmpty)
-        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: try utcCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: gregorianGMTCalendar()).isEmpty)
+        #expect(try OpenAIUsageMapper.metrics(from: data, organization: "", now: Date(timeIntervalSince1970: 1_783_728_000), calendar: gregorianGMTCalendar()).isEmpty)
     }
 
     @Test("cost fixture maps provider-reported project spend")
     func costMapping() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783684800,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Ignored","amount":null}]},{"start_time":1783684800,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":0.75,"currency":"usd"}}]}]}"#.utf8)
 
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org_123", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
+        let expectedAmount = try #require(Decimal(string: "2.00"))
 
         #expect(metric.accountLabel == "org_123")
         #expect(metric.projectLabel == "proj_1")
         #expect(metric.modelLabel == "Completions")
-        #expect(metric.cost == Cost(amount: Decimal(string: "2.00")!, currencyCode: "USD", source: .providerReported))
+        #expect(metric.cost == Cost(amount: expectedAmount, currencyCode: "USD", source: .providerReported))
     }
 
     @Test("multi-currency cost rows persist independently")
     func multiCurrencyCostsPersistIndependently() throws {
         let data = Data(#"{"data":[{"start_time":1783641600,"end_time":1783728000,"results":[{"project_id":"proj_1","line_item":"Completions","amount":{"value":1.25,"currency":"usd"}},{"project_id":"proj_1","line_item":"Completions","amount":{"value":2.5,"currency":"eur"}}]}]}"#.utf8)
-        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: try utcCalendar())
+        let metrics = try OpenAICostMapper.metrics(from: data, organization: "org", now: Date(timeIntervalSince1970: 1_783_716_000), calendar: gregorianGMTCalendar())
         let store = try SQLiteUsageMetricStore.inMemory()
 
         _ = try OpenAIRefreshPersistence.apply(.success(metrics), to: store)
@@ -111,7 +112,7 @@ struct OpenAIUsageProviderTests {
     @Test("cost aggregation overflow is rejected")
     func costAggregationOverflowIsRejected() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let amount = OpenAICostMapper.Amount(value: Decimal.greatestFiniteMagnitude, currency: "USD")
         let row = OpenAICostMapper.Row(projectID: "project", lineItem: "usage", amount: amount)
         let bucket = OpenAICostMapper.Bucket(
@@ -128,7 +129,7 @@ struct OpenAIUsageProviderTests {
     @Test("cost mapping skips negative and non-finite amounts")
     func costMappingRejectsInvalidAmounts() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let rows = [
             OpenAICostMapper.Row(projectID: "project", lineItem: "negative", amount: .init(value: -1, currency: "USD")),
             OpenAICostMapper.Row(projectID: "project", lineItem: "nan", amount: .init(value: .nan, currency: "USD"))
@@ -144,7 +145,7 @@ struct OpenAIUsageProviderTests {
 
     @Test("cost fetch requests the immutable UTC billing week")
     func costFetchRequestsUTCBillingWeek() async throws {
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: Data(#"{"data":[]}"#.utf8)))
         let client = OpenAIOrganizationClient(httpClient: http)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
@@ -162,10 +163,10 @@ struct OpenAIUsageProviderTests {
     @Test("usage fetch ends at now while retaining the full exact window")
     func usageFetchEndsAtNow() async throws {
         let response = Data(#"{"data":[{"start_time":1783526400,"end_time":1783530000,"results":[{"project_id":"proj","model":"gpt","input_tokens":1,"output_tokens":1}]}]}"#.utf8)
-        let http = OpenAIRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
+        let http = UsageProviderRecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = OpenAIOrganizationClient(httpClient: http)
         let now = Date(timeIntervalSince1970: 1_783_389_296)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: try utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
 
         let result = await client.fetchUsage(credential: "secret", organization: "org", windows: windows, now: now)
         let request = try #require(await http.requests.first)
@@ -176,10 +177,10 @@ struct OpenAIUsageProviderTests {
         #expect(metrics.allSatisfy { $0.provenance.exactWindow == windows.today || $0.provenance.exactWindow == windows.currentWeek })
     }
 
-    @Test("pagination rejects repeated tokens on every OpenAI endpoint", arguments: OpenAIEndpoint.allCases)
-    func paginationRejectsRepeatedTokens(endpoint: OpenAIEndpoint) async {
+    @Test("pagination rejects repeated tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsRepeatedTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
-        let http = OpenAIRecordingHTTPClient(responses: [page, page])
+        let http = UsageProviderRecordingHTTPClient(responses: [page, page])
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -187,10 +188,10 @@ struct OpenAIUsageProviderTests {
         #expect(await http.requests.count == 2)
     }
 
-    @Test("pagination rejects missing tokens on every OpenAI endpoint", arguments: OpenAIEndpoint.allCases)
-    func paginationRejectsMissingTokens(endpoint: OpenAIEndpoint) async {
+    @Test("pagination rejects missing tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsMissingTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
-        let http = OpenAIRecordingHTTPClient(response: page)
+        let http = UsageProviderRecordingHTTPClient(response: page)
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -198,12 +199,12 @@ struct OpenAIUsageProviderTests {
         #expect(await http.requests.count == 1)
     }
 
-    @Test("pagination permits at most 100 pages including the initial OpenAI request", arguments: OpenAIEndpoint.allCases)
-    func paginationIsBounded(endpoint: OpenAIEndpoint) async {
+    @Test("pagination permits at most 100 pages including the initial OpenAI request", arguments: UsageProviderEndpoint.allCases)
+    func paginationIsBounded(endpoint: UsageProviderEndpoint) async {
         let responses = (1...100).map { index in
             HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
         }
-        let http = OpenAIRecordingHTTPClient(responses: responses)
+        let http = UsageProviderRecordingHTTPClient(responses: responses)
 
         let result = await fetch(endpoint, client: OpenAIOrganizationClient(httpClient: http))
 
@@ -234,7 +235,7 @@ struct OpenAIUsageProviderTests {
     func usageSuccessCostFailurePersistsPartialOutcome() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let oldUsage = boundedMetric(model: "old usage", window: windows.today, cost: nil)
         let oldCost = boundedMetric(model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
         let priorWindow = try ExactUsageWindow(timeWindow: .currentWeek, start: windows.utcBillingWeek.start.addingTimeInterval(-604_800), end: windows.utcBillingWeek.end.addingTimeInterval(-604_800), basis: .utcBilling)
@@ -264,7 +265,7 @@ struct OpenAIUsageProviderTests {
     func costSuccessUsageFailurePersistsPartialOutcome() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let oldUsage = boundedMetric(model: "old usage", window: windows.today, cost: nil)
         let oldCost = boundedMetric(model: "old cost", window: windows.utcBillingWeek, cost: Cost(amount: 3, currencyCode: "USD", source: .providerReported))
         let freshCost = boundedMetric(model: "fresh cost", window: windows.utcBillingWeek, cost: Cost(amount: 4, currencyCode: "USD", source: .providerReported))
@@ -301,7 +302,7 @@ struct OpenAIUsageProviderTests {
     func cancelledBatchPreservesRows() throws {
         let store = try SQLiteUsageMetricStore.inMemory()
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let retained = boundedMetric(model: "retained", window: windows.today, cost: nil)
         try store.save([retained])
         let initializedBefore = try store.hasInitializedMetrics()
@@ -326,7 +327,7 @@ struct OpenAIUsageProviderTests {
         UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: cost == nil ? 1 : 0, outputTokens: 0), cost: cost, limitStatus: .unsupportedByProviderAPI, refreshedAt: window.start, freshness: .fresh)
     }
 
-    private func fetch(_ endpoint: OpenAIEndpoint, client: OpenAIOrganizationClient) async -> OpenAIRefreshResult {
+    private func fetch(_ endpoint: UsageProviderEndpoint, client: OpenAIOrganizationClient) async -> OpenAIRefreshResult {
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
         switch endpoint {
         case .usage:
@@ -336,43 +337,11 @@ struct OpenAIUsageProviderTests {
         }
     }
 
-    private func utcCalendar() throws -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
-        return calendar
-    }
 }
 
-enum OpenAIEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
+enum UsageProviderEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
     case usage
     case cost
 
     var testDescription: String { String(describing: self) }
-}
-
-private actor OpenAIRecordingHTTPClient: HTTPClient {
-    private var responses: [HTTPResponse]
-    private let error: Error?
-    private(set) var requests: [HTTPRequest] = []
-
-    init(response: HTTPResponse) {
-        responses = [response]
-        error = nil
-    }
-
-    init(responses: [HTTPResponse]) {
-        self.responses = responses
-        error = nil
-    }
-
-    init(error: Error) {
-        responses = []
-        self.error = error
-    }
-
-    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        requests.append(request)
-        if let error { throw error }
-        return responses.removeFirst()
-    }
 }

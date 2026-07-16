@@ -82,7 +82,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("quota evidence rejects unbounded text before preview")
-    func quotaEvidenceBounds() throws {
+    func quotaEvidenceBounds() {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             try DiagnosticEvidenceVersion(kind: .adapter, value: String(repeating: "x", count: DiagnosticExport.maximumEvidenceTextLength + 1))
         }
@@ -94,7 +94,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("forecast and anomaly states require complete typed evidence")
-    func analyticalEvidenceInvariants() throws {
+    func analyticalEvidenceInvariants() {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             try DiagnosticEvidenceForecast(status: .available, method: .pairwisePositiveSlopeInterquartileV2, qualification: .qualified, unavailableReason: nil, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 10, range: nil, resetInteraction: .beforeReportedReset, evidenceTraceReferences: ["aaaaaaaaaaaa"], limitations: [.providerWeightingUnknown])
         }
@@ -273,7 +273,6 @@ struct DiagnosticExportTests {
 
         #expect(object["generatedAt"] as? String == "2024-07-03T09:46:00Z")
         #expect(try artifact.preview.contains("2024-07-03T09:46:00Z"))
-        #expect(try artifact.preview.contains("2024-07-03T09:46:00Z"))
     }
 
     @Test("preview bytes exactly equal explicitly saved bytes")
@@ -285,10 +284,11 @@ struct DiagnosticExportTests {
         let destination = directory.appendingPathComponent("diagnostic.json")
 
         try artifact.save(to: destination)
+        let preview = try artifact.preview
 
         #expect(artifact.previewBytes == artifact.bytes)
         #expect(try Data(contentsOf: destination) == artifact.previewBytes)
-        #expect(try artifact.preview.data(using: .utf8) == artifact.bytes)
+        #expect(Data(preview.utf8) == artifact.bytes)
     }
 
     @Test("optional history is absent by default and bounded when supplied")
@@ -425,7 +425,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("invalid values, history, and duplicate providers are rejected")
-    func validation() throws {
+    func validation() {
         #expect(throws: DiagnosticExportError.invalidVersion) {
             try DiagnosticVersion(major: -1, minor: 0, patch: 0)
         }

@@ -260,7 +260,7 @@ public enum CodexRolloutEvidenceAdapter {
               let sessionID = payload.sessionID, UUID(uuidString: sessionID) != nil,
               let threadID = payload.id, UUID(uuidString: threadID) != nil,
               let creatorVersion = payload.cliVersion,
-              parseTimestamp(metadata.timestamp) != nil else {
+              metadata.timestamp.flatMap({ CollectorSchemaV1.parseTimestamp($0) }) != nil else {
             return failed(.malformedRecord, completeLineCount: completeLines.count)
         }
         guard creatorVersion == supportedCreatorVersion else {
@@ -280,7 +280,7 @@ public enum CodexRolloutEvidenceAdapter {
         for (offset, line) in completeLines.dropFirst().enumerated() {
             let ordinal = offset + 2
             guard let envelope = try? JSONDecoder().decode(Envelope.self, from: line),
-                  let timestamp = parseTimestamp(envelope.timestamp),
+                  let timestamp = envelope.timestamp.flatMap({ CollectorSchemaV1.parseTimestamp($0) }),
                   envelope.type == "event_msg", let payload = envelope.payload else {
                 barriers.append(.malformedRecord)
                 previous = nil
@@ -340,21 +340,9 @@ public enum CodexRolloutEvidenceAdapter {
                 previous = nil
                 continue
             }
-            if delta.total == 0, delta.input == 0, delta.cachedInput == 0,
-               delta.output == 0, delta.reasoningOutput == 0 {
-                evidence.append(CodexRolloutEvidence(
-                    sessionIdentity: identity,
-                    lineOrdinal: ordinal,
-                    lineSHA256: SHA256.hash(data: line).map { String(format: "%02x", $0) }.joined(),
-                    adapterVersion: adapterVersion,
-                    creatorVersion: creatorVersion,
-                    observedAt: timestamp,
-                    tokens: delta.measured
-                ))
-                previous = (total, timestamp)
-                continue
-            }
-            guard last.isValid, last == delta else {
+            let isZeroDelta = delta.total == 0 && delta.input == 0 && delta.cachedInput == 0
+                && delta.output == 0 && delta.reasoningOutput == 0
+            guard isZeroDelta || (last.isValid && last == delta) else {
                 barriers.append(.mismatchedTokenDelta)
                 previous = nil
                 continue
@@ -404,20 +392,13 @@ public enum CodexRolloutEvidenceAdapter {
         )
     }
 
-    private static func parseTimestamp(_ text: String?) -> Date? {
-        guard let text else { return nil }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
-    }
-
     private static func quotaSnapshot(_ raw: Envelope.Payload.RateLimits?, observedAt: Date) -> CodexRateLimitSnapshot? {
         guard let raw else { return nil }
         func window(_ rawWindow: Envelope.Payload.Window?) -> CodexRateLimitWindow? {
             guard let rawWindow, let percent = rawWindow.usedPercent, percent.isFinite, (0...100).contains(percent),
                   let minutes = rawWindow.windowMinutes, (1...525_600).contains(minutes) else { return nil }
             let reset = rawWindow.resetsAt.flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil }
-            return CodexRateLimitWindow(limitID: normalizedLimitID(raw.limitID), percentUsed: percent, windowMinutes: minutes, resetsAt: reset)
+            return CodexRateLimitWindow(limitID: raw.limitID ?? "codex", percentUsed: percent, windowMinutes: minutes, resetsAt: reset)
         }
         let credits = raw.credits.map {
             CodexCredits(
@@ -434,10 +415,6 @@ public enum CodexRolloutEvidenceAdapter {
             reportedAt: observedAt
         )
         return snapshot.primary == nil && snapshot.secondary == nil && snapshot.credits == nil ? nil : snapshot
-    }
-
-    private static func normalizedLimitID(_ value: String?) -> String {
-        CodexRateLimitWindow.normalizedLimitID(value)
     }
 }
 

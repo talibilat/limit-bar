@@ -9,7 +9,7 @@ struct QuotaFindingAlertTests {
     @Test("qualified forecast uses the existing quota rule and privacy-safe copy")
     func qualifiedForecastCandidate() throws {
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "D706BCEA-4356-4763-987D-404B9E6B73BC")!,
+            id: try #require(UUID(uuidString: "D706BCEA-4356-4763-987D-404B9E6B73BC")),
             product: .codex,
             thresholds: try PercentageThresholds([70, 90])
         )
@@ -19,6 +19,7 @@ struct QuotaFindingAlertTests {
             resetBoundary: now.addingTimeInterval(3_600)
         )
         let inputs = try traceInputs(identity: identity, percentage: 10)
+        let latestInput = try #require(inputs.last)
         let finding = QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: 4,
@@ -27,7 +28,7 @@ struct QuotaFindingAlertTests {
             createdAt: now,
             evidenceAge: 60,
             inputObservationIdentities: inputs,
-            latestObservationIdentity: inputs.last!,
+            latestObservationIdentity: latestInput,
             latestObservationAt: now.addingTimeInterval(-60),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
@@ -122,7 +123,7 @@ struct QuotaFindingAlertTests {
         let identity = try window()
         let quota = observation(identity: identity, percentage: 75)
         let findings = QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: identity)],
+            forecasts: [try forecast(identity: identity)],
             anomalies: [try anomaly(identity: identity)],
             quota: [quota],
             now: now
@@ -147,9 +148,9 @@ struct QuotaFindingAlertTests {
     @Test("unsafe findings cannot become candidates")
     func rejectsUnsafeFindings() throws {
         let active = try window()
-        let stale = forecast(identity: active, createdAt: now.addingTimeInterval(-30_000), evidenceAge: 1)
+        let stale = try forecast(identity: active, createdAt: now.addingTimeInterval(-30_000), evidenceAge: 1)
         let unavailable = QuotaInsightAnalytics.analyze([], now: now, maximumAge: 60, expectedIdentity: active)
-        let noExhaustion = forecast(identity: active, hasExhaustion: false)
+        let noExhaustion = try forecast(identity: active, hasExhaustion: false)
         let expired = try QuotaWindowIdentity(
             product: .codex,
             identifier: "codex:primary:300",
@@ -164,13 +165,13 @@ struct QuotaFindingAlertTests {
             now: now
         ).isEmpty)
         #expect(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: expired)],
+            forecasts: [try forecast(identity: expired)],
             anomalies: [],
             quota: [observation(identity: expired, percentage: 95)],
             now: now
         ).isEmpty)
         #expect(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: active)],
+            forecasts: [try forecast(identity: active)],
             anomalies: [try anomaly(identity: active)],
             quota: [],
             now: now
@@ -182,7 +183,7 @@ struct QuotaFindingAlertTests {
         let findingIdentity = try window()
         let otherBoundary = try window(reset: now.addingTimeInterval(7_200))
         #expect(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: findingIdentity)],
+            forecasts: [try forecast(identity: findingIdentity)],
             anomalies: [try anomaly(identity: findingIdentity)],
             quota: [observation(identity: otherBoundary, percentage: 95)],
             now: now
@@ -224,17 +225,17 @@ struct QuotaFindingAlertTests {
     func disabledAndChangedRules() throws {
         let identity = try window()
         let finding = try #require(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: identity)],
+            forecasts: [try forecast(identity: identity)],
             anomalies: [],
             quota: [observation(identity: identity, percentage: 96)],
             now: now
         ).first)
-        let ruleID = UUID(uuidString: "81D6673F-08D8-4FE1-A480-94BAB6DB6ECA")!
+        let ruleID = try #require(UUID(uuidString: "81D6673F-08D8-4FE1-A480-94BAB6DB6ECA"))
         let disabled = QuotaAlertRule(id: ruleID, product: .codex, thresholds: try PercentageThresholds([70]), isEnabled: false)
-        #expect(evaluate(rule: disabled, finding: finding).isEmpty)
+        #expect(try evaluate(rule: disabled, finding: finding).isEmpty)
 
         let original = QuotaAlertRule(id: ruleID, product: .codex, thresholds: try PercentageThresholds([70, 90]))
-        let first = try #require(evaluate(rule: original, finding: finding).first)
+        let first = try #require(try evaluate(rule: original, finding: finding).first)
         let satisfied = Set(first.occurrence.thresholds.map {
             AlertThresholdSatisfaction(ruleID: ruleID, window: first.occurrence.window, threshold: $0)
         })
@@ -254,14 +255,15 @@ struct QuotaFindingAlertTests {
     func durableExactWindowSemantics() throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: path) }
+        let ruleID = try #require(UUID(uuidString: "A5AC0BBA-EA56-4E15-A56B-54DE25BFBB56"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "A5AC0BBA-EA56-4E15-A56B-54DE25BFBB56")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([70])
         )
         let firstIdentity = try window()
         let firstFinding = try candidate(identity: firstIdentity, percentage: 75, inputPercentage: 10)
-        let firstEvaluation = try #require(evaluate(rule: rule, finding: firstFinding).first)
+        let firstEvaluation = try #require(try evaluate(rule: rule, finding: firstFinding).first)
         do {
             let store = try SQLiteAlertDeliveryStore(path: path)
             let reserved = try store.reserve(firstEvaluation.occurrence, now: now)
@@ -284,7 +286,7 @@ struct QuotaFindingAlertTests {
         #expect(try reopened.reserve(firstEvaluation.occurrence, now: now) == nil)
 
         let resetIdentity = try window(identifier: firstIdentity.identifier, reset: now.addingTimeInterval(7_200))
-        let resetEvaluation = try #require(evaluate(rule: rule, finding: candidate(identity: resetIdentity, percentage: 75)).first)
+        let resetEvaluation = try #require(try evaluate(rule: rule, finding: candidate(identity: resetIdentity, percentage: 75)).first)
         #expect(try reopened.reserve(resetEvaluation.occurrence, now: now) != nil)
     }
 
@@ -300,7 +302,7 @@ struct QuotaFindingAlertTests {
             try MeasuredQuotaObservation(identity: identity, percentageUsed: 75, observedAt: now, source: .codexLocalReport)
         ], now: now)
         let rule = QuotaAlertRule(product: .codex, thresholds: try PercentageThresholds([70]))
-        let evaluation = try #require(evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first)
+        let evaluation = try #require(try evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first)
         let reserved = try deliveryStore.reserve(evaluation.occurrence, now: now)
         let reservation = try #require(reserved)
         try deliveryStore.markDelivered(reservation, at: now)
@@ -319,7 +321,7 @@ struct QuotaFindingAlertTests {
         _ = try SQLiteAlertDeliveryStore(path: path)
         let identity = try window()
         let rule = QuotaAlertRule(product: .codex, thresholds: try PercentageThresholds([70]))
-        let occurrence = try #require(evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first?.occurrence)
+        let occurrence = try #require(try evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first?.occurrence)
         let evaluationDate = now
 
         let accepted = try await withThrowingTaskGroup(of: Bool.self) { group in
@@ -363,12 +365,13 @@ struct QuotaFindingAlertTests {
         evidenceAge: TimeInterval = 60,
         hasExhaustion: Bool = true,
         inputPercentage: Double = 10
-    ) -> QuotaInsightState {
+    ) throws -> QuotaInsightState {
         let createdAt = createdAt ?? now
         let exhaustion: ClosedRange<Date>? = hasExhaustion
             ? createdAt.addingTimeInterval(600)...createdAt.addingTimeInterval(1_200)
             : nil
-        let inputs = try! traceInputs(identity: identity, percentage: inputPercentage)
+        let inputs = try traceInputs(identity: identity, percentage: inputPercentage)
+        let latestInput = try #require(inputs.last)
         return .qualified(QualifiedQuotaInsight(
             identity: identity,
             measuredObservationCount: 4,
@@ -377,7 +380,7 @@ struct QuotaFindingAlertTests {
             createdAt: createdAt,
             evidenceAge: evidenceAge,
             inputObservationIdentities: inputs,
-            latestObservationIdentity: inputs.last!,
+            latestObservationIdentity: latestInput,
             latestObservationAt: createdAt.addingTimeInterval(-evidenceAge),
             interpretationVersions: [.codexLocalReportV1],
             calculatedBurnPercentPerHour: QuotaInsightRange(lower: 10, upper: 20),
@@ -428,7 +431,7 @@ struct QuotaFindingAlertTests {
         inputPercentage: Double = 10
     ) throws -> QuotaFindingAlertObservation {
         try #require(QuotaFindingAlertAdapter.candidates(
-            forecasts: [forecast(identity: identity, inputPercentage: inputPercentage)],
+            forecasts: [try forecast(identity: identity, inputPercentage: inputPercentage)],
             anomalies: [],
             quota: [observation(identity: identity, percentage: percentage)],
             now: now
@@ -446,9 +449,9 @@ struct QuotaFindingAlertTests {
         }
     }
 
-    private func evaluate(rule: QuotaAlertRule, finding: QuotaFindingAlertObservation) -> [AlertEvaluation] {
+    private func evaluate(rule: QuotaAlertRule, finding: QuotaFindingAlertObservation) throws -> [AlertEvaluation] {
         AlertEvaluator.evaluate(
-            preferences: try! AlertPreferences(quotaRules: [rule], costBudgetRules: []),
+            preferences: try AlertPreferences(quotaRules: [rule], costBudgetRules: []),
             quota: [],
             costs: [],
             findings: [finding],

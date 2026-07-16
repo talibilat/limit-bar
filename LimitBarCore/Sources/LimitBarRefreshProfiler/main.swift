@@ -3,6 +3,11 @@ import Foundation
 import LimitBarCore
 import os
 
+private func milliseconds(_ duration: Duration) -> Double {
+    let components = duration.components
+    return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
+}
+
 @main
 struct LimitBarRefreshProfiler {
     static func main() async throws {
@@ -49,11 +54,8 @@ struct LimitBarRefreshProfiler {
             let start = ContinuousClock.now
             os_signpost(.begin, log: signpostLog, name: "ProfiledOperation")
             do {
+                defer { os_signpost(.end, log: signpostLog, name: "ProfiledOperation") }
                 aggregateResultCount += try await operation()
-                os_signpost(.end, log: signpostLog, name: "ProfiledOperation")
-            } catch {
-                os_signpost(.end, log: signpostLog, name: "ProfiledOperation")
-                throw error
             }
             let duration = start.duration(to: .now)
             durations.append(milliseconds(duration))
@@ -67,11 +69,6 @@ struct LimitBarRefreshProfiler {
             cadenceOverrunCount: cadenceOverrunCount,
             resources: resourceAccumulator.resources
         )
-    }
-
-    private static func milliseconds(_ duration: Duration) -> Double {
-        let components = duration.components
-        return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 
     private static func profileEnvironment() -> RefreshProfileEnvironment {
@@ -129,7 +126,7 @@ private final class RefreshProfileFixture {
         sessionsDirectory = root.appendingPathComponent("sessions", isDirectory: true)
         now = Date()
         var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        utcCalendar.timeZone = .gmt
         calendar = utcCalendar
 
         let eventTimestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-60))
@@ -230,7 +227,7 @@ private final class RefreshProfileFixture {
                 await coordinator.stop()
                 throw RefreshProfileFailure.snapshotStreamEnded
             }
-            let publicationMilliseconds = Self.milliseconds(snapshot.triggeredAt.duration(to: .now))
+            let publicationMilliseconds = milliseconds(snapshot.triggeredAt.duration(to: .now))
             durations.append(publicationMilliseconds)
             aggregateResultCount += (snapshot.usage?.snapshot.metrics.count ?? 0) + (snapshot.codex == nil ? 0 : 1)
         }
@@ -304,10 +301,6 @@ private final class RefreshProfileFixture {
         )
     }
 
-    private static func milliseconds(_ duration: Duration) -> Double {
-        let components = duration.components
-        return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
-    }
 }
 
 private enum RefreshProfileFailure: Error {

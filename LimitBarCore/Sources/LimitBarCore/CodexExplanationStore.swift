@@ -10,8 +10,6 @@ public enum CodexExplanationStoreError: Error, Equatable {
 
 public final class SQLiteCodexExplanationStore: @unchecked Sendable {
     private static let schemaVersion = 2
-    private static let defaultMaximumRecords = 100
-    private static let defaultRetention: TimeInterval = 30 * 24 * 60 * 60
 
     private static let createTableV1SQL = """
     CREATE TABLE codex_explanation_findings (

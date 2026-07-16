@@ -321,7 +321,11 @@ struct ProviderSettingsView: View {
                   Data(SHA256.hash(data: currentCredential)) == startedFingerprint else {
                 return execution(.cancelled)
             }
-            let diagnostic = await anthropicRefreshService.apply(result)
+            let diagnostic = await UsageDatabase.shared.applyAnthropic(
+                result.result,
+                windows: result.windows,
+                expectedGeneration: result.generation
+            )
             guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
             guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(result.generation, for: .anthropic) else { return execution(.cancelled) }
             settings[index].state = diagnostic.state
@@ -387,7 +391,11 @@ struct ProviderSettingsView: View {
             let outcome: ProviderRefreshOutcome
             switch batch.result {
             case let .supported(refreshResult):
-                let diagnostic = await openAIRefreshService.apply(refreshResult, windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(
+                    refreshResult,
+                    windows: batch.windows,
+                    expectedGeneration: batch.generation
+                )
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 if method == .openAIOAuth {
                     settings[index].openAIOAuthFeasibility = .supported
@@ -397,27 +405,27 @@ struct ProviderSettingsView: View {
                 let fetchedOutcome = ProviderRefreshOutcome(usage: refreshResult.usage, cost: refreshResult.cost)
                 outcome = diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed
             case .unsupported:
-                let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.insufficientPermissions), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .unsupported
                 settings[index].state = .unsupported
                 settings[index].failureReason = nil
                 outcome = .authenticationFailure
             case .adminRequired:
-                let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.insufficientPermissions), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .adminCredentialRequired
                 settings[index].state = .adminRequired
                 settings[index].failureReason = .insufficientPermissions
                 outcome = .authenticationFailure
             case .expired:
-                let diagnostic = await openAIRefreshService.apply(.failure(.expiredCredential), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.expiredCredential), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = .expired
                 settings[index].failureReason = .expiredCredential
                 outcome = .authenticationFailure
             case let .failure(reason):
-                let diagnostic = await openAIRefreshService.apply(.failure(reason), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(reason), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = diagnostic.state
                 settings[index].failureReason = diagnostic.failureReason

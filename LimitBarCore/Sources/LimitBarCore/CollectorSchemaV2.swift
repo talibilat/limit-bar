@@ -90,7 +90,7 @@ enum CollectorSchema {
     }
 
     private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard let number = value as? NSNumber else { return nil }
         guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         return Int(exactly: number)
     }
@@ -104,6 +104,13 @@ public enum CollectorSchemaV2 {
     private static let v1Fields: Set<String> = [
         "schemaVersion", "eventID", "provider", "customSourceID", "timestamp", "model", "deployment", "inputTokens", "outputTokens"
     ]
+
+    static func hasStrictSchema(in data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let number = object["schemaVersion"] as? NSNumber else { return false }
+        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
+            && number.intValue == CollectorEventV2.schemaVersion
+    }
 
     public static func decode(_ data: Data) throws -> CollectorEventV2 {
         guard data.count <= maximumRequestBytes else { throw CollectorSchemaError.requestTooLarge }
@@ -141,7 +148,7 @@ public enum CollectorSchemaV2 {
         var object: [String: Any] = [
             "schemaVersion": CollectorEventV2.schemaVersion,
             "eventID": event.eventID.uuidString.lowercased(),
-            "timestamp": formatTimestamp(event.timestamp),
+            "timestamp": CollectorSchemaV1.formatTimestamp(event.timestamp),
             "model": event.model,
             "inputTokens": event.inputTokens,
             "outputTokens": event.outputTokens
@@ -217,20 +224,10 @@ public enum CollectorSchemaV2 {
         if let label = attribution.label { object["\(prefix)Label"] = label }
     }
 
-    private static func formatTimestamp(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
-    }
-
     private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard let number = value as? NSNumber else { return nil }
         guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         let decimal = number.decimalValue
-        var source = decimal
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &source, 0, .plain)
-        guard decimal == rounded else { return nil }
         return Int(NSDecimalNumber(decimal: decimal).stringValue)
     }
 }

@@ -35,7 +35,7 @@ struct AlertCoreTests {
             )
         }
 
-        let id = UUID(uuidString: "AA8DE40F-9802-4AEE-AC63-3D5D1BB5FB56")!
+        let id = try #require(UUID(uuidString: "AA8DE40F-9802-4AEE-AC63-3D5D1BB5FB56"))
         let preferences = try AlertPreferences(
             quotaRules: [QuotaAlertRule(id: id, product: .claudeCode, thresholds: PercentageThresholds([90, 50, 90]))],
             costBudgetRules: []
@@ -102,8 +102,9 @@ struct AlertCoreTests {
 
     @Test("level qualification emits highest threshold and satisfies all newly qualified levels")
     func levelQualificationAndOccurrenceBookkeeping() throws {
+        let ruleID = try #require(UUID(uuidString: "B176E84E-83B6-43D9-BA8E-3187AE21EF1B"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "B176E84E-83B6-43D9-BA8E-3187AE21EF1B")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([50, 75, 90])
         )
@@ -303,13 +304,14 @@ struct AlertCoreTests {
     @Test("cost rules require exact matching basis currency and source and produce privacy-safe copy")
     func costEvaluationAndNotificationPrivacy() throws {
         let window = try ExactUsageWindow(timeWindow: .today, start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60), basis: .utcBilling)
+        let cap = try #require(Decimal(string: "13.37"))
         let rule = try CostBudgetAlertRule(
             product: .openAIAPI,
             currencyCode: "usd",
             source: .calculatedEstimate,
             timeWindow: .today,
             basis: .utcBilling,
-            cap: Decimal(string: "13.37")!,
+            cap: cap,
             thresholds: PercentageThresholds([50, 80])
         )
         let preferences = try AlertPreferences(quotaRules: [], costBudgetRules: [rule])
@@ -332,13 +334,14 @@ struct AlertCoreTests {
     @Test("provider-reported notification copy identifies the measure without exposing amounts")
     func providerReportedNotificationPrivacy() throws {
         let window = try ExactUsageWindow(timeWindow: .today, start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60), basis: .utcBilling)
+        let cap = try #require(Decimal(string: "123.45"))
         let rule = try CostBudgetAlertRule(
             product: .anthropicAPI,
             currencyCode: "EUR",
             source: .providerReported,
             timeWindow: .today,
             basis: .utcBilling,
-            cap: Decimal(string: "123.45")!,
+            cap: cap,
             thresholds: PercentageThresholds([70])
         )
         let preferences = try AlertPreferences(quotaRules: [], costBudgetRules: [rule])

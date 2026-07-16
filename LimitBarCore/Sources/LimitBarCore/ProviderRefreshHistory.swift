@@ -86,7 +86,7 @@ public enum ProviderRefreshOutcome: String, CaseIterable, Equatable, Sendable {
         if reasons.contains(.networkUnavailable) {
             return .networkFailure
         }
-        return reasons.isEmpty ? .cancelled : .failed
+        return .failed
     }
 }
 

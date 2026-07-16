@@ -34,7 +34,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = defaultCustomUsageLoader
     }
@@ -48,7 +48,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { try historicalDatabasePath(from: pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = customUsageLoader
     }
@@ -69,9 +69,13 @@ public actor UsageDatabase {
     public static func applicationSupport(fileManager: FileManager = .default) -> UsageDatabase {
         let fileManager = SendableFileManager(fileManager)
         return UsageDatabase(
-            pathFactory: { try applicationSupportDatabasePath(fileManager: fileManager.value) },
+            pathFactory: {
+                try LimitBarFileLocations.production(fileManager: fileManager.value).usageMetricsDatabase.path
+            },
             localEventsURLFactory: { try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager.value) },
-            historicalPathFactory: { try applicationSupportHistoricalDatabasePath(fileManager: fileManager.value) }
+            historicalPathFactory: {
+                try LimitBarFileLocations.production(fileManager: fileManager.value).historicalUsageDatabase.path
+            }
         )
     }
 
@@ -737,7 +741,7 @@ public actor UsageDatabase {
             )
         try fileManager.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
-        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        let attributionURL = URL(fileURLWithPath: attributionDatabasePath(from: databaseURL.path))
         var locks: [OpaquePointer] = []
         do {
             for url in [databaseURL, attributionURL] {
@@ -768,25 +772,21 @@ public actor UsageDatabase {
         let sourceURLs = [databaseURL, attributionURL].flatMap { url in
             [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
         }.filter { fileManager.fileExists(atPath: $0.path) }
-        do {
-            for source in sourceURLs {
-                try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
-            }
-            var removed: [URL] = []
-            for source in sourceURLs {
-                do {
-                    try fileManager.removeItem(at: source)
-                    removed.append(source)
-                } catch {
-                    for removedURL in removed {
-                        let archived = archiveURL.appendingPathComponent(removedURL.lastPathComponent)
-                        try? fileManager.copyItem(at: archived, to: removedURL)
-                    }
-                    throw error
+        for source in sourceURLs {
+            try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
+        }
+        var removed: [URL] = []
+        for source in sourceURLs {
+            do {
+                try fileManager.removeItem(at: source)
+                removed.append(source)
+            } catch {
+                for removedURL in removed {
+                    let archived = archiveURL.appendingPathComponent(removedURL.lastPathComponent)
+                    try? fileManager.copyItem(at: archived, to: removedURL)
                 }
+                throw error
             }
-        } catch {
-            throw error
         }
         return archiveURL
     }
@@ -810,7 +810,7 @@ public actor UsageDatabase {
     }
 
     private func removeDatabaseSet(at databaseURL: URL) throws {
-        let attributionURL = URL(fileURLWithPath: try attributionDatabasePath(from: databaseURL.path))
+        let attributionURL = URL(fileURLWithPath: attributionDatabasePath(from: databaseURL.path))
         for url in [databaseURL, attributionURL] {
             for candidate in [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
                 where FileManager.default.fileExists(atPath: candidate.path) {
@@ -920,20 +920,12 @@ public struct CustomUsageRefreshDiagnostic: Equatable, Sendable {
     }
 }
 
-private func applicationSupportDatabasePath(fileManager: FileManager) throws -> String {
-    try LimitBarFileLocations.production(fileManager: fileManager).usageMetricsDatabase.path
-}
-
-private func applicationSupportHistoricalDatabasePath(fileManager: FileManager) throws -> String {
-    try LimitBarFileLocations.production(fileManager: fileManager).historicalUsageDatabase.path
-}
-
-private func historicalDatabasePath(from currentPath: String) throws -> String {
+private func historicalDatabasePath(from currentPath: String) -> String {
     if currentPath == ":memory:" { return ":memory:" }
     return currentPath + ".history.sqlite"
 }
 
-private func attributionDatabasePath(from currentPath: String) throws -> String {
+private func attributionDatabasePath(from currentPath: String) -> String {
     let currentURL = URL(fileURLWithPath: currentPath)
     let stem = currentURL.deletingPathExtension().lastPathComponent
     return currentURL.deletingLastPathComponent().appendingPathComponent("\(stem)-attribution.sqlite").path

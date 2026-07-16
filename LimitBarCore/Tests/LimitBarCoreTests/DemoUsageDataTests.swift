@@ -71,10 +71,10 @@ struct DemoUsageDataTests {
     }
 
     @Test("presence is decided across every window, not just the selected one")
-    func presenceSpansEveryWindow() {
-        let onlyTodayMetric = [DemoUsageData.metrics.first { $0.provider == .openAI }!]
+    func presenceSpansEveryWindow() throws {
+        let openAI = try #require(DemoUsageData.metrics.first { $0.provider == .openAI })
 
-        let cards = ProviderUsageCard.cards(from: onlyTodayMetric, timeWindow: .currentWeek)
+        let cards = ProviderUsageCard.cards(from: [openAI], timeWindow: .currentWeek)
 
         #expect(cards.map(\.provider) == [.openAI])
         #expect(cards.first?.isEmpty == true)

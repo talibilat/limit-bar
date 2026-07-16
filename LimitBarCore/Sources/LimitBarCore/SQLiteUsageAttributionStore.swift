@@ -237,9 +237,10 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
               CollectorSchemaV2.validAttribution(value.project),
               CollectorSchemaV2.validAttribution(value.agent) else { throw UsageAttributionStoreError.writeFailed }
         let eventData = try JSONEncoder().encode(value.eventIDs.map { $0.uuidString.lowercased() })
-        guard eventData.count <= Self.maximumEventIdentityBytes, let eventText = String(data: eventData, encoding: .utf8) else {
+        guard eventData.count <= Self.maximumEventIdentityBytes else {
             throw UsageAttributionStoreError.writeFailed
         }
+        let eventText = String(decoding: eventData, as: UTF8.self)
         let statement = try prepare("""
         INSERT INTO usage_attribution_breakdowns
             (source_kind, source_identifier, source_revision, provider, time_window, window_start, window_end,
@@ -276,8 +277,10 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
         guard let provider = ProviderKind(rawValue: requiredString(statement, 2)),
               let timeWindow = TimeWindow(rawValue: requiredString(statement, 3)),
               let basis = UsageWindowBasis(rawValue: requiredString(statement, 6)),
-              let eventData = requiredString(statement, 16).data(using: .utf8),
-              let eventTexts = try? JSONDecoder().decode([String].self, from: eventData) else {
+              let eventTexts = try? JSONDecoder().decode(
+                  [String].self,
+                  from: Data(requiredString(statement, 16).utf8)
+              ) else {
             throw UsageAttributionStoreError.readFailed
         }
         let eventIDs = try eventTexts.map { text -> UUID in

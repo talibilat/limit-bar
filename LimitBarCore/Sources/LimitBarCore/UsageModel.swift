@@ -185,10 +185,7 @@ public struct CurrentUsageWindows: Codable, Equatable, Hashable, Sendable {
         let currentWeek = try week(containing: date, calendar: calendar, basis: .localCalendar)
 
         var utcCalendar = Calendar(identifier: .gregorian)
-        guard let utc = TimeZone(secondsFromGMT: 0) else {
-            throw ResolutionError.unableToResolveBoundary
-        }
-        utcCalendar.timeZone = utc
+        utcCalendar.timeZone = .gmt
 
         return try CurrentUsageWindows(
             today: ExactUsageWindow(

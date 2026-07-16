@@ -83,10 +83,6 @@ final class LimitBarState {
         apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
         message: "Waiting for the first coherent publication."
     )
-    var claudeExplanation: ClaudeQuotaExplanationState {
-        claudeExplanationCatalog.defaultSelection?.state ?? .unavailable(.insufficientObservations)
-    }
-
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
@@ -348,20 +344,6 @@ final class LimitBarState {
             if let explanation = analysis.claudeExplanations.defaultSelection?.state {
                 try? claudeExplanationStore?.record(explanation, now: now)
             }
-            quotaInsightsStorageAvailable = true
-        } catch {
-            quotaInsightsStorageAvailable = false
-            if pendingInvestigationRefresh == nil {
-                investigationPublication = investigationPublication.failed(pendingGeneration: nil)
-            }
-        }
-    }
-
-    private func reevaluateClaudeInsights(now: Date) async {
-        guard let quotaInsightsService else { return }
-        do {
-            let analysis = try await quotaInsightsService.reevaluateClaudeAnalysis(now: now)
-            publish(analysis, for: .claudeCode)
             quotaInsightsStorageAvailable = true
         } catch {
             quotaInsightsStorageAvailable = false

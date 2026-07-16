@@ -515,8 +515,10 @@ public enum WorkloadPlanning {
         )
         let available = max(0, 100 - observation.percentageUsed)
         let summary = qualifiedCurrentEvidenceSummary(observation: observation, forecast: forecast, now: now)
-        let exhaustion = summary.unboundedExhaustionRange!
-        let interaction = summary.boundaryInteraction!
+        guard let exhaustion = summary.unboundedExhaustionRange,
+              let interaction = summary.boundaryInteraction else {
+            return unavailable(.incompatibleCurrentQuotaEvidence)
+        }
         let earliestCompletion = now.addingTimeInterval(duration.lower)
         let latestCompletion = now.addingTimeInterval(duration.upper)
         var reasons: [WorkloadPlanningReason] = [.comparableMeasuredSampleQualified, .currentQuotaForecastQualified]
@@ -593,8 +595,9 @@ public enum WorkloadPlanning {
                 options: options
             ))
         }
+        guard let indeterminate else { return unavailable(.incompatibleCurrentQuotaEvidence) }
         return .indeterminate(IndeterminateWorkloadPlanningAssessment(
-            reason: indeterminate!,
+            reason: indeterminate,
             requirementPercent: requirement,
             durationSeconds: duration,
             currentEvidence: summary,

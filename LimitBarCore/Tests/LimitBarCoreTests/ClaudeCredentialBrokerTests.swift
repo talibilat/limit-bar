@@ -6,8 +6,8 @@ import Testing
 @Suite("Claude credential broker")
 struct ClaudeCredentialBrokerTests {
     @Test("passive reads prohibit authentication UI and parse credentials")
-    func passiveQuery() async {
-        let query = QuerySpy(status: errSecSuccess, data: credentialData(expiresAt: 2_000))
+    func passiveQuery() async throws {
+        let query = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: 2_000))
         let broker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: query.call), now: { Date(timeIntervalSince1970: 1) })
 
         let result = await broker.credential(intent: .passive)
@@ -54,8 +54,8 @@ struct ClaudeCredentialBrokerTests {
     }
 
     @Test("future-expiry credentials are cached until invalidated")
-    func cachesFutureExpiry() async {
-        let query = QuerySpy(status: errSecSuccess, data: credentialData(expiresAt: 2_000))
+    func cachesFutureExpiry() async throws {
+        let query = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: 2_000))
         let broker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: query.call), now: { Date(timeIntervalSince1970: 1) })
 
         _ = await broker.credential(intent: .passive)
@@ -68,14 +68,14 @@ struct ClaudeCredentialBrokerTests {
     }
 
     @Test("expired and no-expiry credentials are never cached")
-    func doesNotCacheUnboundedCredentials() async {
-        let noExpiry = QuerySpy(status: errSecSuccess, data: credentialData(expiresAt: nil))
+    func doesNotCacheUnboundedCredentials() async throws {
+        let noExpiry = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: nil))
         let noExpiryBroker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: noExpiry.call))
         _ = await noExpiryBroker.credential(intent: .passive)
         _ = await noExpiryBroker.credential(intent: .passive)
         #expect(noExpiry.queries.count == 2)
 
-        let expired = QuerySpy(status: errSecSuccess, data: credentialData(expiresAt: 1_000))
+        let expired = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: 1_000))
         let expiredBroker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: expired.call), now: { Date(timeIntervalSince1970: 2) })
         _ = await expiredBroker.credential(intent: .passive)
         _ = await expiredBroker.credential(intent: .passive)
@@ -83,10 +83,10 @@ struct ClaudeCredentialBrokerTests {
     }
 
     @Test("interactive authorization retries after passive interaction requirement")
-    func interactiveRetries() async {
-        let query = SequenceQuerySpy(responses: [
+    func interactiveRetries() async throws {
+        let query = QuerySpy(responses: [
             SecurityQueryResponse(status: errSecInteractionNotAllowed, data: nil),
-            SecurityQueryResponse(status: errSecSuccess, data: credentialData(expiresAt: 2_000))
+            SecurityQueryResponse(status: errSecSuccess, data: try credentialData(expiresAt: 2_000))
         ])
         let broker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: query.call), now: { Date(timeIntervalSince1970: 1) })
 
@@ -98,23 +98,12 @@ struct ClaudeCredentialBrokerTests {
 
 private final class QuerySpy: @unchecked Sendable {
     private let lock = NSLock()
-    private let response: SecurityQueryResponse
+    private var responses: [SecurityQueryResponse]
     private(set) var queries: [[CFString: Any]] = []
 
     init(status: OSStatus, data: Data? = nil) {
-        response = SecurityQueryResponse(status: status, data: data)
+        responses = [SecurityQueryResponse(status: status, data: data)]
     }
-
-    func call(_ query: [CFString: Any]) -> SecurityQueryResponse {
-        lock.withLock { queries.append(query) }
-        return response
-    }
-}
-
-private final class SequenceQuerySpy: @unchecked Sendable {
-    private let lock = NSLock()
-    private var responses: [SecurityQueryResponse]
-    private(set) var queries: [[CFString: Any]] = []
 
     init(responses: [SecurityQueryResponse]) {
         self.responses = responses
@@ -123,13 +112,13 @@ private final class SequenceQuerySpy: @unchecked Sendable {
     func call(_ query: [CFString: Any]) -> SecurityQueryResponse {
         lock.withLock {
             queries.append(query)
-            return responses.removeFirst()
+            return responses.count == 1 ? responses[0] : responses.removeFirst()
         }
     }
 }
 
-private func credentialData(expiresAt: Double?) -> Data {
+private func credentialData(expiresAt: Double?) throws -> Data {
     var oauth: [String: Any] = ["accessToken": "token", "subscriptionType": "pro"]
     oauth["expiresAt"] = expiresAt
-    return try! JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth])
+    return try JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth])
 }

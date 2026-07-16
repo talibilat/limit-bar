@@ -142,23 +142,22 @@ public struct AnthropicAdminClient: Sendable {
     }
 
     private func request(apiKey: String, interval: DateInterval, page: String? = nil, path: String = "v1/organizations/usage_report/messages") -> HTTPRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         let formatter = ISO8601DateFormatter()
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "starting_at", value: formatter.string(from: interval.start)),
             URLQueryItem(name: "ending_at", value: formatter.string(from: interval.end))
         ]
         if path.contains("usage_report") {
-            components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "model"))
-            components.queryItems?.append(URLQueryItem(name: "bucket_width", value: "1m"))
-        } else if path.contains("cost_report") {
-            components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "description"))
+            queryItems.append(URLQueryItem(name: "group_by[]", value: "model"))
+            queryItems.append(URLQueryItem(name: "bucket_width", value: "1m"))
+        } else {
+            queryItems.append(URLQueryItem(name: "group_by[]", value: "description"))
         }
         if let page {
-            components.queryItems?.append(URLQueryItem(name: "page", value: page))
+            queryItems.append(URLQueryItem(name: "page", value: page))
         }
         return HTTPRequest(
-            url: components.url!,
+            url: baseURL.appendingPathComponent(path).appending(queryItems: queryItems),
             method: .get,
             headers: ["x-api-key": apiKey, "anthropic-version": "2023-06-01"]
         )
@@ -245,10 +244,6 @@ public enum AnthropicUsageMapper {
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
         try metrics(from: decode(data).data, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
-    static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
     static func metrics(from buckets: [Bucket], windows current: CurrentUsageWindows) throws -> [UsageMetric] {
@@ -359,7 +354,7 @@ public enum AnthropicCostMapper {
         }
     }
     struct Row: Decodable { let description: String?; let amount: String; let currency: String }
-    private struct Key: Hashable { let window: ExactUsageWindow; let label: String; let currency: String }
+    private struct Key: Hashable { let label: String; let currency: String }
     private struct Aggregate { var cents: Decimal; var latest: Date }
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
@@ -370,10 +365,6 @@ public enum AnthropicCostMapper {
         try JSONDecoder().decode(Response.self, from: data)
     }
 
-    static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
     static func metrics(from buckets: [Bucket], windows: CurrentUsageWindows) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
         let window = windows.utcBillingWeek
@@ -382,21 +373,19 @@ public enum AnthropicCostMapper {
             guard let start = formatter.date(from: bucket.startingAt), let end = formatter.date(from: bucket.endingAt) else { return nil }
             return (bucket, start, end)
         }
-        for window in [window] {
-            let contained = datedBuckets.filter { $0.1 >= window.start && $0.2 <= window.end }.sorted { $0.1 < $1.1 }
-            for (bucket, _, end) in contained {
-                for row in bucket.results {
-                    let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !label.isEmpty,
-                          let cents = Decimal(string: row.amount),
-                          cents.isFinite,
-                          cents >= 0 else { continue }
-                    let key = Key(window: window, label: label, currency: row.currency)
-                    var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
-                    aggregate.cents = try checkedAdd(aggregate.cents, cents)
-                    aggregate.latest = max(aggregate.latest, end)
-                    aggregates[key] = aggregate
-                }
+        let contained = datedBuckets.filter { $0.1 >= window.start && $0.2 <= window.end }.sorted { $0.1 < $1.1 }
+        for (bucket, _, end) in contained {
+            for row in bucket.results {
+                let label = row.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !label.isEmpty,
+                      let cents = Decimal(string: row.amount),
+                      cents.isFinite,
+                      cents >= 0 else { continue }
+                let key = Key(label: label, currency: row.currency)
+                var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
+                aggregate.cents = try checkedAdd(aggregate.cents, cents)
+                aggregate.latest = max(aggregate.latest, end)
+                aggregates[key] = aggregate
             }
         }
         let metrics = aggregates.map { key, aggregate in
@@ -406,7 +395,7 @@ public enum AnthropicCostMapper {
                 projectLabel: nil,
                 modelLabel: key.label,
                 deploymentLabel: nil,
-                provenance: .bounded(source: .providerAPI, window: key.window),
+                provenance: .bounded(source: .providerAPI, window: window),
                 tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0),
                 cost: Cost(amount: aggregate.cents / 100, currencyCode: key.currency, source: .providerReported),
                 limitStatus: .unsupportedByProviderAPI,
@@ -414,11 +403,7 @@ public enum AnthropicCostMapper {
                 freshness: .fresh
             )
         }
-        return metrics.sorted { lhs, rhs in
-            let left = lhs.timeWindow == .today ? 0 : 1
-            let right = rhs.timeWindow == .today ? 0 : 1
-            return (left, lhs.modelLabel) < (right, rhs.modelLabel)
-        }
+        return metrics.sorted { $0.modelLabel < $1.modelLabel }
     }
 
     private static func checkedAdd(_ lhs: Decimal, _ rhs: Decimal) throws -> Decimal {
@@ -451,7 +436,6 @@ public enum AnthropicRefreshPersistence {
         try store.markMetricsInitialized()
         var succeeded = false
         var failure: ProviderFailureReason?
-        var wasCancelled = false
 
         switch batch.usage {
         case let .success(metrics):
@@ -467,7 +451,7 @@ public enum AnthropicRefreshPersistence {
             )
             failure = reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         switch batch.cost {
@@ -481,15 +465,11 @@ public enum AnthropicRefreshPersistence {
             try ProviderCostRefreshPersistence.markFailed(provider: .anthropic, in: store, window: windows.utcBillingWeek)
             failure = failure ?? reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         let state: ProviderConnectionState = if succeeded {
             .connected
-        } else if failure != nil {
-            .failed
-        } else if wasCancelled {
-            .cancelled
         } else {
             .failed
         }

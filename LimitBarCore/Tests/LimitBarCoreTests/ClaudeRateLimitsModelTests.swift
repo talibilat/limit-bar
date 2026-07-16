@@ -13,7 +13,7 @@ struct ClaudeRateLimitsModelTests {
 
         await model.appeared()
 
-        #expect(await credentials.recordedIntents() == [.passive])
+        #expect(await credentials.intents == [.passive])
         #expect(client.tokens.isEmpty)
         #expect(model.state == .authorizationRequired)
         #expect(model.isPresent)
@@ -29,7 +29,7 @@ struct ClaudeRateLimitsModelTests {
 
         await model.connect()
 
-        #expect(await credentials.recordedIntents() == [.interactive])
+        #expect(await credentials.intents == [.interactive])
         #expect(client.tokens == ["token"])
         #expect(model.state == .loaded(snapshot, subscription: "max"))
         #expect(!model.isRefreshing)
@@ -62,7 +62,7 @@ struct ClaudeRateLimitsModelTests {
         await model.refresh()
 
         #expect(await credentials.invalidationCount == 1)
-        #expect(await credentials.recordedIntents() == [.passive, .passive])
+        #expect(await credentials.intents == [.passive, .passive])
         #expect(model.state == .notConnected)
     }
 
@@ -100,7 +100,7 @@ struct ClaudeRateLimitsModelTests {
 
         #expect(model.state == .loaded(snapshot, subscription: "pro"))
         #expect(client.tokens == ["old", "new"])
-        #expect(await credentials.recordedIntents() == [.passive, .passive])
+        #expect(await credentials.intents == [.passive, .passive])
     }
 
     @Test("credential cancellation preserves prior state and clears refresh flag")
@@ -149,7 +149,6 @@ private actor CredentialProviderSpy: ClaudeCredentialProviding {
         return results.removeFirst()
     }
 
-    func recordedIntents() -> [ClaudeCredentialIntent] { intents }
     func invalidate() { invalidationCount += 1 }
 }
 
@@ -166,7 +165,7 @@ private final class ClaudeClientSpy: ClaudeRateLimitsFetching, @unchecked Sendab
         self.results = results
     }
 
-    func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+    func fetchRateLimits(accessToken: String) -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
         lock.withLock {
             tokens.append(accessToken)
             return results.count == 1 ? results[0] : results.removeFirst()

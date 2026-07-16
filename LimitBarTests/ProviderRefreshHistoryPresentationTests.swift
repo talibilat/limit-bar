@@ -8,7 +8,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.claudeCode),
+            for: try fixture.support(.claudeCode),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: fixture.claudeSnapshot,
             forecasts: fixture.forecasts
@@ -23,7 +23,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.claudeCode),
+            for: try fixture.support(.claudeCode),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: nil,
             forecasts: [fixture.codexObservation.identity: fixture.codexForecast]
@@ -37,7 +37,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.codex),
+            for: try fixture.support(.codex),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: fixture.claudeSnapshot,
             forecasts: fixture.forecasts
@@ -134,7 +134,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
 
     func testRefreshExecutionCarriesServiceWindowsAcrossBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         let before = try CurrentUsageWindows.resolve(
             at: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-01-04T23:59:00Z")),
             calendar: calendar
@@ -349,7 +349,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let successfulState = makeState(attributionStore: successfulStore)
 
         let succeeded = await successfulState.deleteProjectAgentAttribution()
-        let successfulCalls = await successfulStore.callCount()
+        let successfulCalls = await successfulStore.calls
         XCTAssertTrue(succeeded)
         XCTAssertEqual(successfulCalls, 1)
         XCTAssertEqual(
@@ -360,7 +360,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let failingStore = AttributionDeletionStub(shouldFail: true)
         let failingState = makeState(attributionStore: failingStore)
         let failed = await failingState.deleteProjectAgentAttribution()
-        let failingCalls = await failingStore.callCount()
+        let failingCalls = await failingStore.calls
         XCTAssertFalse(failed)
         XCTAssertEqual(failingCalls, 1)
         XCTAssertEqual(
@@ -389,7 +389,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
 @MainActor
 private struct InjectedWorkloadPlanningData: WorkloadPlanningDataProviding {
     let expected: WorkloadPlanningSurfaceResult
-    var inputSupport: WorkloadPlanningInputSupport? { nil }
+    let inputSupport: WorkloadPlanningInputSupport? = nil
 
     func result(workUnits: Int, concurrency: Int, now: Date) -> WorkloadPlanningSurfaceResult {
         expected
@@ -445,34 +445,32 @@ private struct PlanningCurrentEvidenceFixture {
         )
     }
 
-    func support(_ product: ProviderProduct) -> CompletedWorkloadRunSupport {
+    func support(_ product: ProviderProduct) throws -> CompletedWorkloadRunSupport {
         CompletedWorkloadRunSupport(
             product: product,
             kind: .codingAgentOperations,
             quotaWindowKind: .session,
             executionMode: .interactive,
             source: .normalizedCompletedRunAdapter,
-            adapterVersion: WorkloadAdapterVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!),
-            clientVersion: WorkloadClientVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
-            providerFormatVersion: WorkloadProviderFormatVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+            adapterVersion: WorkloadAdapterVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))),
+            clientVersion: WorkloadClientVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))),
+            providerFormatVersion: WorkloadProviderFormatVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000003")))
         )
     }
 }
 
 private actor AttributionDeletionStub: AttributionEvidenceDeleting {
     private let shouldFail: Bool
-    private var calls = 0
+    private(set) var calls = 0
 
     init(shouldFail: Bool) {
         self.shouldFail = shouldFail
     }
 
-    func deleteAllAttributionEvidence(now: Date) async throws {
+    func deleteAllAttributionEvidence(now _: Date) throws {
         calls += 1
         if shouldFail { throw AttributionDeletionTestError.failed }
     }
-
-    func callCount() -> Int { calls }
 }
 
 private enum AttributionDeletionTestError: Error {
@@ -482,8 +480,8 @@ private enum AttributionDeletionTestError: Error {
 private final class QuotaDeletionCredentialStore: CredentialStore, @unchecked Sendable {
     private var values: [CredentialKey: Data] = [:]
 
-    func save(_ data: Data, for key: CredentialKey) throws { values[key] = data }
-    func data(for key: CredentialKey) throws -> Data? { values[key] }
-    func contains(_ key: CredentialKey) throws -> Bool { values[key] != nil }
-    func remove(_ key: CredentialKey) throws { values[key] = nil }
+    func save(_ data: Data, for key: CredentialKey) { values[key] = data }
+    func data(for key: CredentialKey) -> Data? { values[key] }
+    func contains(_ key: CredentialKey) -> Bool { values[key] != nil }
+    func remove(_ key: CredentialKey) { values[key] = nil }
 }

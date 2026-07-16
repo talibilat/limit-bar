@@ -60,18 +60,15 @@ struct PricingSettingsStore {
     }
 
     private static func entries(from json: String) -> [PricingEntry] {
-        guard let data = json.data(using: .utf8) else {
-            return []
-        }
-        return (try? JSONDecoder().decode([PricingEntry].self, from: data)) ?? []
+        (try? JSONDecoder().decode([PricingEntry].self, from: Data(json.utf8))) ?? []
     }
 
     private static func json(from entries: [PricingEntry]) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(entries), let json = String(data: data, encoding: .utf8) else {
+        guard let data = try? encoder.encode(entries) else {
             return Self.defaultJSON
         }
-        return json
+        return String(decoding: data, as: UTF8.self)
     }
 }

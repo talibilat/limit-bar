@@ -118,7 +118,6 @@ public enum CodexRateLimitMapper {
                 let plan_type: String?
             }
 
-            let type: String?
             let rate_limits: RawRateLimits?
         }
 
@@ -132,7 +131,8 @@ public enum CodexRateLimitMapper {
             throw CodexRateLimitFailure.malformedResponse
         }
 
-        guard let timestamp = raw.timestamp, let reportedAt = parseTimestamp(timestamp) else {
+        guard let timestamp = raw.timestamp,
+              let reportedAt = CollectorSchemaV1.parseTimestamp(timestamp) else {
             throw CodexRateLimitFailure.malformedResponse
         }
 
@@ -160,30 +160,17 @@ public enum CodexRateLimitMapper {
             return Date(timeIntervalSince1970: value)
         }
         return CodexRateLimitWindow(
-            limitID: normalizedLimitID(limitID),
+            limitID: limitID ?? "codex",
             percentUsed: percent,
             windowMinutes: minutes,
             resetsAt: reset
         )
     }
 
-    private static func normalizedLimitID(_ value: String?) -> String {
-        CodexRateLimitWindow.normalizedLimitID(value)
-    }
-
     private static func credits(from raw: RawEntry.RawPayload.RawCredits?) -> CodexCredits? {
         guard let raw else { return nil }
         let balance = raw.balance.flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }
         return CodexCredits(hasCredits: raw.has_credits ?? false, unlimited: raw.unlimited ?? false, balance: balance)
-    }
-
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractionalFormatter.date(from: text) {
-            return date
-        }
-        return ISO8601DateFormatter().date(from: text)
     }
 }
 
@@ -284,9 +271,6 @@ public enum CodexSessionRateLimitReader {
             guard contents.count <= remainingReadSize else { break }
             totalReadSize += contents.count
             guard contents.count <= maximumFileSize else { continue }
-            guard !contents.isEmpty else {
-                continue
-            }
             for line in contents.split(separator: 0x0A) {
                 try Task.checkCancellation()
                 guard let snapshot = try? CodexRateLimitMapper.parseLine(Data(line)) else {
@@ -296,12 +280,10 @@ public enum CodexSessionRateLimitReader {
                       snapshot.reportedAt <= now.addingTimeInterval(5 * 60) else {
                     continue
                 }
-                guard snapshot.primary != nil || snapshot.secondary != nil || snapshot.credits != nil else {
+                if let best, snapshot.reportedAt <= best.reportedAt {
                     continue
                 }
-                if best == nil || snapshot.reportedAt > best!.reportedAt {
-                    best = snapshot
-                }
+                best = snapshot
             }
         }
 

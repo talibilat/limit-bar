@@ -712,7 +712,7 @@ struct UsageDatabaseTests {
     @Test("custom attribution reaches snapshots and deletion suppression survives restart")
     func customAttributionDeletionAndRestart() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"local","inputTokens":3,"outputTokens":2,"projectID":"alpha","agentID":"builder"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -775,7 +775,7 @@ struct UsageDatabaseTests {
     @Test("failed custom imports preserve last valid durable attribution")
     func failedCustomImportPreservesAttribution() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let protectedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
@@ -882,7 +882,7 @@ struct UsageDatabaseTests {
     @Test("custom attribution persistence failure is component-scoped and revision-qualified")
     func customRevisionQualifiedPublicationFailure() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         let eventA = #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#
@@ -927,7 +927,7 @@ struct UsageDatabaseTests {
     @Test("removing a custom source clears its attribution component failure")
     func removingCustomSourceClearsAttributionFailure() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","customSourceID":"9598575e-259b-47df-9f34-f161c9015e65","timestamp":"2026-07-10T10:00:00Z","model":"model-a","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -956,7 +956,7 @@ struct UsageDatabaseTests {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
-        var initial: StoredUsageMetricsSnapshot!
+        let initial: StoredUsageMetricsSnapshot
         do {
             let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
             initial = await database.snapshot(now: now, calendar: utcCalendar())
@@ -1033,7 +1033,7 @@ struct UsageDatabaseTests {
         let database = UsageDatabase(
             pathFactory: { path },
             localEventsURL: missingEventsURL(),
-            customUsageLoader: { _, _, _, _ in try await gate.load() }
+            customUsageLoader: { _, _, _, _ in await gate.load() }
         )
 
         let olderRefresh = Task {
@@ -1091,10 +1091,6 @@ struct UsageDatabaseTests {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
 
-    private func temporaryDatabasePath() -> String {
-        FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite").path
-    }
-
     private func attributionDatabasePath(for currentPath: String) -> String {
         let currentURL = URL(fileURLWithPath: currentPath)
         let stem = currentURL.deletingPathExtension().lastPathComponent
@@ -1102,14 +1098,9 @@ struct UsageDatabaseTests {
     }
 
     private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        return calendar
+        gregorianGMTCalendar()
     }
 
-    private func date(_ iso8601: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: iso8601))
-    }
 }
 
 private actor SuspendedCustomLoader {
@@ -1120,7 +1111,7 @@ private actor SuspendedCustomLoader {
         self.result = result
     }
 
-    func load() async throws -> CustomUsageLoadResult {
+    func load() async -> CustomUsageLoadResult {
         await withCheckedContinuation { continuation = $0 }
         return result
     }
