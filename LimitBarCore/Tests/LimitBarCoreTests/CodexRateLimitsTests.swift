@@ -393,7 +393,7 @@ struct CodexRateLimitsTests {
     @Test("credits estimator prefers current provider API rows without mixing local rows")
     func creditsEstimatorPrefersProviderAPI() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let pricing = creditsPricing()
         let metrics = [
             creditsMetric(tokens: 1_000_000, source: .providerAPI, window: windows.today, refreshedAt: now),
@@ -408,7 +408,7 @@ struct CodexRateLimitsTests {
     @Test("credits estimator falls back to local and ignores legacy expired and cost-only rows")
     func creditsEstimatorFallsBackToCurrentLocal() throws {
         let now = Date(timeIntervalSince1970: 1_783_716_000)
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: gregorianGMTCalendar())
         let expired = try ExactUsageWindow(timeWindow: .today, start: windows.today.start.addingTimeInterval(-86_400), end: windows.today.end.addingTimeInterval(-86_400), basis: .localCalendar)
         let metrics = [
             creditsMetric(tokens: 2_000_000, source: .builtInLocalLog, window: windows.today, refreshedAt: now),
@@ -428,12 +428,6 @@ struct CodexRateLimitsTests {
 
     private func creditsMetric(tokens: Int, source: UsageMetricSource, window: ExactUsageWindow, refreshedAt: Date) -> UsageMetric {
         UsageMetric(provider: .openAI, accountLabel: nil, projectLabel: nil, modelLabel: "gpt-5.5", deploymentLabel: nil, provenance: .bounded(source: source, window: window), tokenUsage: TokenUsage(inputTokens: tokens, outputTokens: 0), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: refreshedAt, freshness: .fresh)
-    }
-
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        return calendar
     }
 }
 
