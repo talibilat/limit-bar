@@ -149,8 +149,8 @@ struct AnthropicUsageProviderTests {
         #expect(requests[1].url.absoluteString.contains("page=page-2"))
     }
 
-    @Test("pagination rejects a repeated token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
-    func paginationRejectsRepeatedToken(endpoint: AnthropicEndpoint) async {
+    @Test("pagination rejects a repeated token on every Anthropic endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsRepeatedToken(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
         let http = RecordingHTTPClient(responses: [page, page])
 
@@ -160,8 +160,8 @@ struct AnthropicUsageProviderTests {
         #expect(await http.requests.count == 2)
     }
 
-    @Test("pagination rejects a missing token on every Anthropic endpoint", arguments: AnthropicEndpoint.allCases)
-    func paginationRejectsMissingToken(endpoint: AnthropicEndpoint) async {
+    @Test("pagination rejects a missing token on every Anthropic endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsMissingToken(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
         let http = RecordingHTTPClient(response: page)
 
@@ -171,8 +171,8 @@ struct AnthropicUsageProviderTests {
         #expect(await http.requests.count == 1)
     }
 
-    @Test("pagination permits at most 100 pages including the initial Anthropic request", arguments: AnthropicEndpoint.allCases)
-    func paginationIsBounded(endpoint: AnthropicEndpoint) async {
+    @Test("pagination permits at most 100 pages including the initial Anthropic request", arguments: UsageProviderEndpoint.allCases)
+    func paginationIsBounded(endpoint: UsageProviderEndpoint) async {
         let responses = (1...100).map { index in
             HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
         }
@@ -396,7 +396,7 @@ struct AnthropicUsageProviderTests {
         UsageMetric(provider: provider, accountLabel: nil, projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: cost == nil ? 1 : 0, outputTokens: 0), cost: cost, limitStatus: .unsupportedByProviderAPI, refreshedAt: window.start, freshness: .fresh)
     }
 
-    private func fetch(_ endpoint: AnthropicEndpoint, client: AnthropicAdminClient) async -> AnthropicRefreshResult {
+    private func fetch(_ endpoint: UsageProviderEndpoint, client: AnthropicAdminClient) async -> AnthropicRefreshResult {
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
         switch endpoint {
         case .usage:
@@ -417,13 +417,6 @@ func utcCalendar() -> Calendar {
     calendar.timeZone = .gmt
     calendar.firstWeekday = 2
     return calendar
-}
-
-enum AnthropicEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
-    case usage
-    case cost
-
-    var testDescription: String { String(describing: self) }
 }
 
 private actor RecordingHTTPClient: HTTPClient {

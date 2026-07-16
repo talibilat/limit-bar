@@ -177,8 +177,8 @@ struct OpenAIUsageProviderTests {
         #expect(metrics.allSatisfy { $0.provenance.exactWindow == windows.today || $0.provenance.exactWindow == windows.currentWeek })
     }
 
-    @Test("pagination rejects repeated tokens on every OpenAI endpoint", arguments: OpenAIEndpoint.allCases)
-    func paginationRejectsRepeatedTokens(endpoint: OpenAIEndpoint) async {
+    @Test("pagination rejects repeated tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsRepeatedTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":"same"}"#.utf8))
         let http = OpenAIRecordingHTTPClient(responses: [page, page])
 
@@ -188,8 +188,8 @@ struct OpenAIUsageProviderTests {
         #expect(await http.requests.count == 2)
     }
 
-    @Test("pagination rejects missing tokens on every OpenAI endpoint", arguments: OpenAIEndpoint.allCases)
-    func paginationRejectsMissingTokens(endpoint: OpenAIEndpoint) async {
+    @Test("pagination rejects missing tokens on every OpenAI endpoint", arguments: UsageProviderEndpoint.allCases)
+    func paginationRejectsMissingTokens(endpoint: UsageProviderEndpoint) async {
         let page = HTTPResponse(statusCode: 200, data: Data(#"{"data":[],"has_more":true,"next_page":null}"#.utf8))
         let http = OpenAIRecordingHTTPClient(response: page)
 
@@ -199,8 +199,8 @@ struct OpenAIUsageProviderTests {
         #expect(await http.requests.count == 1)
     }
 
-    @Test("pagination permits at most 100 pages including the initial OpenAI request", arguments: OpenAIEndpoint.allCases)
-    func paginationIsBounded(endpoint: OpenAIEndpoint) async {
+    @Test("pagination permits at most 100 pages including the initial OpenAI request", arguments: UsageProviderEndpoint.allCases)
+    func paginationIsBounded(endpoint: UsageProviderEndpoint) async {
         let responses = (1...100).map { index in
             HTTPResponse(statusCode: 200, data: Data("{\"data\":[],\"has_more\":true,\"next_page\":\"page-\(index)\"}".utf8))
         }
@@ -327,7 +327,7 @@ struct OpenAIUsageProviderTests {
         UsageMetric(provider: .openAI, accountLabel: "org", projectLabel: nil, modelLabel: model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: cost == nil ? 1 : 0, outputTokens: 0), cost: cost, limitStatus: .unsupportedByProviderAPI, refreshedAt: window.start, freshness: .fresh)
     }
 
-    private func fetch(_ endpoint: OpenAIEndpoint, client: OpenAIOrganizationClient) async -> OpenAIRefreshResult {
+    private func fetch(_ endpoint: UsageProviderEndpoint, client: OpenAIOrganizationClient) async -> OpenAIRefreshResult {
         let interval = DateInterval(start: Date(timeIntervalSince1970: 0), duration: 60)
         switch endpoint {
         case .usage:
@@ -339,7 +339,7 @@ struct OpenAIUsageProviderTests {
 
 }
 
-enum OpenAIEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
+enum UsageProviderEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {
     case usage
     case cost
 
