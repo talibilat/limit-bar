@@ -74,7 +74,7 @@ struct AnthropicUsageProviderTests {
         }
         """#.utf8)
 
-        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
         let today = metrics.filter { $0.timeWindow == .today }
         let sonnet = try #require(today.first { $0.modelLabel == "Claude Sonnet" })
         let cloudDesign = try #require(today.first { $0.modelLabel == "Cloud Design" })
@@ -109,7 +109,7 @@ struct AnthropicUsageProviderTests {
     func costReportMapping() throws {
         let data = Data(#"{"data":[{"starting_at":"2026-07-10T00:00:00Z","ending_at":"2026-07-10T12:00:00Z","results":[{"description":"Claude API Usage","amount":"125","currency":"USD"}]},{"starting_at":"2026-07-10T12:00:00Z","ending_at":"2026-07-11T00:00:00Z","results":[{"description":"Claude API Usage","amount":"75","currency":"USD"}]}]}"#.utf8)
 
-        let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicCostMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
         let metric = try #require(metrics.first { $0.provenance.exactWindow?.basis == .utcBilling })
 
         #expect(metric.modelLabel == "Claude API Usage")
@@ -222,7 +222,7 @@ struct AnthropicUsageProviderTests {
         let http = RecordingHTTPClient(response: HTTPResponse(statusCode: 200, data: response))
         let client = AnthropicAdminClient(httpClient: http)
         let now = try date("2026-07-08T12:34:56Z")
-        let windows = try CurrentUsageWindows.resolve(at: now, calendar: try utcCalendar())
+        let windows = try CurrentUsageWindows.resolve(at: now, calendar: utcCalendar())
 
         let result = await client.fetchUsage(apiKey: "secret", windows: windows, now: now)
         let request = try #require(await http.lastRequest)
@@ -237,7 +237,7 @@ struct AnthropicUsageProviderTests {
     func fixtureMappingRejectsUnlabeledRows() throws {
         let data = Data(#"{"data":[{"starting_at":"2026-07-10T10:00:00Z","ending_at":"2026-07-10T11:00:00Z","results":[{"input_tokens":1,"output_tokens":2}]}]}"#.utf8)
 
-        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: try utcCalendar())
+        let metrics = try AnthropicUsageMapper.metrics(from: data, now: try date("2026-07-10T18:00:00Z"), calendar: utcCalendar())
 
         #expect(metrics.isEmpty)
     }
@@ -409,9 +409,9 @@ struct AnthropicUsageProviderTests {
         try #require(ISO8601DateFormatter().date(from: value))
     }
 
-    private func utcCalendar() throws -> Calendar {
+    private func utcCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 2
         return calendar
     }
