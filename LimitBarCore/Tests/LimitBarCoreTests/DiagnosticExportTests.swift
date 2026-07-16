@@ -82,7 +82,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("quota evidence rejects unbounded text before preview")
-    func quotaEvidenceBounds() throws {
+    func quotaEvidenceBounds() {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             try DiagnosticEvidenceVersion(kind: .adapter, value: String(repeating: "x", count: DiagnosticExport.maximumEvidenceTextLength + 1))
         }
