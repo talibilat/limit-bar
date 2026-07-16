@@ -67,9 +67,7 @@ public enum LocalUsageEventParser {
     }
 
     public static func parseLine(_ line: String) throws -> LocalUsageEvent {
-        guard let data = line.data(using: .utf8) else {
-            throw LocalUsageEventError.malformedJSON
-        }
+        let data = Data(line.utf8)
 
         if CollectorSchemaV2.hasStrictSchema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .provider(provider) = event.identity,
