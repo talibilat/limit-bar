@@ -106,7 +106,7 @@ struct CustomUsageSourceTests {
         let now = try date("2026-07-12T18:00:00Z")
 
         let source = CustomUsageSource(name: "Aider", filePath: fileURL.path)
-        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: source, now: now, calendar: utcCalendar())
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: source, now: now, calendar: gregorianGMTCalendar())
 
         let today = metrics.filter { $0.timeWindow == .today }
         #expect(today.allSatisfy { $0.provider == .custom && $0.accountLabel == "Aider" })
@@ -134,7 +134,7 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-12T18:00:00Z")
 
-        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
+        let metrics = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(name: "Aider", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
 
         // One valid event, aggregated into both the Today and Current Week windows it falls in.
         #expect(metrics.count == 2)
@@ -146,8 +146,8 @@ struct CustomUsageSourceTests {
         let fileURL = try temporaryFile(contents: #"{"timestamp":"2026-07-12T10:00:00Z","model":"gpt-4o","inputTokens":1,"outputTokens":2}"#)
         let id = UUID()
         let now = try date("2026-07-12T18:00:00Z")
-        let before = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Aider", filePath: fileURL.path), now: now, calendar: utcCalendar())
-        let after = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Renamed", filePath: fileURL.path), now: now, calendar: utcCalendar())
+        let before = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Aider", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
+        let after = await CustomUsageAggregator.metrics(from: fileURL, source: CustomUsageSource(id: id, name: "Renamed", filePath: fileURL.path), now: now, calendar: gregorianGMTCalendar())
 
         #expect(before.allSatisfy { $0.provenance.source == .custom(id) })
         #expect(after.allSatisfy { $0.provenance.source == .custom(id) })
@@ -169,7 +169,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar()
+            calendar: gregorianGMTCalendar()
         )
 
         #expect(result.metrics.count == 2)
@@ -185,7 +185,7 @@ struct CustomUsageSourceTests {
         let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
 
         let result = try await CustomUsageAggregator.loadMetrics(
-            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar()
+            from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: gregorianGMTCalendar()
         )
 
         #expect(result.attributionBreakdowns.count == 2)
@@ -235,7 +235,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar()
+            calendar: gregorianGMTCalendar()
         )
 
         #expect(Set(result.metrics.map(\.modelLabel)) == ["boundary"])
@@ -257,7 +257,7 @@ struct CustomUsageSourceTests {
                 from: fileURL,
                 source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
                 now: try date("2026-07-12T18:00:00Z"),
-                calendar: utcCalendar()
+                calendar: gregorianGMTCalendar()
             )
         }
     }
@@ -274,7 +274,7 @@ struct CustomUsageSourceTests {
                 from: fileURL,
                 source: CustomUsageSource(name: "Tool", filePath: fileURL.path),
                 now: try date("2026-07-12T18:00:00Z"),
-                calendar: utcCalendar()
+                calendar: gregorianGMTCalendar()
             )
         }
     }
@@ -289,7 +289,7 @@ struct CustomUsageSourceTests {
         let source = CustomUsageSource(id: sourceID, name: "Tool", filePath: fileURL.path)
 
         await #expect(throws: CustomUsageLoadError.tooManyAggregates) {
-            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
+            try await CustomUsageAggregator.loadMetrics(from: fileURL, source: source, now: try date("2026-07-12T18:00:00Z"), calendar: gregorianGMTCalendar())
         }
     }
 
@@ -309,7 +309,7 @@ struct CustomUsageSourceTests {
             from: fileURL,
             source: source,
             now: try date("2026-07-12T18:00:00Z"),
-            calendar: utcCalendar(),
+            calendar: gregorianGMTCalendar(),
             onChunkRead: { _ in
                 guard !replaced else { return }
                 replaced = true
@@ -322,11 +322,6 @@ struct CustomUsageSourceTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        return calendar
-    }
 }
 
 func temporaryFile(contents: String) throws -> URL {
