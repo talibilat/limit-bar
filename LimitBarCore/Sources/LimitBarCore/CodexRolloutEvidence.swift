@@ -340,21 +340,9 @@ public enum CodexRolloutEvidenceAdapter {
                 previous = nil
                 continue
             }
-            if delta.total == 0, delta.input == 0, delta.cachedInput == 0,
-               delta.output == 0, delta.reasoningOutput == 0 {
-                evidence.append(CodexRolloutEvidence(
-                    sessionIdentity: identity,
-                    lineOrdinal: ordinal,
-                    lineSHA256: SHA256.hash(data: line).map { String(format: "%02x", $0) }.joined(),
-                    adapterVersion: adapterVersion,
-                    creatorVersion: creatorVersion,
-                    observedAt: timestamp,
-                    tokens: delta.measured
-                ))
-                previous = (total, timestamp)
-                continue
-            }
-            guard last.isValid, last == delta else {
+            let isZeroDelta = delta.total == 0 && delta.input == 0 && delta.cachedInput == 0
+                && delta.output == 0 && delta.reasoningOutput == 0
+            guard isZeroDelta || (last.isValid && last == delta) else {
                 barriers.append(.mismatchedTokenDelta)
                 previous = nil
                 continue
