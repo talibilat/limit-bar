@@ -254,7 +254,7 @@ public enum OpenAIUsageMapper {
         }
         return aggregates.map { key, value in
             UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
-        }.sorted { ($0.timeWindow.rawValue, $0.accountLabel ?? "", $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.accountLabel ?? "", $1.projectLabel ?? "", $1.modelLabel) }
+        }.sorted { ($0.timeWindow.rawValue, $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.projectLabel ?? "", $1.modelLabel) }
     }
 
     private static func checkedSum(_ lhs: Int, _ rhs: Int) throws -> Int {
