@@ -247,8 +247,6 @@ public struct ClaudeOAuthUsageClient: Sendable, ClaudeRateLimitsFetching {
             }
         case 401:
             return .failure(.expiredLogin)
-        case 403:
-            return .failure(.requestRejected)
         default:
             return .failure(.requestRejected)
         }
