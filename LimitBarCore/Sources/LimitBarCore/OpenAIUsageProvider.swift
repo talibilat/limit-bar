@@ -217,7 +217,7 @@ public enum OpenAIUsageMapper {
         }
     }
 
-    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let model: String }
+    private struct Key: Hashable { let window: ExactUsageWindow; let project: String; let model: String }
     private struct Aggregate { var input = 0; var output = 0; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
@@ -242,7 +242,7 @@ public enum OpenAIUsageMapper {
                 let project = projectName?.isEmpty == false ? projectName! : projectID
                 for window in windows {
                     guard start >= window.start, end <= window.end else { continue }
-                    let key = Key(window: window, organization: organization, project: project, model: model)
+                    let key = Key(window: window, project: project, model: model)
                     var aggregate = aggregates[key] ?? Aggregate(latest: end)
                     aggregate.input = try checkedSum(aggregate.input, row.inputTokens)
                     aggregate.output = try checkedSum(aggregate.output, row.outputTokens)
@@ -253,7 +253,7 @@ public enum OpenAIUsageMapper {
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+            UsageMetric(provider: .openAI, accountLabel: organization, projectLabel: key.project, modelLabel: key.model, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: value.input, outputTokens: value.output), cost: nil, limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
         }.sorted { ($0.timeWindow.rawValue, $0.projectLabel ?? "", $0.modelLabel) < ($1.timeWindow.rawValue, $1.projectLabel ?? "", $1.modelLabel) }
     }
 
