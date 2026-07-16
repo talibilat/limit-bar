@@ -493,7 +493,7 @@ private final class URLMappingReader: @unchecked Sendable {
     private let data: [URL: Data]
     private(set) var readURLs: [URL] = []
     init(data: [URL: Data]) { self.data = data }
-    func read(_ url: URL, byteCount: Int) throws -> Data {
+    func read(_ url: URL, byteCount: Int) -> Data {
         lock.withLock {
             readURLs.append(url)
             return Data((data[url] ?? Data()).prefix(byteCount))
