@@ -5,7 +5,7 @@ import Testing
 @Suite("Local refresh coordinator")
 struct LocalRefreshCoordinatorTests {
     @Test("start refreshes immediately and then exactly every five seconds")
-    func periodicTiming() async throws {
+    func periodicTiming() async {
         let clock = ManualRefreshClock()
         let calls = CallRecorder()
         let coordinator = LocalRefreshCoordinator(
