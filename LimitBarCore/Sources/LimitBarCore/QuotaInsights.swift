@@ -307,7 +307,12 @@ public enum QuotaInsightAnalytics {
         let unique = ordered.filter { seen.insert($0.stableIdentity).inserted }
         guard now.timeIntervalSince1970.isFinite else {
             let identities = orderedIdentities(unique.map(\.identity) + [expectedIdentity].compactMap { $0 })
-            let span = unique.count < 2 ? 0 : unique.last!.observedAt.timeIntervalSince(unique.first!.observedAt)
+            let span: TimeInterval
+            if let first = unique.first, let last = unique.last {
+                span = last.observedAt.timeIntervalSince(first.observedAt)
+            } else {
+                span = 0
+            }
             return .unavailable(UnavailableQuotaInsight(
                 reason: .invalidEvaluation,
                 implicatedIdentities: identities,
