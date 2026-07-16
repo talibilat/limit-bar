@@ -384,14 +384,14 @@ private actor SequenceQuotaInsightsService: QuotaInsightsServing {
         self.recordResults = recordResults
     }
 
-    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot {
+    func recordCodexAnalysis(_ snapshot: CodexRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot {
         recordResults.removeFirst()
     }
 
-    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { .empty }
-    func deleteAll() throws {}
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateClaudeAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func reevaluateCodexAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { .empty }
+    func deleteAll() {}
 }
 
 private actor GatedQuotaInsightsService: QuotaInsightsServing {
