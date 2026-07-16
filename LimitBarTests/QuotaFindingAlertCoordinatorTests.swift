@@ -447,7 +447,7 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
         self.status = status
     }
 
-    func authorizationStatus() async -> UNAuthorizationStatus { status }
+    func authorizationStatus() -> UNAuthorizationStatus { status }
     func requestAuthorization() async -> Bool { status == .authorized }
 
     func add(identifier: String, title: String, body: String) async throws {
