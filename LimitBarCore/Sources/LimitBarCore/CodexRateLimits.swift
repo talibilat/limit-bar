@@ -280,9 +280,10 @@ public enum CodexSessionRateLimitReader {
                       snapshot.reportedAt <= now.addingTimeInterval(5 * 60) else {
                     continue
                 }
-                if best == nil || snapshot.reportedAt > best!.reportedAt {
-                    best = snapshot
+                if let best, snapshot.reportedAt <= best.reportedAt {
+                    continue
                 }
+                best = snapshot
             }
         }
 
