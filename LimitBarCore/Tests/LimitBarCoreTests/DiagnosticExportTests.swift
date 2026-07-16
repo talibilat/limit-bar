@@ -425,7 +425,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("invalid values, history, and duplicate providers are rejected")
-    func validation() throws {
+    func validation() {
         #expect(throws: DiagnosticExportError.invalidVersion) {
             try DiagnosticVersion(major: -1, minor: 0, patch: 0)
         }
