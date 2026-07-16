@@ -101,7 +101,7 @@ struct UsageAttributionStoreTests {
             project: CollectorAttribution(id: project, label: project.capitalized),
             agent: CollectorAttribution(id: "reviewer", label: "Reviewer"),
             tokenUsage: TokenUsage(inputTokens: 3, outputTokens: 2),
-            eventIDs: [UUID(uuidString: "00000000-0000-0000-0000-000000000001")!],
+            eventIDs: [try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))],
             observedAt: observedAt
         )
     }
