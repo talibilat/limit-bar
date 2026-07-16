@@ -16,7 +16,6 @@ final class CustomUsageSourceStoreTests: XCTestCase {
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
         try? FileManager.default.removeItem(at: fixtureURL)
         super.tearDown()
     }
