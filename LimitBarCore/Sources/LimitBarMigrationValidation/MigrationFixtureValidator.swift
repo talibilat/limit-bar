@@ -410,7 +410,6 @@ private struct Manifest: Decodable {
 private struct Fixture: Decodable {
     let id: String
     let store: String
-    let logicalSchema: String
     let sqliteUserVersion: Int
     let origin: String
     let file: String
