@@ -226,10 +226,6 @@ public enum OpenAIUsageMapper {
         try metrics(from: decode(data).data, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
-    static func metrics(from buckets: [Bucket], organization: String, now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, organization: organization, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
     static func metrics(from buckets: [Bucket], organization: String, windows current: CurrentUsageWindows) throws -> [UsageMetric] {
         let organization = organization.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !organization.isEmpty else { return [] }
