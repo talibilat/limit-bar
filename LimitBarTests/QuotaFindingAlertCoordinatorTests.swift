@@ -248,8 +248,9 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let settings = AlertSettingsStore(defaults: defaults, notificationCenter: NotificationCenter())
+        let ruleID = try XCTUnwrap(UUID(uuidString: "E4633E94-0687-467F-9779-E1C2B0FD4847"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "E4633E94-0687-467F-9779-E1C2B0FD4847")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([70])
         )
