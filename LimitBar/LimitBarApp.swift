@@ -83,10 +83,6 @@ final class LimitBarState {
         apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
         message: "Waiting for the first coherent publication."
     )
-    var claudeExplanation: ClaudeQuotaExplanationState {
-        claudeExplanationCatalog.defaultSelection?.state ?? .unavailable(.insufficientObservations)
-    }
-
     private let coordinator: LocalRefreshCoordinator
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
