@@ -361,9 +361,7 @@ public enum CustomUsageAggregator {
                 }
                 await Task.yield()
             }
-            if discardingOverlongLine {
-                // The diagnostic was recorded when the limit was crossed.
-            } else if !line.isEmpty {
+            if !discardingOverlongLine, !line.isEmpty {
                 try consumeLine()
             }
         } catch let error as CustomUsageLoadError {
