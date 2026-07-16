@@ -436,7 +436,6 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
     struct Added {
         let identifier: String
         let title: String
-        let body: String
     }
 
     let status: UNAuthorizationStatus
@@ -450,9 +449,9 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
     func authorizationStatus() -> UNAuthorizationStatus { status }
     func requestAuthorization() -> Bool { status == .authorized }
 
-    func add(identifier: String, title: String, body: String) throws {
+    func add(identifier: String, title: String, body _: String) throws {
         if shouldFailDelivery { throw FixtureError.deliveryFailed }
-        added.append(Added(identifier: identifier, title: title, body: body))
+        added.append(Added(identifier: identifier, title: title))
     }
 
     func pendingIdentifiers() -> [String] { added.map(\.identifier) }
