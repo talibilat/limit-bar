@@ -542,7 +542,9 @@ public enum QuotaAnomalyAnalytics {
         }
 
         let baselineValues = Array(normalized.values.prefix(minimumBaselineSampleCount))
-        let currentValue = normalized.values.last!
+        guard let currentValue = normalized.values.last else {
+            return unavailable(.insufficientSpan)
+        }
         let resultMetadata = metadata(
             qualification: .qualified,
             current: currentPeriod,
