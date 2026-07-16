@@ -274,11 +274,12 @@ struct CodexRolloutEvidenceTests {
             tokenLine(at: "2026-07-15T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_783_716_600))
         ]).write(to: outside)
         try fileManager.createSymbolicLink(at: sessions.appendingPathComponent("linked.jsonl"), withDestinationURL: outside)
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z"))
 
         #expect(throws: CodexRateLimitFailure.notFound) {
             try CodexSessionEvidenceReader.scan(
                 sessionsDirectory: sessions,
-                now: ISO8601DateFormatter().date(from: "2026-07-15T10:02:00Z")!,
+                now: now,
                 identityKey: Data("key".utf8),
                 fileManager: fileManager
             )
