@@ -25,7 +25,7 @@ struct UsageModelTests {
     @Test("current week always starts Monday even when the calendar starts weeks on Sunday")
     func currentWeekAlwaysStartsMonday() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 1
         let reference = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 10, hour: 15)))
         let expectedStart = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 6)))
