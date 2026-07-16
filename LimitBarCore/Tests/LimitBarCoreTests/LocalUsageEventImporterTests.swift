@@ -661,6 +661,8 @@ struct LocalUsageEventImporterTests {
         ].joined(separator: "\n"))
 
         let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
+        let firstEventID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let secondEventID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
 
         let parent = try #require(store.metrics(for: .today).first { $0.provider == .openAI })
         #expect(parent.tokenUsage == TokenUsage(inputTokens: 18, outputTokens: 4))
@@ -670,10 +672,7 @@ struct LocalUsageEventImporterTests {
         #expect(today.allSatisfy { $0.source == .builtInLocalLog && $0.provider == .openAI && $0.model == "gpt-5" })
         #expect(Set(today.compactMap(\.project?.id)) == ["alpha", "beta"])
         #expect(Set(today.compactMap(\.agent?.id)) == ["reviewer", "builder"])
-        #expect(Set(today.flatMap(\.eventIDs)) == [
-            UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-            UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        ])
+        #expect(Set(today.flatMap(\.eventIDs)) == [firstEventID, secondEventID])
         #expect(today.reduce(0) { $0 + $1.tokenUsage.totalTokens } == 18)
         #expect(parent.tokenUsage.totalTokens == 22)
     }
