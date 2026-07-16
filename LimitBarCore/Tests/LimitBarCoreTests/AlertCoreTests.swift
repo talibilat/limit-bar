@@ -102,8 +102,9 @@ struct AlertCoreTests {
 
     @Test("level qualification emits highest threshold and satisfies all newly qualified levels")
     func levelQualificationAndOccurrenceBookkeeping() throws {
+        let ruleID = try #require(UUID(uuidString: "B176E84E-83B6-43D9-BA8E-3187AE21EF1B"))
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "B176E84E-83B6-43D9-BA8E-3187AE21EF1B")!,
+            id: ruleID,
             product: .codex,
             thresholds: try PercentageThresholds([50, 75, 90])
         )
