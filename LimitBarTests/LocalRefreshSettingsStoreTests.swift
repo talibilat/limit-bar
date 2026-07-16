@@ -3,12 +3,11 @@ import XCTest
 @testable import LimitBar
 
 final class LocalRefreshSettingsStoreTests: XCTestCase {
-    private var suiteName: String!
+    private let suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
     private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
-        suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
     }
 
