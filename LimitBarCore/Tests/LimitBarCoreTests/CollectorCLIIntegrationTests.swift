@@ -98,7 +98,7 @@ struct CollectorCLIIntegrationTests {
 
     private func utcCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.timeZone = .gmt
         return calendar
     }
 }
