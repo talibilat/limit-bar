@@ -371,8 +371,8 @@ private actor FailingQuotaInsightsService: QuotaInsightsServing {
         throw FixtureError.analysisFailed
     }
 
-    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) throws -> QuotaFindingAnalysisSnapshot { initial }
-    func reevaluateClaudeAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { initial }
+    func recordClaudeAnalysis(_ snapshot: ClaudeRateLimitSnapshot, now: Date) -> QuotaFindingAnalysisSnapshot { initial }
+    func reevaluateClaudeAnalysis(now: Date) -> QuotaFindingAnalysisSnapshot { initial }
     func reevaluateCodexAnalysis(now: Date) throws -> QuotaFindingAnalysisSnapshot { throw FixtureError.analysisFailed }
     func deleteAll() {}
 }
