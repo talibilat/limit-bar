@@ -161,14 +161,16 @@ struct HistoricalUsageTrendStoreTests {
     @Test("provider-reported and atomically revisioned calculated costs remain distinct")
     func costSemanticsRemainDistinct() throws {
         let day = try period(2026, 7, 10, calendar: calendar(timeZone: "UTC"))
+        let calculatedAmount = try #require(Decimal(string: "3.10"))
+        let providerReportedAmount = try #require(Decimal(string: "3.25"))
         let calculated = try HistoricalUsageCalculatedCost(
-            cost: Cost(amount: Decimal(string: "3.10")!, currencyCode: "USD", source: .calculatedEstimate),
+            cost: Cost(amount: calculatedAmount, currencyCode: "USD", source: .calculatedEstimate),
             pricingRevision: "prices-2026-07",
             pricingEffectiveAt: try date(2026, 7, 1, calendar: calendar(timeZone: "UTC"))
         )
         let value = try sample(
             period: day,
-            providerCost: Cost(amount: Decimal(string: "3.25")!, currencyCode: "USD", source: .providerReported),
+            providerCost: Cost(amount: providerReportedAmount, currencyCode: "USD", source: .providerReported),
             calculatedCost: calculated
         )
         let store = try HistoricalUsageTrendStore.inMemory()
@@ -177,7 +179,7 @@ struct HistoricalUsageTrendStoreTests {
         let bucket = try #require(store.buckets(for: [day]).first)
         let stored = try #require(observations(in: bucket).first)
 
-        #expect(stored.sample.providerReportedCost?.amount == Decimal(string: "3.25"))
+        #expect(stored.sample.providerReportedCost?.amount == providerReportedAmount)
         #expect(stored.sample.calculatedCost == calculated)
         #expect(throws: HistoricalUsageCalculatedCost.ValidationError.missingPricingRevision) {
             try HistoricalUsageCalculatedCost(
