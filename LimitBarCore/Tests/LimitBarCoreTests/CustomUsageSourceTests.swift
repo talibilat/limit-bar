@@ -281,7 +281,7 @@ struct CustomUsageSourceTests {
 
     @Test("custom parent and attribution aggregates share one ten-thousand-key bound")
     func customCombinedAggregateLimit() async throws {
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let jsonl = (0...2_500).map { index in
             "{\"schemaVersion\":2,\"eventID\":\"\(String(format: "00000000-0000-0000-0000-%012d", index + 1))\",\"customSourceID\":\"\(sourceID.uuidString)\",\"timestamp\":\"2026-07-12T10:00:00Z\",\"model\":\"model-\(index)\",\"inputTokens\":1,\"outputTokens\":1,\"agentID\":\"agent-\(index)\"}"
         }.joined(separator: "\n")
