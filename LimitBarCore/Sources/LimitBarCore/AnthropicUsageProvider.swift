@@ -247,10 +247,6 @@ public enum AnthropicUsageMapper {
         try metrics(from: decode(data).data, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
     }
 
-    static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
     static func metrics(from buckets: [Bucket], windows current: CurrentUsageWindows) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
         let windows = [current.today, current.currentWeek]
