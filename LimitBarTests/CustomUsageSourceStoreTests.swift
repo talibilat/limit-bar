@@ -8,12 +8,12 @@ final class CustomUsageSourceStoreTests: XCTestCase {
     private var defaults: UserDefaults!
     private var fixtureURL: URL!
 
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         suiteName = "com.talibilat.LimitBar.tests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         fixtureURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
-        try! Data().write(to: fixtureURL)
+        try Data().write(to: fixtureURL)
     }
 
     override func tearDown() {
