@@ -24,7 +24,7 @@ public enum DemoUsageData {
     ) -> UsageMetric {
         let refreshedAt = Date(timeIntervalSince1970: refreshedAt)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.timeZone = .gmt
         let interval = timeWindow.interval(containing: refreshedAt, calendar: calendar)
         guard let window = try? ExactUsageWindow(
             timeWindow: timeWindow,
