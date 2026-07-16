@@ -132,7 +132,8 @@ public enum CodexRateLimitMapper {
             throw CodexRateLimitFailure.malformedResponse
         }
 
-        guard let timestamp = raw.timestamp, let reportedAt = parseTimestamp(timestamp) else {
+        guard let timestamp = raw.timestamp,
+              let reportedAt = CollectorSchemaV1.parseTimestamp(timestamp) else {
             throw CodexRateLimitFailure.malformedResponse
         }
 
@@ -171,15 +172,6 @@ public enum CodexRateLimitMapper {
         guard let raw else { return nil }
         let balance = raw.balance.flatMap { Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }
         return CodexCredits(hasCredits: raw.has_credits ?? false, unlimited: raw.unlimited ?? false, balance: balance)
-    }
-
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractionalFormatter.date(from: text) {
-            return date
-        }
-        return ISO8601DateFormatter().date(from: text)
     }
 }
 
