@@ -284,9 +284,6 @@ public enum CodexSessionRateLimitReader {
                       snapshot.reportedAt <= now.addingTimeInterval(5 * 60) else {
                     continue
                 }
-                guard snapshot.primary != nil || snapshot.secondary != nil || snapshot.credits != nil else {
-                    continue
-                }
                 if best == nil || snapshot.reportedAt > best!.reportedAt {
                     best = snapshot
                 }
