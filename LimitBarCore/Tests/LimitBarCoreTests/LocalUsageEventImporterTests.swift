@@ -100,7 +100,7 @@ struct LocalUsageEventImporterTests {
         let fileURL = try temporaryFile(contents: jsonl)
         let now = try date("2026-07-10T18:00:00Z")
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 2
 
         let result = try LocalUsageEventImporter.importEvents(from: fileURL, to: store, now: now, calendar: calendar)
