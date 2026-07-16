@@ -2,7 +2,6 @@ import XCTest
 
 final class LimitBarUITests: XCTestCase {
     private var app: XCUIApplication!
-    private var runIdentifier: String!
     private var defaultsSuiteName: String!
     private var fixtureDirectory: URL!
     private var fixtureURL: URL!
@@ -11,8 +10,8 @@ final class LimitBarUITests: XCTestCase {
         try super.setUpWithError()
         continueAfterFailure = false
 
-        runIdentifier = UUID().uuidString
-        defaultsSuiteName = "com.talibilat.LimitBar.ui-tests.\(runIdentifier!)"
+        let runIdentifier = UUID().uuidString
+        defaultsSuiteName = "com.talibilat.LimitBar.ui-tests.\(runIdentifier)"
         fixtureDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("limitbar-ui-tests", isDirectory: true)
             .appendingPathComponent(runIdentifier, isDirectory: true)
@@ -38,7 +37,6 @@ final class LimitBarUITests: XCTestCase {
         fixtureURL = nil
         fixtureDirectory = nil
         defaultsSuiteName = nil
-        runIdentifier = nil
         try super.tearDownWithError()
     }
 
