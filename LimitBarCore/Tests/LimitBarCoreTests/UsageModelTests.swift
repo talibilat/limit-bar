@@ -41,7 +41,7 @@ struct UsageModelTests {
     @Test("current week ends at the exclusive following Monday boundary")
     func currentWeekEndIsExclusiveFollowingMonday() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         calendar.firstWeekday = 1
         let followingMonday = try #require(calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 7, day: 13)))
 
