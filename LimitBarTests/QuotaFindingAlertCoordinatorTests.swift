@@ -439,7 +439,7 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
         let body: String
     }
 
-    var status: UNAuthorizationStatus
+    let status: UNAuthorizationStatus
     var shouldFailDelivery = false
     private(set) var added: [Added] = []
 
