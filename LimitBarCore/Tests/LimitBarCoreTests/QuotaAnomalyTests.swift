@@ -80,7 +80,7 @@ struct QuotaAnomalyTests {
 
         var decreased = observations
         let identity = decreased[0].identity
-        decreased[3] = try observation(identity: identity, minute: 30, percent: decreased[2].percentageUsed - 1)
+        decreased[3] = try measuredQuotaObservation(base: base, identity: identity, minute: 30, percent: decreased[2].percentageUsed - 1)
         expectUnavailable(analyze(decreased), .counterDecreased)
 
         expectUnavailable(QuotaAnomalyAnalytics.analyze(
@@ -96,10 +96,10 @@ struct QuotaAnomalyTests {
         let reordered = [original[2], original[0]] + original.reversed() + [original[2]]
         #expect(analyze(Array(reordered)) == analyze(original))
 
-        let conflict = try observation(identity: original[1].identity, minute: 10, percent: original[1].percentageUsed + 1)
+        let conflict = try measuredQuotaObservation(base: base, identity: original[1].identity, minute: 10, percent: original[1].percentageUsed + 1)
         expectUnavailable(analyze(original + [conflict]), .conflictingObservations)
 
-        let correction = try observation(identity: original[6].identity, minute: 60, percent: original[5].percentageUsed + 2)
+        let correction = try measuredQuotaObservation(base: base, identity: original[6].identity, minute: 60, percent: original[5].percentageUsed + 2)
         let corrected = QuotaAnomalyAnalytics.analyze(
             original + [correction],
             now: base.addingTimeInterval(61 * 60),
@@ -114,7 +114,7 @@ struct QuotaAnomalyTests {
         #expect(result.metadata.limitations.contains(.supersededEvidenceExcluded))
         #expect(analyze(original) != corrected)
 
-        let unmatched = try observation(identity: original[0].identity, minute: 70, percent: 30)
+        let unmatched = try measuredQuotaObservation(base: base, identity: original[0].identity, minute: 70, percent: 30)
         let unmatchedState = QuotaAnomalyAnalytics.analyze(
             original,
             now: base.addingTimeInterval(61 * 60),
@@ -264,7 +264,7 @@ struct QuotaAnomalyTests {
             identifier: "primary:300",
             resetBoundary: observations[0].identity.resetBoundary.addingTimeInterval(3_600)
         )
-        let changedWindow = try observation(identity: changedIdentity, minute: 60, percent: observations[6].percentageUsed)
+        let changedWindow = try measuredQuotaObservation(base: base, identity: changedIdentity, minute: 60, percent: observations[6].percentageUsed)
         expectUnavailable(analyze(Array(observations.dropLast()) + [changedWindow]), .incompatibleEvidence)
 
         let unsupported = try QuotaWindowIdentity(
@@ -273,7 +273,7 @@ struct QuotaAnomalyTests {
             resetBoundary: observations[0].identity.resetBoundary
         )
         let unsupportedObservations = try observations.enumerated().map {
-            try observation(identity: unsupported, minute: Double($0.offset) * 10, percent: $0.element.percentageUsed)
+            try measuredQuotaObservation(base: base, identity: unsupported, minute: Double($0.offset) * 10, percent: $0.element.percentageUsed)
         }
         expectUnavailable(analyze(unsupportedObservations), .incompatibleEvidence)
     }
@@ -295,10 +295,10 @@ struct QuotaAnomalyTests {
             resetBoundary: base.addingTimeInterval(5 * 3_600)
         )
         var value = initial
-        var result = [try observation(identity: identity, minute: 0, percent: value)]
+        var result = [try measuredQuotaObservation(base: base, identity: identity, minute: 0, percent: value)]
         for (index, movement) in movements.enumerated() {
             value += movement
-            result.append(try observation(identity: identity, minute: Double(index + 1) * 10, percent: value))
+            result.append(try measuredQuotaObservation(base: base, identity: identity, minute: Double(index + 1) * 10, percent: value))
         }
         return result
     }
@@ -335,15 +335,6 @@ struct QuotaAnomalyTests {
             value: value,
             observedAt: base.addingTimeInterval(60 * 60),
             coverage: .complete
-        )
-    }
-
-    private func observation(identity: QuotaWindowIdentity, minute: Double, percent: Double) throws -> MeasuredQuotaObservation {
-        try MeasuredQuotaObservation(
-            identity: identity,
-            percentageUsed: percent,
-            observedAt: base.addingTimeInterval(minute * 60),
-            source: .codexLocalReport
         )
     }
 
