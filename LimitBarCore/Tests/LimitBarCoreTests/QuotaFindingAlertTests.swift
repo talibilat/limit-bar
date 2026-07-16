@@ -9,7 +9,7 @@ struct QuotaFindingAlertTests {
     @Test("qualified forecast uses the existing quota rule and privacy-safe copy")
     func qualifiedForecastCandidate() throws {
         let rule = QuotaAlertRule(
-            id: UUID(uuidString: "D706BCEA-4356-4763-987D-404B9E6B73BC")!,
+            id: try #require(UUID(uuidString: "D706BCEA-4356-4763-987D-404B9E6B73BC")),
             product: .codex,
             thresholds: try PercentageThresholds([70, 90])
         )
