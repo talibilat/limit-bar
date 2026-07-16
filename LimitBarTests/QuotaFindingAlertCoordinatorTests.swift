@@ -13,7 +13,6 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         for path in databasePaths {
             try? FileManager.default.removeItem(atPath: path)
         }
-        databasePaths = []
         super.tearDown()
     }
 
