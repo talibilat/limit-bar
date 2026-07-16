@@ -141,7 +141,7 @@ private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
 }
 
 private struct AppUITestClaudeRateLimitsClient: ClaudeRateLimitsFetching {
-    func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+    func fetchRateLimits(accessToken: String) -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
         .success(ClaudeRateLimitSnapshot(
             limits: [
                 ClaudeRateLimit(
