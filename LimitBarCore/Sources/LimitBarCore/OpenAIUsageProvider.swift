@@ -385,10 +385,8 @@ public enum OpenAIRefreshPersistence {
 
         let state: ProviderConnectionState = if succeeded {
             .connected
-        } else if failure != nil {
-            .failed
         } else {
-            .cancelled
+            .failed
         }
         return ProviderDiagnostic(
             provider: .openAI,
