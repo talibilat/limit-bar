@@ -1075,11 +1075,6 @@ public enum DiagnosticExport {
         Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / 60) * 60)
     }
 
-    static func isBoundedEvidenceText(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.count <= maximumEvidenceTextLength
-            && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
-    }
-
     static func isSafeEvidenceToken(_ value: String) -> Bool {
         (1...maximumEvidenceTextLength).contains(value.utf8.count) && value.utf8.allSatisfy {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 46 || $0 == 95
