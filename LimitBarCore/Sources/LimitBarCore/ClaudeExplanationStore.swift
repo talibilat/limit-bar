@@ -116,8 +116,10 @@ public final class SQLiteClaudeExplanationStore: @unchecked Sendable {
         let step = sqlite3_step(statement)
         if step == SQLITE_DONE { return nil }
         guard step == SQLITE_ROW, let text = sqlite3_column_text(statement, 0),
-              let data = String(cString: text).data(using: .utf8),
-              let stored = try? JSONDecoder().decode(StoredClaudeExplanation.self, from: data) else {
+              let stored = try? JSONDecoder().decode(
+                  StoredClaudeExplanation.self,
+                  from: Data(String(cString: text).utf8)
+              ) else {
             throw ClaudeExplanationStoreError.readFailed
         }
         return stored.state(now: now)
