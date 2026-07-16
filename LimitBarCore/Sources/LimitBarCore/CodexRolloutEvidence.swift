@@ -260,7 +260,7 @@ public enum CodexRolloutEvidenceAdapter {
               let sessionID = payload.sessionID, UUID(uuidString: sessionID) != nil,
               let threadID = payload.id, UUID(uuidString: threadID) != nil,
               let creatorVersion = payload.cliVersion,
-              parseTimestamp(metadata.timestamp) != nil else {
+              metadata.timestamp.flatMap({ CollectorSchemaV1.parseTimestamp($0) }) != nil else {
             return failed(.malformedRecord, completeLineCount: completeLines.count)
         }
         guard creatorVersion == supportedCreatorVersion else {
@@ -280,7 +280,7 @@ public enum CodexRolloutEvidenceAdapter {
         for (offset, line) in completeLines.dropFirst().enumerated() {
             let ordinal = offset + 2
             guard let envelope = try? JSONDecoder().decode(Envelope.self, from: line),
-                  let timestamp = parseTimestamp(envelope.timestamp),
+                  let timestamp = envelope.timestamp.flatMap({ CollectorSchemaV1.parseTimestamp($0) }),
                   envelope.type == "event_msg", let payload = envelope.payload else {
                 barriers.append(.malformedRecord)
                 previous = nil
@@ -390,13 +390,6 @@ public enum CodexRolloutEvidenceAdapter {
             coverageStart: nil,
             coverageEnd: nil
         )
-    }
-
-    private static func parseTimestamp(_ text: String?) -> Date? {
-        guard let text else { return nil }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
     }
 
     private static func quotaSnapshot(_ raw: Envelope.Payload.RateLimits?, observedAt: Date) -> CodexRateLimitSnapshot? {
