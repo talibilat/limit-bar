@@ -90,7 +90,7 @@ struct UsageModelTests {
         localCalendar.timeZone = try #require(TimeZone(identifier: "Pacific/Kiritimati"))
         localCalendar.firstWeekday = 1
         var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        utcCalendar.timeZone = .gmt
         let reference = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 12, hour: 23, minute: 59)))
         let expectedStart = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 6)))
         let expectedEnd = try #require(utcCalendar.date(from: DateComponents(year: 2026, month: 7, day: 13)))
