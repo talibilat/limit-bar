@@ -389,7 +389,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
 @MainActor
 private struct InjectedWorkloadPlanningData: WorkloadPlanningDataProviding {
     let expected: WorkloadPlanningSurfaceResult
-    var inputSupport: WorkloadPlanningInputSupport? { nil }
+    let inputSupport: WorkloadPlanningInputSupport? = nil
 
     func result(workUnits: Int, concurrency: Int, now: Date) -> WorkloadPlanningSurfaceResult {
         expected
