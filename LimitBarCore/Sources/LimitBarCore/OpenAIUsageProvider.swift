@@ -351,7 +351,6 @@ public enum OpenAIRefreshPersistence {
         try store.markMetricsInitialized()
         var succeeded = false
         var failure: ProviderFailureReason?
-        var wasCancelled = false
 
         switch batch.usage {
         case let .success(metrics):
@@ -367,7 +366,7 @@ public enum OpenAIRefreshPersistence {
             )
             failure = reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         switch batch.cost {
@@ -381,17 +380,15 @@ public enum OpenAIRefreshPersistence {
             try ProviderCostRefreshPersistence.markFailed(provider: .openAI, in: store, window: windows.utcBillingWeek)
             failure = failure ?? reason
         case .cancelled:
-            wasCancelled = true
+            break
         }
 
         let state: ProviderConnectionState = if succeeded {
             .connected
         } else if failure != nil {
             .failed
-        } else if wasCancelled {
-            .cancelled
         } else {
-            .failed
+            .cancelled
         }
         return ProviderDiagnostic(
             provider: .openAI,
