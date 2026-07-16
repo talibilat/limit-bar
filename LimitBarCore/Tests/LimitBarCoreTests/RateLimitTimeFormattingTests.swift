@@ -5,8 +5,7 @@ import Testing
 @Suite("Rate limit time formatting")
 struct RateLimitTimeFormattingTests {
     private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
+        var calendar = gregorianGMTCalendar()
         calendar.locale = Locale(identifier: "en_US_POSIX")
         return calendar
     }
