@@ -94,7 +94,7 @@ struct DiagnosticExportTests {
     }
 
     @Test("forecast and anomaly states require complete typed evidence")
-    func analyticalEvidenceInvariants() throws {
+    func analyticalEvidenceInvariants() {
         #expect(throws: DiagnosticExportError.invalidQuotaEvidence) {
             try DiagnosticEvidenceForecast(status: .available, method: .pairwisePositiveSlopeInterquartileV2, qualification: .qualified, unavailableReason: nil, observationCount: 4, observationSpanSeconds: 900, evidenceAgeSeconds: 10, range: nil, resetInteraction: .beforeReportedReset, evidenceTraceReferences: ["aaaaaaaaaaaa"], limitations: [.providerWeightingUnknown])
         }
