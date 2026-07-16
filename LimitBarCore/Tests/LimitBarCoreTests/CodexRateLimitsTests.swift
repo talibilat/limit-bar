@@ -133,7 +133,7 @@ struct CodexRateLimitsTests {
         try #"{"timestamp":"2026-07-10T00:00:00Z","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":40.0,"window_minutes":300,"resets_at":200},"plan_type":"plus"}}}"#
             .write(to: newer, atomically: true, encoding: .utf8)
 
-        let now = ISO8601DateFormatter().date(from: "2026-07-10T00:01:00Z")!
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-10T00:01:00Z"))
         let snapshot = try CodexSessionRateLimitReader.latestSnapshot(sessionsDirectory: root, now: now, fileManager: fileManager)
 
         #expect(snapshot.primary?.percentUsed == 40.0)
