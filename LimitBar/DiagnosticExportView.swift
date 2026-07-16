@@ -117,7 +117,6 @@ enum DiagnosticExportInputBuilder {
             throw DiagnosticExportError.invalidVersion
         }
         let parsed = components.compactMap { Int($0) }
-        guard parsed.count == components.count else { throw DiagnosticExportError.invalidVersion }
         let numbers = parsed + Array(repeating: 0, count: 3 - components.count)
         return try DiagnosticVersion(major: numbers[0], minor: numbers[1], patch: numbers[2])
     }
