@@ -209,7 +209,7 @@ struct CodexRolloutEvidenceTests {
             tokenLine(at: "2026-07-01T10:01:00Z", info: "null", rateLimits: rateLimits(percent: 5, reset: 1_783_716_600)),
             tokenLine(at: "2026-07-15T10:10:01Z", info: "null", rateLimits: rateLimits(percent: 6, reset: 1_783_716_600))
         ]).write(to: root.appendingPathComponent("rollout.jsonl"))
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T10:00:00Z")!
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-15T10:00:00Z"))
 
         let publication = try CodexSessionEvidenceReader.scan(sessionsDirectory: root, now: now, identityKey: Data("key".utf8), fileManager: fileManager)
 
