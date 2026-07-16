@@ -14,8 +14,6 @@ final class LocalRefreshSettingsStoreTests: XCTestCase {
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
         super.tearDown()
     }
 
