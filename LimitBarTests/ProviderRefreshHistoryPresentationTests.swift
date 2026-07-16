@@ -134,7 +134,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
 
     func testRefreshExecutionCarriesServiceWindowsAcrossBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        calendar.timeZone = .gmt
         let before = try CurrentUsageWindows.resolve(
             at: try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-01-04T23:59:00Z")),
             calendar: calendar
