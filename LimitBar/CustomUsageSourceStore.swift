@@ -58,9 +58,9 @@ struct CustomUsageSourceStore {
     private static func json(from sources: [CustomUsageSource]) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(sources), let json = String(data: data, encoding: .utf8) else {
+        guard let data = try? encoder.encode(sources) else {
             return defaultJSON
         }
-        return json
+        return String(decoding: data, as: UTF8.self)
     }
 }
