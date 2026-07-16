@@ -12,7 +12,7 @@ struct PlannedWorkloadAssessmentTests {
         let result = WorkloadPlanning.assess(
             try fixture.plan(units: 10),
             historicalRuns: try fixture.runs(requirements: [18, 20, 22, 24]),
-            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            currentEvidence: try fixture.current(used: 30, burn: 5...10),
             now: fixture.now
         )
 
@@ -53,7 +53,7 @@ struct PlannedWorkloadAssessmentTests {
 
         guard case let .available(value) = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         ) else {
             Issue.record("Expected compatible runs to remain available")
             return
@@ -79,7 +79,7 @@ struct PlannedWorkloadAssessmentTests {
         )
         let result = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: [original, corrected] + runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
 
         guard case let .available(value) = result else {
@@ -106,7 +106,7 @@ struct PlannedWorkloadAssessmentTests {
         )
         let result = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: high + retryFlood + [alternatives[1], conflict],
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
 
         guard case let .available(value) = result else {
@@ -123,7 +123,7 @@ struct PlannedWorkloadAssessmentTests {
     func latestCurrentObservation() throws {
         let fixture = try Fixture(start: start)
         let runs = try fixture.runs(requirements: [18, 20, 22, 24])
-        let older = fixture.current(used: 30, burn: 5...10, passOlderObservation: true)
+        let older = try fixture.current(used: 30, burn: 5...10, passOlderObservation: true)
 
         let result = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs, currentEvidence: older, now: fixture.now
@@ -140,15 +140,15 @@ struct PlannedWorkloadAssessmentTests {
         let runs = try fixture.runs(requirements: [18, 20, 22, 24])
         let unqualified = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.unqualified(), now: fixture.now
+            currentEvidence: try fixture.unqualified(), now: fixture.now
         )
         let stale = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.staleCurrent(), now: fixture.now
+            currentEvidence: try fixture.staleCurrent(), now: fixture.now
         )
         let expired = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10),
+            currentEvidence: try fixture.current(used: 30, burn: 5...10),
             now: fixture.currentIdentity.resetBoundary
         )
 
@@ -168,23 +168,23 @@ struct PlannedWorkloadAssessmentTests {
 
         let exhaustionFirst = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 10, burn: 60...90), now: fixture.now
+            currentEvidence: try fixture.current(used: 10, burn: 60...90), now: fixture.now
         )
         let resetFirst = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         let straddling = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+            currentEvidence: try fixture.current(used: 10, burn: 20...40), now: fixture.now
         )
         let equal = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: long,
-            currentEvidence: fixture.current(used: 30, burn: 10...20), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 10...20), now: fixture.now
         )
         let completesBeforeOverlap = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: short,
-            currentEvidence: fixture.current(used: 10, burn: 20...40), now: fixture.now
+            currentEvidence: try fixture.current(used: 10, burn: 20...40), now: fixture.now
         )
 
         #expect(exhaustionFirst.available?.conclusion == .likelyExhaustionBeforeCompletion)
@@ -204,7 +204,7 @@ struct PlannedWorkloadAssessmentTests {
         let runs = try fixture.runs(requirements: [18, 20, 22, 24], durations: Array(repeating: exactDuration, count: 4))
         let result = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: runs,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         #expect(result.indeterminate?.reason == .completionOverlapsReset)
     }
@@ -215,11 +215,11 @@ struct PlannedWorkloadAssessmentTests {
         let high = try fixture.runs(requirements: [75, 78, 81, 84])
         let resetFirst = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: high,
-            currentEvidence: fixture.current(used: 30, burn: 5...10), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 5...10), now: fixture.now
         )
         let exhaustionFirst = WorkloadPlanning.assess(
             try fixture.plan(units: 10), historicalRuns: high,
-            currentEvidence: fixture.current(used: 30, burn: 60...90), now: fixture.now
+            currentEvidence: try fixture.current(used: 30, burn: 60...90), now: fixture.now
         )
 
         let option = resetFirst.available?.options.first { $0.kind == .deferUntilReset }
@@ -346,12 +346,12 @@ private struct Fixture {
         used: Double,
         burn: ClosedRange<Double>,
         passOlderObservation: Bool = false
-    ) -> CurrentWorkloadQuotaEvidence {
-        let older = try! MeasuredQuotaObservation(
+    ) throws -> CurrentWorkloadQuotaEvidence {
+        let older = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: max(0, used - 1),
             observedAt: start.addingTimeInterval(20 * 60), source: .codexLocalReport
         )
-        let latest = try! MeasuredQuotaObservation(
+        let latest = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: used,
             observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
@@ -375,8 +375,8 @@ private struct Fixture {
         )
     }
 
-    func unqualified() -> CurrentWorkloadQuotaEvidence {
-        let observation = try! MeasuredQuotaObservation(
+    func unqualified() throws -> CurrentWorkloadQuotaEvidence {
+        let observation = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: 30,
             observedAt: start.addingTimeInterval(30 * 60), source: .codexLocalReport
         )
@@ -396,8 +396,8 @@ private struct Fixture {
         )
     }
 
-    func staleCurrent() -> CurrentWorkloadQuotaEvidence {
-        let observation = try! MeasuredQuotaObservation(
+    func staleCurrent() throws -> CurrentWorkloadQuotaEvidence {
+        let observation = try MeasuredQuotaObservation(
             identity: currentIdentity, percentageUsed: 30,
             observedAt: start.addingTimeInterval(-7 * 60 * 60), source: .codexLocalReport
         )
