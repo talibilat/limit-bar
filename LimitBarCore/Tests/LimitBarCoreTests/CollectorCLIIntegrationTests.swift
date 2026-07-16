@@ -52,7 +52,7 @@ struct CollectorCLIIntegrationTests {
         let parentMetrics = imported.metrics
         let activeBytes = try Data(contentsOf: activeFile)
         let deliveryStore = try SQLiteAlertDeliveryStore(path: databasePath)
-        let ruleID = UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D")!
+        let ruleID = try #require(UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D"))
         let window = try QuotaWindowIdentity(product: .codex, identifier: "primary", resetBoundary: now.addingTimeInterval(3_600))
         let occurrence = AlertOccurrence(ruleID: ruleID, window: .quota(window), thresholds: [75])
         let reservation = try #require(try deliveryStore.reserve(occurrence, now: now))
