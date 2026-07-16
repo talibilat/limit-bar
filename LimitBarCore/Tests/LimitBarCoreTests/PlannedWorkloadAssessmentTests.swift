@@ -422,6 +422,6 @@ private struct Fixture {
 
 }
 
-private func uuid(_ value: Int) throws -> UUID {
+func uuid(_ value: Int) throws -> UUID {
     try #require(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value)))
 }

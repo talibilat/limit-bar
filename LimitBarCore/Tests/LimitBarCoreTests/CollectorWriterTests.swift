@@ -270,10 +270,6 @@ struct CollectorWriterTests {
         )
     }
 
-    private func uuid(_ value: Int) throws -> UUID {
-        try #require(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value)))
-    }
-
     private func temporaryOutput() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
