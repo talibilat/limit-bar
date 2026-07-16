@@ -544,7 +544,7 @@ public enum CostBudgetObservationBuilder {
         now: Date = Date(),
         maximumMeasurementAge: TimeInterval = CostBudgetObservationBuilder.maximumMeasurementAge
     ) -> [CostBudgetObservation] {
-        let eligible = metrics.compactMap { metric -> (UsageMetric, ProviderProduct, ExactUsageWindow, UsageMetricSource)? in
+        let eligible = metrics.compactMap { metric -> (UsageMetric, ProviderProduct, ExactUsageWindow, UsageMetricSource, Date)? in
             guard !metric.freshness.isStale,
                   let product = ProviderProduct(provider: metric.provider),
                   case let .bounded(source, window) = metric.provenance,
@@ -555,7 +555,7 @@ public enum CostBudgetObservationBuilder {
                   refreshedAt <= now,
                   now.timeIntervalSince(refreshedAt) <= maximumMeasurementAge,
                   now < window.end else { return nil }
-            return (metric, product, window, source)
+            return (metric, product, window, source, refreshedAt)
         }
         let grouped = Dictionary(grouping: eligible) { SelectionKey(product: $0.1, window: $0.2) }
         var totals: [TotalKey: (amount: Decimal, observedAt: Date)] = [:]
@@ -565,7 +565,7 @@ public enum CostBudgetObservationBuilder {
             let apiEntries = entries.filter { $0.3 == .providerAPI }
             let localEntries = entries.filter { $0.3 == .builtInLocalLog }
 
-            for (metric, product, window, _) in apiEntries {
+            for (metric, product, window, _, refreshedAt) in apiEntries {
                 if let stored = metric.cost,
                    stored.source == .providerReported,
                    valid(cost: stored) {
@@ -573,7 +573,7 @@ public enum CostBudgetObservationBuilder {
                         stored,
                         product: product,
                         window: window,
-                        observedAt: metric.refreshedAt!,
+                        observedAt: refreshedAt,
                         to: &totals,
                         invalidTotals: &invalidTotals
                     )
@@ -583,7 +583,7 @@ public enum CostBudgetObservationBuilder {
             let apiCalculated = apiEntries.filter { hasCalculatedMeasure($0.0) }
             let localCalculated = localEntries.filter { hasCalculatedMeasure($0.0) }
             let calculatedEntries = apiCalculated.isEmpty ? localCalculated : apiCalculated
-            for (metric, product, window, _) in calculatedEntries {
+            for (metric, product, window, _, refreshedAt) in calculatedEntries {
                 let calculated: Cost?
                 if let stored = metric.cost, stored.source == .calculatedEstimate {
                     calculated = stored
@@ -595,7 +595,7 @@ public enum CostBudgetObservationBuilder {
                         calculated,
                         product: product,
                         window: window,
-                        observedAt: metric.refreshedAt!,
+                        observedAt: refreshedAt,
                         to: &totals,
                         invalidTotals: &invalidTotals
                     )
