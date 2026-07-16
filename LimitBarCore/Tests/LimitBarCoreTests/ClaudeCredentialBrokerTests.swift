@@ -84,7 +84,7 @@ struct ClaudeCredentialBrokerTests {
 
     @Test("interactive authorization retries after passive interaction requirement")
     func interactiveRetries() async throws {
-        let query = SequenceQuerySpy(responses: [
+        let query = QuerySpy(responses: [
             SecurityQueryResponse(status: errSecInteractionNotAllowed, data: nil),
             SecurityQueryResponse(status: errSecSuccess, data: try credentialData(expiresAt: 2_000))
         ])
@@ -98,23 +98,12 @@ struct ClaudeCredentialBrokerTests {
 
 private final class QuerySpy: @unchecked Sendable {
     private let lock = NSLock()
-    private let response: SecurityQueryResponse
+    private var responses: [SecurityQueryResponse]
     private(set) var queries: [[CFString: Any]] = []
 
     init(status: OSStatus, data: Data? = nil) {
-        response = SecurityQueryResponse(status: status, data: data)
+        responses = [SecurityQueryResponse(status: status, data: data)]
     }
-
-    func call(_ query: [CFString: Any]) -> SecurityQueryResponse {
-        lock.withLock { queries.append(query) }
-        return response
-    }
-}
-
-private final class SequenceQuerySpy: @unchecked Sendable {
-    private let lock = NSLock()
-    private var responses: [SecurityQueryResponse]
-    private(set) var queries: [[CFString: Any]] = []
 
     init(responses: [SecurityQueryResponse]) {
         self.responses = responses
@@ -123,7 +112,7 @@ private final class SequenceQuerySpy: @unchecked Sendable {
     func call(_ query: [CFString: Any]) -> SecurityQueryResponse {
         lock.withLock {
             queries.append(query)
-            return responses.removeFirst()
+            return responses.count == 1 ? responses[0] : responses.removeFirst()
         }
     }
 }
