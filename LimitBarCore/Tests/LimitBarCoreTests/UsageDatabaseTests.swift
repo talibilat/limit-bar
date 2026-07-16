@@ -956,7 +956,7 @@ struct UsageDatabaseTests {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
         let now = Date(timeIntervalSince1970: 1_783_716_000)
         try #"{"schemaVersion":2,"eventID":"00000000-0000-0000-0000-000000000001","provider":"openAI","timestamp":"2026-07-10T10:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":2,"projectID":"alpha"}"#.write(to: fileURL, atomically: true, encoding: .utf8)
-        var initial: StoredUsageMetricsSnapshot!
+        let initial: StoredUsageMetricsSnapshot
         do {
             let database = UsageDatabase(pathFactory: { path }, localEventsURL: fileURL)
             initial = await database.snapshot(now: now, calendar: utcCalendar())
