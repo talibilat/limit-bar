@@ -376,15 +376,15 @@ public final class HistoricalUsageTrendStore {
                 providerReportedCost: try decodeCost(statement, amount: 18, currency: 19, source: .providerReported),
                 calculatedCost: try decodeCalculatedCost(statement)
             )
-            let storedFinality = HistoricalUsageObservationLifecycle(rawValue: requiredString(statement, index: 15))
-            guard storedFinality == .provisional || storedFinality == .final else {
+            guard let storedFinality = HistoricalUsageObservationLifecycle(rawValue: requiredString(statement, index: 15)),
+                  storedFinality == .provisional || storedFinality == .final else {
                 throw HistoricalUsageTrendStoreError.decodeFailed("Invalid observation finality")
             }
             return HistoricalUsageTrendObservation(
                 id: id,
                 revision: Int(sqlite3_column_int64(statement, 2)),
                 supersedesID: stringColumn(statement, index: 1).flatMap(UUID.init(uuidString:)),
-                lifecycle: sqlite3_column_int(statement, 24) == 1 ? .superseded : storedFinality!,
+                lifecycle: sqlite3_column_int(statement, 24) == 1 ? .superseded : storedFinality,
                 recordedAt: dateColumn(statement, index: 14),
                 sample: sample
             )
