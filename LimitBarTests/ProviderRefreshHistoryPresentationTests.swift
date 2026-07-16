@@ -467,7 +467,7 @@ private actor AttributionDeletionStub: AttributionEvidenceDeleting {
         self.shouldFail = shouldFail
     }
 
-    func deleteAllAttributionEvidence(now: Date) async throws {
+    func deleteAllAttributionEvidence(now: Date) throws {
         calls += 1
         if shouldFail { throw AttributionDeletionTestError.failed }
     }
