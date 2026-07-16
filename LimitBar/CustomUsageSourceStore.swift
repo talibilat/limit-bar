@@ -26,8 +26,7 @@ struct CustomUsageSourceStore {
     var sources: [CustomUsageSource] {
         get {
             let json = defaults.string(forKey: Self.storageKey) ?? Self.defaultJSON
-            guard let data = json.data(using: .utf8) else { return [] }
-            return (try? JSONDecoder().decode([CustomUsageSource].self, from: data)) ?? []
+            return (try? JSONDecoder().decode([CustomUsageSource].self, from: Data(json.utf8))) ?? []
         }
         nonmutating set {
             defaults.set(Self.json(from: newValue), forKey: Self.storageKey)
