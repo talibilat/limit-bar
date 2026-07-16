@@ -405,27 +405,27 @@ struct ProviderSettingsView: View {
                 let fetchedOutcome = ProviderRefreshOutcome(usage: refreshResult.usage, cost: refreshResult.cost)
                 outcome = diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed
             case .unsupported:
-                let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.insufficientPermissions), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .unsupported
                 settings[index].state = .unsupported
                 settings[index].failureReason = nil
                 outcome = .authenticationFailure
             case .adminRequired:
-                let diagnostic = await openAIRefreshService.apply(.failure(.insufficientPermissions), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.insufficientPermissions), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].openAIOAuthFeasibility = .adminCredentialRequired
                 settings[index].state = .adminRequired
                 settings[index].failureReason = .insufficientPermissions
                 outcome = .authenticationFailure
             case .expired:
-                let diagnostic = await openAIRefreshService.apply(.failure(.expiredCredential), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(.expiredCredential), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = .expired
                 settings[index].failureReason = .expiredCredential
                 outcome = .authenticationFailure
             case let .failure(reason):
-                let diagnostic = await openAIRefreshService.apply(.failure(reason), windows: batch.windows, generation: batch.generation)
+                let diagnostic = await UsageDatabase.shared.applyOpenAI(.failure(reason), windows: batch.windows, expectedGeneration: batch.generation)
                 guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
                 settings[index].state = diagnostic.state
                 settings[index].failureReason = diagnostic.failureReason

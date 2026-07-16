@@ -48,8 +48,4 @@ struct OpenAIRefreshService {
         guard !Task.isCancelled else { return nil }
         return Batch(result: .supported(OpenAIRefreshBatch(usage: usage, cost: costs)), windows: windows, generation: generation)
     }
-
-    func apply(_ result: OpenAIRefreshResult, windows: CurrentUsageWindows, generation: UInt64) async -> ProviderDiagnostic {
-        await UsageDatabase.shared.applyOpenAI(result, windows: windows, expectedGeneration: generation)
-    }
 }
