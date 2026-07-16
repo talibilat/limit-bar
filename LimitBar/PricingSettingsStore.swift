@@ -60,10 +60,7 @@ struct PricingSettingsStore {
     }
 
     private static func entries(from json: String) -> [PricingEntry] {
-        guard let data = json.data(using: .utf8) else {
-            return []
-        }
-        return (try? JSONDecoder().decode([PricingEntry].self, from: data)) ?? []
+        (try? JSONDecoder().decode([PricingEntry].self, from: Data(json.utf8))) ?? []
     }
 
     private static func json(from entries: [PricingEntry]) -> String {
