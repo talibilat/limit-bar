@@ -854,7 +854,6 @@ public struct DiagnosticExportReport: Codable, Equatable, Sendable {
 public typealias DiagnosticExportReportV1 = DiagnosticExportReport
 
 private struct LegacyDiagnosticExportReportV1: Codable {
-    let schemaVersion: Int
     let generatedAt: Date
     let application: DiagnosticExportReport.Application
     let operatingSystem: DiagnosticExportReport.OperatingSystem
@@ -953,7 +952,7 @@ public enum DiagnosticExport {
             if envelope.schemaVersion == 1 {
                 let legacy = try decoder.decode(LegacyDiagnosticExportReportV1.self, from: bytes)
                 report = DiagnosticExportReport(
-                    schemaVersion: legacy.schemaVersion,
+                    schemaVersion: envelope.schemaVersion,
                     generatedAt: legacy.generatedAt,
                     application: legacy.application,
                     operatingSystem: legacy.operatingSystem,
