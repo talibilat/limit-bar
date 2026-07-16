@@ -3,6 +3,11 @@ import Foundation
 import LimitBarCore
 import os
 
+private func milliseconds(_ duration: Duration) -> Double {
+    let components = duration.components
+    return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
+}
+
 @main
 struct LimitBarRefreshProfiler {
     static func main() async throws {
@@ -67,11 +72,6 @@ struct LimitBarRefreshProfiler {
             cadenceOverrunCount: cadenceOverrunCount,
             resources: resourceAccumulator.resources
         )
-    }
-
-    private static func milliseconds(_ duration: Duration) -> Double {
-        let components = duration.components
-        return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 
     private static func profileEnvironment() -> RefreshProfileEnvironment {
@@ -230,7 +230,7 @@ private final class RefreshProfileFixture {
                 await coordinator.stop()
                 throw RefreshProfileFailure.snapshotStreamEnded
             }
-            let publicationMilliseconds = Self.milliseconds(snapshot.triggeredAt.duration(to: .now))
+            let publicationMilliseconds = milliseconds(snapshot.triggeredAt.duration(to: .now))
             durations.append(publicationMilliseconds)
             aggregateResultCount += (snapshot.usage?.snapshot.metrics.count ?? 0) + (snapshot.codex == nil ? 0 : 1)
         }
@@ -304,10 +304,6 @@ private final class RefreshProfileFixture {
         )
     }
 
-    private static func milliseconds(_ duration: Duration) -> Double {
-        let components = duration.components
-        return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1_000_000_000_000_000
-    }
 }
 
 private enum RefreshProfileFailure: Error {
