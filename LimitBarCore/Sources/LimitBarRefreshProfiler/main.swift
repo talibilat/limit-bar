@@ -54,11 +54,8 @@ struct LimitBarRefreshProfiler {
             let start = ContinuousClock.now
             os_signpost(.begin, log: signpostLog, name: "ProfiledOperation")
             do {
+                defer { os_signpost(.end, log: signpostLog, name: "ProfiledOperation") }
                 aggregateResultCount += try await operation()
-                os_signpost(.end, log: signpostLog, name: "ProfiledOperation")
-            } catch {
-                os_signpost(.end, log: signpostLog, name: "ProfiledOperation")
-                throw error
             }
             let duration = start.duration(to: .now)
             durations.append(milliseconds(duration))
