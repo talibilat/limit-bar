@@ -69,7 +69,7 @@ struct LimitBarRefreshBenchmark {
         let databasePath = root.appendingPathComponent("custom.sqlite").path
         let database = UsageDatabase(pathFactory: { databasePath }, localEventsURL: emptyBuiltIn)
         let source = CustomUsageSource(
-            id: UUID(uuidString: "4A613A87-9D4D-4208-80D5-7F6D94A6DBE7")!,
+            id: UUID(),
             name: "Synthetic source",
             filePath: events.path
         )
