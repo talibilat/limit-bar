@@ -204,7 +204,6 @@ public enum OpenAIUsageMapper {
         let projectName: String?
         let model: String?
         let inputTokens: Int
-        let cachedInputTokens: Int?
         let outputTokens: Int
 
         enum CodingKeys: String, CodingKey {
@@ -212,7 +211,6 @@ public enum OpenAIUsageMapper {
             case projectName = "project_name"
             case model
             case inputTokens = "input_tokens"
-            case cachedInputTokens = "input_cached_tokens"
             case outputTokens = "output_tokens"
         }
     }
