@@ -406,10 +406,10 @@ struct AnthropicUsageProviderTests {
         }
     }
 
-    private func date(_ value: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: value))
-    }
+}
 
+func date(_ value: String) throws -> Date {
+    try #require(ISO8601DateFormatter().date(from: value))
 }
 
 func utcCalendar() -> Calendar {

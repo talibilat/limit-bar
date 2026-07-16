@@ -1103,9 +1103,6 @@ struct UsageDatabaseTests {
         return calendar
     }
 
-    private func date(_ iso8601: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: iso8601))
-    }
 }
 
 private actor SuspendedCustomLoader {

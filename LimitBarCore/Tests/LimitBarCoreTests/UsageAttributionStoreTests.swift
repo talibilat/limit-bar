@@ -106,10 +106,6 @@ struct UsageAttributionStoreTests {
         )
     }
 
-    private func date(_ value: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: value))
-    }
-
     private func execute(_ sql: String, path: String) throws {
         var database: OpaquePointer?
         guard sqlite3_open(path, &database) == SQLITE_OK else { throw UsageAttributionStoreError.openFailed }

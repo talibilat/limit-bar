@@ -322,10 +322,6 @@ struct CustomUsageSourceTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func date(_ iso8601: String) throws -> Date {
-        try #require(ISO8601DateFormatter().date(from: iso8601))
-    }
-
     private func utcCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .gmt
