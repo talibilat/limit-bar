@@ -71,7 +71,7 @@ private actor LocalCodexSourceSpy: LocalCodexScanning {
 
     init(snapshot: CodexRateLimitSnapshot?) { self.snapshot = snapshot }
 
-    func scan(now: Date) -> CodexRateLimitSnapshot? {
+    func scan(now _: Date) -> CodexRateLimitSnapshot? {
         callCount += 1
         return snapshot
     }
