@@ -772,25 +772,21 @@ public actor UsageDatabase {
         let sourceURLs = [databaseURL, attributionURL].flatMap { url in
             [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
         }.filter { fileManager.fileExists(atPath: $0.path) }
-        do {
-            for source in sourceURLs {
-                try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
-            }
-            var removed: [URL] = []
-            for source in sourceURLs {
-                do {
-                    try fileManager.removeItem(at: source)
-                    removed.append(source)
-                } catch {
-                    for removedURL in removed {
-                        let archived = archiveURL.appendingPathComponent(removedURL.lastPathComponent)
-                        try? fileManager.copyItem(at: archived, to: removedURL)
-                    }
-                    throw error
+        for source in sourceURLs {
+            try fileManager.copyItem(at: source, to: archiveURL.appendingPathComponent(source.lastPathComponent))
+        }
+        var removed: [URL] = []
+        for source in sourceURLs {
+            do {
+                try fileManager.removeItem(at: source)
+                removed.append(source)
+            } catch {
+                for removedURL in removed {
+                    let archived = archiveURL.appendingPathComponent(removedURL.lastPathComponent)
+                    try? fileManager.copyItem(at: archived, to: removedURL)
                 }
+                throw error
             }
-        } catch {
-            throw error
         }
         return archiveURL
     }
