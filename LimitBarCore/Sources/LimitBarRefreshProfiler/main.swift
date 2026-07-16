@@ -129,7 +129,7 @@ private final class RefreshProfileFixture {
         sessionsDirectory = root.appendingPathComponent("sessions", isDirectory: true)
         now = Date()
         var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        utcCalendar.timeZone = .gmt
         calendar = utcCalendar
 
         let eventTimestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-60))
