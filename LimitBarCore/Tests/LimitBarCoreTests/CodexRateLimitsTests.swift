@@ -478,7 +478,7 @@ private final class BudgetReaderSpy: @unchecked Sendable {
     private(set) var requestedByteCounts: [Int] = []
     private(set) var returnedByteCount = 0
     init(maximumReturnSize: Int) { self.maximumReturnSize = maximumReturnSize }
-    func read(_ url: URL, byteCount: Int) throws -> Data {
+    func read(_ url: URL, byteCount: Int) -> Data {
         lock.withLock {
             requestedByteCounts.append(byteCount)
             let count = min(byteCount, maximumReturnSize)
