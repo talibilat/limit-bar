@@ -90,7 +90,7 @@ enum CollectorSchema {
     }
 
     private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard let number = value as? NSNumber else { return nil }
         guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         return Int(exactly: number)
     }
@@ -225,7 +225,7 @@ public enum CollectorSchemaV2 {
     }
 
     private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
+        guard let number = value as? NSNumber else { return nil }
         guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         let decimal = number.decimalValue
         return Int(NSDecimalNumber(decimal: decimal).stringValue)
