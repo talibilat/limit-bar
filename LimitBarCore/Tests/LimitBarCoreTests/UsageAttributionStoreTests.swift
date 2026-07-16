@@ -10,7 +10,7 @@ struct UsageAttributionStoreTests {
         let store = try SQLiteUsageAttributionStore.inMemory()
         let now = try date("2026-07-12T12:00:00Z")
         let builtIn = try breakdown(source: .builtInLocalLog, project: "alpha", observedAt: now)
-        let customID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let customID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let custom = try breakdown(source: .custom(customID), project: "custom", observedAt: now)
 
         try store.replace([builtIn], source: .builtInLocalLog, sourceRevision: "revision-a", now: now)
