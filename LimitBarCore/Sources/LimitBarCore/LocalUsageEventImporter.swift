@@ -98,7 +98,8 @@ public enum LocalUsageEventParser {
             throw LocalUsageEventError.unsupportedProvider
         }
 
-        guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
+        guard let timestampText = raw.timestamp,
+              let timestamp = CollectorSchemaV1.parseTimestamp(timestampText) else {
             throw LocalUsageEventError.missingRequiredField("timestamp")
         }
 
@@ -146,16 +147,6 @@ public enum LocalUsageEventParser {
         )
     }
 
-    private static func parseTimestamp(_ timestampText: String) -> Date? {
-        let standardFormatter = ISO8601DateFormatter()
-        if let timestamp = standardFormatter.date(from: timestampText) {
-            return timestamp
-        }
-
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractionalFormatter.date(from: timestampText)
-    }
 }
 
 public enum LocalUsageEventImporter {
