@@ -132,7 +132,8 @@ public enum CustomUsageEventParser {
         guard let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
             throw CustomUsageEventError.malformedJSON
         }
-        guard let timestampText = raw.timestamp, let timestamp = parseTimestamp(timestampText) else {
+        guard let timestampText = raw.timestamp,
+              let timestamp = CollectorSchemaV1.parseTimestamp(timestampText) else {
             throw CustomUsageEventError.missingRequiredField("timestamp")
         }
         guard let rawModel = raw.model else {
@@ -155,12 +156,6 @@ public enum CustomUsageEventParser {
             eventID: nil, customSourceID: nil, timestamp: timestamp, model: model,
             inputTokens: inputTokens, outputTokens: outputTokens, project: nil, agent: nil
         )
-    }
-
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractionalFormatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
     }
 }
 
