@@ -6,6 +6,7 @@ struct MonitoringPopoverView: View {
     let state: LimitBarState
     private enum PopoverTab: String, CaseIterable {
         case rateLimit
+        case analysis
         case usage
         case history
 
@@ -13,6 +14,8 @@ struct MonitoringPopoverView: View {
             switch self {
             case .rateLimit:
                 "Rate Limit"
+            case .analysis:
+                "Analysis"
             case .usage:
                 "Usage"
             case .history:
@@ -52,6 +55,8 @@ struct MonitoringPopoverView: View {
             switch selectedTab {
             case .rateLimit:
                 RateLimitView(state: state, pricingTable: pricingTable)
+            case .analysis:
+                RateLimitAnalysisView(state: state)
             case .usage:
                 usageTab
             case .history:

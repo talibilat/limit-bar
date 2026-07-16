@@ -46,7 +46,16 @@ final class LimitBarUITests: XCTestCase {
 
         XCTAssertTrue(app.windows["LimitBar UI Tests"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["app-title"].exists)
+        XCTAssertTrue(app.staticTexts["rate-limit-placeholder"].exists)
         XCTAssertTrue(app.buttons["settings-action"].exists)
+    }
+
+    func testAnalysisTabPresentsClaudeAuthorizationAnalysis() {
+        launch(screen: "popover")
+
+        app.buttons["Analysis"].click()
+        XCTAssertTrue(app.staticTexts["Claude Code needs your permission before LimitBar can read its existing login."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Read analysis"].exists)
     }
 
     func testPassiveAuthorizationCheckPresentsConnectAction() {

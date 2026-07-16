@@ -31,6 +31,7 @@
 		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
 		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
 		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
+		AA00000000000000000000F3 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E3 /* RateLimitAnalysisView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		AA00000000000000000000E0 /* AlertSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsStore.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertNotificationCoordinator.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E2 /* AlertSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E3 /* RateLimitAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitAnalysisView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000111 /* AppUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUITestSupport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000112 /* LimitBarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitBarUITests.swift; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 				AA00000000000000000000E0 /* AlertSettingsStore.swift */,
 				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
 				AA00000000000000000000E2 /* AlertSettingsView.swift */,
+				AA00000000000000000000E3 /* RateLimitAnalysisView.swift */,
 				AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */,
 			);
 			path = LimitBar;
@@ -311,6 +314,7 @@
 				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
 				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
 				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
+				AA00000000000000000000F3 /* RateLimitAnalysisView.swift in Sources */,
 				AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

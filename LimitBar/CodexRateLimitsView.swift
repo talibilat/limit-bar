@@ -8,10 +8,6 @@ struct CodexRateLimitsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Read from your local Codex session logs; no network call is made.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             if snapshot.isBusinessPlan {
                 businessCreditsSection
             } else {
@@ -31,9 +27,6 @@ struct CodexRateLimitsView: View {
             CreditsUsageRowView(label: "Today", cost: estimate.today)
             CreditsUsageRowView(label: "Current Week", cost: estimate.currentWeek)
         }
-        Text("Business plan: company-pool credit usage only. Configure credits pricing in Settings.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     @ViewBuilder

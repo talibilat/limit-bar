@@ -8,6 +8,11 @@ struct RateLimitView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                Text("to see rate limit.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("rate-limit-placeholder")
+
                 if state.claudeModel.isPresent {
                     sectionHeader("Claude")
                     ClaudeRateLimitsView(model: state.claudeModel, onActionCompleted: state.claudeActionCompleted)

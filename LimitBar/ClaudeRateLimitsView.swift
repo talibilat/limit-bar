@@ -8,9 +8,6 @@ struct ClaudeRateLimitsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Uses your existing Claude Code login.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Button(model.isRefreshing ? "Refreshing..." : "Refresh") {
                     Task {
