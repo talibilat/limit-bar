@@ -232,10 +232,10 @@ struct QuotaFindingAlertTests {
         ).first)
         let ruleID = UUID(uuidString: "81D6673F-08D8-4FE1-A480-94BAB6DB6ECA")!
         let disabled = QuotaAlertRule(id: ruleID, product: .codex, thresholds: try PercentageThresholds([70]), isEnabled: false)
-        #expect(evaluate(rule: disabled, finding: finding).isEmpty)
+        #expect(try evaluate(rule: disabled, finding: finding).isEmpty)
 
         let original = QuotaAlertRule(id: ruleID, product: .codex, thresholds: try PercentageThresholds([70, 90]))
-        let first = try #require(evaluate(rule: original, finding: finding).first)
+        let first = try #require(try evaluate(rule: original, finding: finding).first)
         let satisfied = Set(first.occurrence.thresholds.map {
             AlertThresholdSatisfaction(ruleID: ruleID, window: first.occurrence.window, threshold: $0)
         })
@@ -262,7 +262,7 @@ struct QuotaFindingAlertTests {
         )
         let firstIdentity = try window()
         let firstFinding = try candidate(identity: firstIdentity, percentage: 75, inputPercentage: 10)
-        let firstEvaluation = try #require(evaluate(rule: rule, finding: firstFinding).first)
+        let firstEvaluation = try #require(try evaluate(rule: rule, finding: firstFinding).first)
         do {
             let store = try SQLiteAlertDeliveryStore(path: path)
             let reserved = try store.reserve(firstEvaluation.occurrence, now: now)
@@ -285,7 +285,7 @@ struct QuotaFindingAlertTests {
         #expect(try reopened.reserve(firstEvaluation.occurrence, now: now) == nil)
 
         let resetIdentity = try window(identifier: firstIdentity.identifier, reset: now.addingTimeInterval(7_200))
-        let resetEvaluation = try #require(evaluate(rule: rule, finding: candidate(identity: resetIdentity, percentage: 75)).first)
+        let resetEvaluation = try #require(try evaluate(rule: rule, finding: candidate(identity: resetIdentity, percentage: 75)).first)
         #expect(try reopened.reserve(resetEvaluation.occurrence, now: now) != nil)
     }
 
@@ -301,7 +301,7 @@ struct QuotaFindingAlertTests {
             try MeasuredQuotaObservation(identity: identity, percentageUsed: 75, observedAt: now, source: .codexLocalReport)
         ], now: now)
         let rule = QuotaAlertRule(product: .codex, thresholds: try PercentageThresholds([70]))
-        let evaluation = try #require(evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first)
+        let evaluation = try #require(try evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first)
         let reserved = try deliveryStore.reserve(evaluation.occurrence, now: now)
         let reservation = try #require(reserved)
         try deliveryStore.markDelivered(reservation, at: now)
@@ -320,7 +320,7 @@ struct QuotaFindingAlertTests {
         _ = try SQLiteAlertDeliveryStore(path: path)
         let identity = try window()
         let rule = QuotaAlertRule(product: .codex, thresholds: try PercentageThresholds([70]))
-        let occurrence = try #require(evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first?.occurrence)
+        let occurrence = try #require(try evaluate(rule: rule, finding: candidate(identity: identity, percentage: 75)).first?.occurrence)
         let evaluationDate = now
 
         let accepted = try await withThrowingTaskGroup(of: Bool.self) { group in
@@ -448,9 +448,9 @@ struct QuotaFindingAlertTests {
         }
     }
 
-    private func evaluate(rule: QuotaAlertRule, finding: QuotaFindingAlertObservation) -> [AlertEvaluation] {
+    private func evaluate(rule: QuotaAlertRule, finding: QuotaFindingAlertObservation) throws -> [AlertEvaluation] {
         AlertEvaluator.evaluate(
-            preferences: try! AlertPreferences(quotaRules: [rule], costBudgetRules: []),
+            preferences: try AlertPreferences(quotaRules: [rule], costBudgetRules: []),
             quota: [],
             costs: [],
             findings: [finding],
