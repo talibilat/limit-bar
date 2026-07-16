@@ -8,7 +8,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.claudeCode),
+            for: try fixture.support(.claudeCode),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: fixture.claudeSnapshot,
             forecasts: fixture.forecasts
@@ -23,7 +23,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.claudeCode),
+            for: try fixture.support(.claudeCode),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: nil,
             forecasts: [fixture.codexObservation.identity: fixture.codexForecast]
@@ -37,7 +37,7 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         let fixture = try PlanningCurrentEvidenceFixture()
 
         let selected = LiveWorkloadPlanningData.currentEvidence(
-            for: fixture.support(.codex),
+            for: try fixture.support(.codex),
             codexSnapshot: fixture.codexSnapshot,
             claudeSnapshot: fixture.claudeSnapshot,
             forecasts: fixture.forecasts
@@ -445,16 +445,16 @@ private struct PlanningCurrentEvidenceFixture {
         )
     }
 
-    func support(_ product: ProviderProduct) -> CompletedWorkloadRunSupport {
+    func support(_ product: ProviderProduct) throws -> CompletedWorkloadRunSupport {
         CompletedWorkloadRunSupport(
             product: product,
             kind: .codingAgentOperations,
             quotaWindowKind: .session,
             executionMode: .interactive,
             source: .normalizedCompletedRunAdapter,
-            adapterVersion: WorkloadAdapterVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!),
-            clientVersion: WorkloadClientVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
-            providerFormatVersion: WorkloadProviderFormatVersion(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+            adapterVersion: WorkloadAdapterVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))),
+            clientVersion: WorkloadClientVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))),
+            providerFormatVersion: WorkloadProviderFormatVersion(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000003")))
         )
     }
 }
