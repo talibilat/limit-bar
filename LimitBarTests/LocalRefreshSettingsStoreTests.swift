@@ -36,7 +36,7 @@ final class LocalRefreshSettingsStoreTests: XCTestCase {
         XCTAssertEqual(LocalRefreshSettingsStore(defaults: defaults).cadence, .thirtySeconds)
     }
 
-    func testInvalidPersistedPreferencesReturnToFiveSecondDefault() throws {
+    func testInvalidPersistedPreferencesReturnToFiveSecondDefault() {
         let invalidValues = [
             #"{"version":1,"cadenceSeconds":1}"#,
             #"{"version":2,"cadenceSeconds":15}"#,
@@ -45,7 +45,7 @@ final class LocalRefreshSettingsStoreTests: XCTestCase {
         ]
 
         for value in invalidValues {
-            defaults.set(try XCTUnwrap(value.data(using: .utf8)), forKey: LocalRefreshSettingsStore.storageKey)
+            defaults.set(Data(value.utf8), forKey: LocalRefreshSettingsStore.storageKey)
             XCTAssertEqual(LocalRefreshSettingsStore(defaults: defaults).cadence, .fiveSeconds)
         }
     }

@@ -88,7 +88,7 @@ struct ClaudeCodeOTLPEvidenceTests {
             let range = try #require(mixed.range(of: fixtureCase.0, options: options))
             mixed.replaceSubrange(range, with: fixtureCase.1)
             let result = ClaudeCodeOTLPEvidenceAdapter.scan(
-                data: try #require(mixed.data(using: .utf8)),
+                data: Data(mixed.utf8),
                 identityKey: Data("key".utf8)
             )
 
@@ -101,10 +101,9 @@ struct ClaudeCodeOTLPEvidenceTests {
     @Test("prohibited payload content never enters normalized evidence")
     func omitsProhibitedContent() throws {
         let sentinel = "PRIVATE-PROMPT-/Users/alice/work-secret-BEARER-secret"
-        let data = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))
+        let text = try #require(String(data: try fixture("valid-token-metrics"), encoding: .utf8))
             .replacingOccurrences(of: "PRIVATE_SENTINEL", with: sentinel)
-            .data(using: .utf8)
-        let result = ClaudeCodeOTLPEvidenceAdapter.scan(data: try #require(data), identityKey: Data("key".utf8))
+        let result = ClaudeCodeOTLPEvidenceAdapter.scan(data: Data(text.utf8), identityKey: Data("key".utf8))
         let encoded = try JSONEncoder().encode(result.evidence)
 
         #expect(!String(decoding: encoded, as: UTF8.self).contains(sentinel))

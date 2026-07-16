@@ -288,7 +288,7 @@ struct DiagnosticExportTests {
 
         #expect(artifact.previewBytes == artifact.bytes)
         #expect(try Data(contentsOf: destination) == artifact.previewBytes)
-        #expect(try artifact.preview.data(using: .utf8) == artifact.bytes)
+        #expect(Data(artifact.preview.utf8) == artifact.bytes)
     }
 
     @Test("optional history is absent by default and bounded when supplied")
