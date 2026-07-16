@@ -20,7 +20,7 @@ Collector Usage Events use an opaque producer-generated UUID as the Event ID.
 An identical retry within the Idempotency Horizon is a Duplicate.
 Reusing an Event ID for different Usage Event content is an Event ID Conflict.
 Existing usage aggregates can carry an optional project label and model.
-Existing usage aggregate calendar windows are not exact quota windows.
+Existing usage aggregate calendar windows are not Quota windows and do not establish Exact boundaries.
 The parent requires optional trace, project, session, agent, model, operation, and tool identifiers only when they come from allow-listed sources.
 The parent requires authoritative provider totals, Observed Local Breakdowns, inferred allocation, and unattributed usage to remain distinct.
 No canonical producer format, project identifier, agent identifier, trace convention, or concurrent-allocation formula is confirmed by the parent.
@@ -124,7 +124,7 @@ Contract tests must submit valid schema v1 and new-version events through the sa
 Those tests must verify acceptance, stable Event ID behavior, identical retries, Event ID conflicts, and unchanged schema v1 semantics.
 Boundary tests must cover absent values, maximum accepted lengths, overlong values, control characters, Unicode handling under the documented ASCII policy, path-like values, credential-like values, and malformed identifiers.
 Aggregation tests must prove that project and agent breakdowns reconcile only within their measured local scope and are not double-counted with parent totals.
-Correlation tests must prove that calendar aggregates do not become exact quota windows and that incompatible provider products cannot be joined.
+Correlation tests must prove that calendar aggregates do not become Quota windows with Exact boundaries and that incompatible provider products cannot be joined.
 Concurrency tests must cover multiple projects and agents active during one account-level quota interval while preserving unattributed movement.
 If inferred allocation is implemented, deterministic tests must verify method version, exact inputs, limitations, inferred labeling, and preservation of measured source records.
 Privacy sentinel tests must place prohibited content in accepted, unknown, and rejected input fields and prove that it does not reach storage, logs, diagnostics, or export.

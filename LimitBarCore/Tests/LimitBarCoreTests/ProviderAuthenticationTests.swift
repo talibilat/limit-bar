@@ -29,7 +29,7 @@ struct ProviderAuthenticationTests {
 
     @Test("connection and feasibility labels stay honest")
     func connectionAndFeasibilityLabelsStayHonest() {
-        #expect(ProviderConnectionState.missing.displayText == "Missing")
+        #expect(ProviderConnectionState.missing.displayText == "Not configured")
         #expect(ProviderConnectionState.configured.displayText == "Configured, validation pending")
         #expect(ProviderConnectionState.connected.displayText == "Connected")
         #expect(ProviderConnectionState.failed.displayText == "Failed")

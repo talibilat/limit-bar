@@ -2,6 +2,7 @@
 import AppKit
 import Foundation
 import LimitBarCore
+import Observation
 import SwiftUI
 
 enum AppTestConfiguration {
@@ -12,8 +13,8 @@ enum AppTestConfiguration {
     }
 
     @MainActor
-    static func state() -> LimitBarState {
-        LimitBarState(
+    static func state(investigationPublication: ForensicInvestigationSnapshot? = nil) -> LimitBarState {
+        let state = LimitBarState(
             providerSettings: [],
             claudeModel: ClaudeRateLimitsModel(
                 credentials: AppUITestClaudeCredentials(),
@@ -22,8 +23,41 @@ enum AppTestConfiguration {
             coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
                 refreshUsage: { _, _ in throw CancellationError() },
                 scanCodex: { _ in nil }
-            ))
+            )),
+            investigationPublication: investigationPublication
         )
+        if investigationPublication != nil {
+            let sentinel = "PRIVATE_SENTINEL_PROMPT_PATH_COOKIE"
+            let now = Date(timeIntervalSince1970: 1_900_000_000)
+            let window = try! ExactUsageWindow(timeWindow: .today, start: now, end: now.addingTimeInterval(86_400), basis: .localCalendar)
+            let genericAPIBreakdown = ObservedLocalAttributionBreakdown(
+                source: .builtInLocalLog,
+                provider: .anthropic,
+                window: window,
+                model: sentinel,
+                deployment: sentinel,
+                project: CollectorAttribution(id: "generic-api", label: sentinel),
+                agent: CollectorAttribution(id: "generic-agent", label: sentinel),
+                tokenUsage: TokenUsage(inputTokens: 10, outputTokens: 5),
+                eventIDs: [UUID(uuidString: "00000000-0000-0000-0000-000000000032")!],
+                observedAt: now
+            )
+            state.local.apply(LocalRefreshSnapshot(
+                sequence: 99,
+                usage: LocalUsageRefresh(
+                    snapshot: StoredUsageMetricsSnapshot(
+                        metrics: [],
+                        health: UsageStoreHealth(isOpen: true, message: sentinel),
+                        localImport: .empty(fileURL: URL(fileURLWithPath: "")),
+                        attributionBreakdowns: [genericAPIBreakdown]
+                    ),
+                    customDiagnostics: []
+                ),
+                codex: nil,
+                refreshedAt: now
+            ))
+        }
+        return state
     }
 }
 
@@ -32,6 +66,7 @@ enum AppUITestConfiguration {
     private static let screenEnvironmentKey = "LIMITBAR_UI_TEST_SCREEN"
     private static let runIdentifierEnvironmentKey = "LIMITBAR_UI_TEST_RUN_ID"
     private static let fixturePathEnvironmentKey = "LIMITBAR_UI_TEST_CUSTOM_SOURCE_PATH"
+    private static let exportPathEnvironmentKey = "LIMITBAR_UI_TEST_EXPORT_PATH"
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(enabledArgument) && runIdentifier != nil
@@ -45,6 +80,11 @@ enum AppUITestConfiguration {
     static var customSourceFixturePath: String? {
         guard isEnabled else { return nil }
         return ProcessInfo.processInfo.environment[fixturePathEnvironmentKey]
+    }
+
+    static var exportPath: String? {
+        guard isEnabled else { return nil }
+        return ProcessInfo.processInfo.environment[exportPathEnvironmentKey]
     }
 
     static var userDefaults: UserDefaults? {
@@ -64,8 +104,9 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard AppUITestConfiguration.isEnabled else { return }
 
+        let minimumFixture = AppUITestConfiguration.screen == "investigation-minimum-large-text"
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 660, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: minimumFixture ? 420 : 660, height: minimumFixture ? 520 : 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -81,7 +122,10 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
 
 private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
     func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
-        switch intent {
+        if AppUITestConfiguration.screen == "claude-login-required" {
+            return .absent
+        }
+        return switch intent {
         case .passive:
             .failure(.interactionRequired)
         case .interactive:
@@ -105,7 +149,7 @@ private struct AppUITestClaudeRateLimitsClient: ClaudeRateLimitsFetching {
                     group: .session,
                     percentUsed: 25,
                     severity: .normal,
-                    resetsAt: nil,
+                    resetsAt: Date(timeIntervalSince1970: 2_000_000_000),
                     scopeDisplayName: nil,
                     isActive: true
                 )
@@ -130,10 +174,397 @@ private struct LimitBarUITestHostView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(width: 620, height: 720)
+        case "diagnostic-export", "diagnostic-export-cancel-destination":
+            Form {
+                DiagnosticExportSection(
+                    state: AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.partial)),
+                    chooseDestination: {
+                        guard AppUITestConfiguration.screen != "diagnostic-export-cancel-destination" else { return nil }
+                        return AppUITestConfiguration.exportPath.map { URL(fileURLWithPath: $0) }
+                    }
+                )
+            }
+            .formStyle(.grouped)
+            .padding(20)
+            .frame(width: 620, height: 720)
+        case "diagnostic-export-write-retry":
+            DiagnosticExportUITestWorkflowView(interceptsNetwork: false)
+        case "diagnostic-export-network-trap":
+            DiagnosticExportUITestWorkflowView(interceptsNetwork: true)
+        case "quota-insight":
+            QuotaInsightUITestView()
+        case "codex-explanation":
+            CodexExplanationUITestView()
+        case "claude-explanation":
+            ClaudeExplanationUITestView()
+        case "claude-explanation-single":
+            ClaudeExplanationUITestView(includeCompleted: false)
+        case "investigation-all-available":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.available))
+        case "investigation-partial":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.partial))
+        case "investigation-loading":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.loading))
+        case "investigation-empty":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.empty))
+        case "investigation-unavailable":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.unavailable))
+        case "investigation-error":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.error))
+        case "investigation-workflow":
+            MonitoringPopoverView(state: AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.available)))
+        case "investigation-minimum-large-text":
+            ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.partial), reduceMotionOverride: true)
+                .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
     }
 }
+
+private final class AppUITestNetworkTrap: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var requests = 0
+
+    static var requestCount: Int { lock.withLock { requests } }
+    static func reset() { lock.withLock { requests = 0 } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.withLock { Self.requests += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+    }
+    override func stopLoading() {}
+}
+
+@MainActor
+@Observable
+private final class AppUITestDiagnosticLocalEffects: DiagnosticExportLocalEffects {
+    private enum WriteFailure: Error { case expectedDirectoryFailure }
+
+    let destination: URL
+    private let interceptsNetwork: Bool
+    private(set) var writeAttempts = 0
+    private(set) var bytesEqual = false
+    private var approvedBytes: Data?
+
+    init(interceptsNetwork: Bool) {
+        self.interceptsNetwork = interceptsNetwork
+        destination = URL(fileURLWithPath: AppUITestConfiguration.exportPath!)
+        try? FileManager.default.removeItem(at: destination)
+        try! FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        if interceptsNetwork {
+            AppUITestNetworkTrap.reset()
+            URLProtocol.registerClass(AppUITestNetworkTrap.self)
+        }
+    }
+
+    var networkRequestCount: Int { interceptsNetwork ? AppUITestNetworkTrap.requestCount : 0 }
+
+    func chooseDestination() -> URL? { destination }
+
+    func save(_ artifact: DiagnosticExportArtifact, to destination: URL) throws {
+        writeAttempts += 1
+        approvedBytes = approvedBytes ?? artifact.bytes
+        if writeAttempts == 1 {
+            do {
+                try artifact.save(to: destination)
+                try? FileManager.default.removeItem(at: destination)
+                throw WriteFailure.expectedDirectoryFailure
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
+        }
+        try artifact.save(to: destination)
+        bytesEqual = try Data(contentsOf: destination) == approvedBytes
+    }
+}
+
+private struct DiagnosticExportUITestWorkflowView: View {
+    @State private var effects: AppUITestDiagnosticLocalEffects
+    private let state: LimitBarState
+
+    @MainActor
+    init(interceptsNetwork: Bool) {
+        let effects = AppUITestDiagnosticLocalEffects(interceptsNetwork: interceptsNetwork)
+        _effects = State(initialValue: effects)
+        state = AppTestConfiguration.state(investigationPublication: AppUITestInvestigation.fixture(.partial))
+    }
+
+    var body: some View {
+        Form {
+            DiagnosticExportSection(state: state, localEffects: effects)
+            Section("Test status") {
+                Text("\(effects.writeAttempts)").accessibilityIdentifier("diagnostic-export-write-attempts")
+                Text(effects.bytesEqual ? "equal" : "pending").accessibilityIdentifier("diagnostic-export-byte-equality")
+                Text("\(effects.networkRequestCount)").accessibilityIdentifier("diagnostic-export-network-count")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 620, height: 720)
+    }
+}
+
+private enum AppUITestInvestigation {
+    static let start = Date(timeIntervalSince1970: 1_900_000_000)
+    static let reset = start.addingTimeInterval(7_200)
+
+    static func fixture(_ state: InvestigationPublicationState) -> ForensicInvestigationSnapshot {
+        if state == .loading || state == .error {
+            let prior = fixture(.available)
+            return state == .loading ? prior.loading(pendingGeneration: 8) : prior.failed(pendingGeneration: 8)
+        }
+        guard state == .available || state == .partial else {
+            return ForensicInvestigationSnapshot(
+                publicationState: state,
+                publishedAt: start.addingTimeInterval(1_800),
+                products: [],
+                apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
+                message: state.label
+            )
+        }
+        let identity = try! QuotaWindowIdentity(product: .codex, identifier: "primary:300", resetBoundary: reset)
+        let qualifiedForecast = InvestigationFindingPresentation(
+            status: "Qualified",
+            summary: "Calculated burn 4.0-6.0% per hour; exhaustion is not projected before the Reported reset.",
+            details: "4 Measured observations over 30m; evidence age 2m; method pairwise_positive_slope_interquartile_v2; qualification qualified; exact bounded evidence range."
+        )
+        let noFinding = InvestigationFindingPresentation(
+            status: "No finding",
+            summary: "Qualified analysis found no anomaly.",
+            details: "Current exact period and trailing baseline exact period; method trailing_median_ratio_v1; Measured inputs; limitations no_causal_attribution."
+        )
+        let available = InvestigationRecord(
+            id: "available",
+            identity: identity,
+            resetBoundary: identity.resetBoundary,
+            start: start,
+            end: start.addingTimeInterval(900),
+            authoritativeTotal: "Measured local quota observations; Calculated movement: 6 percentage points.",
+            localBreakdown: "Measured Observed Local Breakdown: 42 tokens across 2 privacy-safe sessions. Not added to the provider total.",
+            unattributed: "Unattributed: provider movement is not allocated to local activity and no causal claim is made.",
+            forecast: qualifiedForecast,
+            anomaly: noFinding,
+            version: "Explanation method codex-quota-explanation-v1; adapter codex-rollout-observed-0.144.4; client version unavailable - not captured.",
+            limitations: "Exact source traces: 2 Reported observations and 3 Measured evidence items; provider weighting unknown.",
+            traces: "Privacy-safe bounded traces - observations: 111111111111, 222222222222; local evidence: 333333333333.",
+            freshness: "Fresh explanation from coherent generation 7.",
+            isGap: false,
+            isObservedZero: false
+        )
+        var records = [available]
+        if state == .available {
+            records.insert(InvestigationRecord(
+                id: "earlier",
+                identity: identity,
+                resetBoundary: identity.resetBoundary,
+                start: start.addingTimeInterval(-900),
+                end: start.addingTimeInterval(-300),
+                authoritativeTotal: "Measured local quota observations; Calculated movement: 2 percentage points.",
+                localBreakdown: "Observed Local Breakdown unavailable because product-explicit evidence was not captured.",
+                unattributed: "Unattributed: no local activity is assigned to quota movement.",
+                forecast: qualifiedForecast,
+                anomaly: noFinding,
+                version: "Explanation method codex-quota-explanation-v1; adapter codex-rollout-observed-0.144.4.",
+                limitations: "Earlier exact interval fixture.",
+                traces: "Privacy-safe bounded traces - observations: 000000000000.",
+                freshness: "Fresh explanation from coherent generation 7.",
+                isGap: true,
+                isObservedZero: false
+            ), at: 0)
+        }
+        if state == .partial {
+            records.append(InvestigationRecord(
+                id: "observed-zero",
+                identity: identity,
+                resetBoundary: identity.resetBoundary,
+                start: start.addingTimeInterval(1_200),
+                end: start.addingTimeInterval(1_800),
+                authoritativeTotal: "Measured local quota observations; Calculated movement: 0 percentage points.",
+                localBreakdown: "Measured Observed Zero local activity with complete supported evidence coverage.",
+                unattributed: "Unattributed: flat movement does not prove that no activity occurred.",
+                forecast: InvestigationFindingPresentation(status: "Unavailable", summary: "Unavailable - no point estimate is shown.", details: "Reason no_positive_burn; method pairwise_positive_slope_interquartile_v2."),
+                anomaly: InvestigationFindingPresentation(status: "Observed Zero", summary: "Measured inputs produced a Calculated zero value.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
+                version: "Adapter version codex-rollout-observed-0.144.4; client version unavailable - not captured.",
+                limitations: "Observed Zero does not prove that no other activity occurred.",
+                traces: "Privacy-safe bounded traces - observations: 444444444444, 555555555555.",
+                freshness: "Fresh explanation from coherent generation 7.",
+                isGap: false,
+                isObservedZero: true
+            ))
+            records.append(InvestigationRecord(
+                id: "gap",
+                identity: identity,
+                resetBoundary: identity.resetBoundary,
+                start: start.addingTimeInterval(2_100),
+                end: start.addingTimeInterval(2_700),
+                authoritativeTotal: "Authoritative movement unavailable for this exact interval.",
+                localBreakdown: "Observed Local Breakdown unavailable. This is a Gap, not zero usage.",
+                unattributed: "Unattributed: no local activity is assigned to provider movement.",
+                forecast: InvestigationFindingPresentation(status: "Unavailable", summary: "Unavailable - no point estimate is shown.", details: "Reason gap; method pairwise_positive_slope_interquartile_v2."),
+                anomaly: InvestigationFindingPresentation(status: "Unavailable - Gap", summary: "Analysis unavailable: gap. No numerical finding is shown.", details: "Current period and baseline period preserved; method trailing_median_ratio_v1."),
+                version: "Adapter version unavailable - not captured; no unchanged-version claim.",
+                limitations: "Partial coverage and Gap. No interpolation is drawn.",
+                traces: "Privacy-safe bounded traces unavailable for the Gap.",
+                freshness: "Evidence freshness unavailable.",
+                isGap: true,
+                isObservedZero: false
+            ))
+        }
+        let noResetIdentity = try! QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset)
+        let noReset = InvestigationRecord(
+            id: "no-reset",
+            identity: noResetIdentity,
+            resetBoundary: nil,
+            start: start,
+            end: start.addingTimeInterval(900),
+            authoritativeTotal: "Reported percentage observations; Calculated movement: 3 percentage points.",
+            localBreakdown: "Observed Local Breakdown unavailable because product-explicit evidence was not captured.",
+            unattributed: "Unattributed: no local activity is assigned to quota movement.",
+            forecast: qualifiedForecast,
+            anomaly: noFinding,
+            version: "Explanation method claude-code-quota-explanation-v2; source adapter claude-code-otlp-v1.",
+            limitations: "Reset evidence unavailable in this fixture; no exact marker is inferred.",
+            traces: "Privacy-safe bounded traces - observations: aaaaaaaaaaaa, bbbbbbbbbbbb.",
+            freshness: "Fresh explanation from coherent generation 7.",
+            isGap: true,
+            isObservedZero: false
+        )
+        return ForensicInvestigationSnapshot(
+            generation: 7,
+            publicationState: state,
+            publishedAt: start.addingTimeInterval(1_800),
+            products: [
+                InvestigationProductEvidence(product: .codex, records: records),
+                InvestigationProductEvidence(product: .claudeCode, records: [noReset]),
+            ],
+            apiEvidenceNotice: APIProviderQuotaPathAvailability.fixedUnavailableSummary,
+            message: state == .partial ? "Independent qualified sections remain available; unavailable sections are not presented as zero." : nil
+        )
+    }
+}
+
+private struct ClaudeExplanationUITestView: View {
+    var includeCompleted = true
+    private let reset = Date(timeIntervalSince1970: 2_000_000_000)
+
+    var body: some View {
+        ClaudeRateLimitsView(
+            model: ClaudeRateLimitsModel(
+                credentials: ClaudeExplanationCredentials(),
+                client: AppUITestClaudeRateLimitsClient(),
+                state: .loaded(ClaudeRateLimitSnapshot(
+                    limits: [ClaudeRateLimit(kind: "session", group: .session, percentUsed: 14, severity: .normal, resetsAt: reset, scopeDisplayName: nil, isActive: true)],
+                    fetchedAt: Date(timeIntervalSince1970: 1_900_000_100)
+                ), subscription: "max")
+            ),
+            insights: [:],
+            anomalies: [:],
+            insightsStorageAvailable: true,
+            explanationCatalog: explanationCatalog,
+            onActionCompleted: {}
+        )
+        .padding(20)
+        .frame(width: 620, height: 420)
+    }
+
+    private var explanationCatalog: ClaudeQuotaExplanationCatalog {
+        guard let identity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: reset) else { return .empty }
+        let interval = ClaudeQuotaExplanationInterval(id: String(repeating: "f", count: 64), identity: identity, intervalStart: Date(timeIntervalSince1970: 1_900_000_000), intervalEnd: Date(timeIntervalSince1970: 1_900_000_100), lifecycle: .active)
+        let state = ClaudeQuotaExplanationState.unavailable(.quotaAccountScopeUnavailable)
+        guard let completedIdentity = try? QuotaWindowIdentity(product: .claudeCode, identifier: "session:session", resetBoundary: Date(timeIntervalSince1970: 1_800_000_200)) else { return .empty }
+        let completed = ClaudeQuotaExplanationInterval(id: "completed-fixture", identity: completedIdentity, intervalStart: Date(timeIntervalSince1970: 1_800_000_000), intervalEnd: Date(timeIntervalSince1970: 1_800_000_100), lifecycle: .completed)
+        let active = ClaudeQuotaExplanationSelection(interval: interval, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
+        let historical = ClaudeQuotaExplanationSelection(interval: completed, state: state, limitations: [.receiverNotConfigured, .accountBindingUnavailable, .quotaAccountScopeUnavailable])
+        return ClaudeQuotaExplanationCatalog(
+            selections: includeCompleted ? [active, historical] : [active],
+            defaultSelectionID: interval.id
+        )
+    }
+}
+
+private actor ClaudeExplanationCredentials: ClaudeCredentialProviding {
+    func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
+        .credential(ClaudeCodeOAuthCredential(
+            accessToken: "fixture",
+            expiresAt: Date(timeIntervalSince1970: 2_100_000_000),
+            subscriptionType: "max"
+        ))
+    }
+
+    func invalidate() {}
+}
+
+private struct CodexExplanationUITestView: View {
+    var body: some View {
+        CodexRateLimitsView(
+            snapshot: CodexRateLimitSnapshot(
+                planType: "plus",
+                primary: CodexRateLimitWindow(percentUsed: 13.5, windowMinutes: 300, resetsAt: Date(timeIntervalSince1970: 1_783_716_600)),
+                secondary: nil,
+                credits: nil,
+                reportedAt: Date(timeIntervalSince1970: 1_783_716_200)
+            ),
+            metrics: [],
+            pricingTable: .empty,
+            insights: [:],
+            anomalies: [:],
+            insightsStorageAvailable: true,
+            explanation: .available(CodexQuotaExplanation(
+                intervalStart: Date(timeIntervalSince1970: 1_783_716_100),
+                intervalEnd: Date(timeIntervalSince1970: 1_783_716_200),
+                quotaResetBoundary: Date(timeIntervalSince1970: 1_783_716_600),
+                coverageStart: Date(timeIntervalSince1970: 1_783_716_090),
+                coverageEnd: Date(timeIntervalSince1970: 1_783_716_210),
+                calculatedQuotaMovementPercent: 3.5,
+                observedLocalBreakdown: CodexObservedLocalBreakdown(
+                    tokens: CodexMeasuredTokens(input: 7, cachedInput: 2, output: 3, reasoningOutput: 1),
+                    sessionCount: 1
+                ),
+                unattributed: true,
+                inferredAllocation: nil,
+                observationIdentities: [],
+                evidenceIdentities: ["fixture"],
+                adapterVersion: CodexRolloutEvidenceAdapter.adapterVersion,
+                barriers: []
+            ))
+        )
+        .padding(20)
+        .frame(width: 620, height: 420)
+    }
+}
+
+private struct QuotaInsightUITestView: View {
+    private let fixture: QuotaForecastReplayFixture
+    private let insight: QuotaInsightState
+
+    init() {
+        let fixtures = try! QuotaForecastFrozenCorpus.validatedFixtures()
+        fixture = fixtures.first { $0.id == "heldout-codex-stable-01" }!
+        insight = QuotaInsightAnalytics.analyze(
+            fixture.observations,
+            now: fixture.evaluationTime,
+            maximumAge: fixture.maximumEvidenceAge
+        )
+    }
+
+    var body: some View {
+        PercentRateLimitRowView(
+            label: "Session (5 hours)",
+            percentUsed: 76,
+            severity: .normal,
+            resetsAt: fixture.observations.first?.identity.resetBoundary,
+            isActive: true,
+            insight: insight,
+            anomaly: nil,
+            insightsStorageAvailable: true
+        )
+        .padding(20)
+        .frame(width: 620, height: 300)
+    }
+}
+
 #endif

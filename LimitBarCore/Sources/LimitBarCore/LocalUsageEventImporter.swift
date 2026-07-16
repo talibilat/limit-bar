@@ -1,12 +1,16 @@
+import CryptoKit
 import Foundation
 
 public struct LocalUsageEvent: Equatable, Sendable {
+    public let eventID: UUID?
     public let provider: ProviderKind
     public let timestamp: Date
     public let model: String
     public let deployment: String?
     public let inputTokens: Int
     public let outputTokens: Int
+    public let project: CollectorAttribution?
+    public let agent: CollectorAttribution?
 }
 
 public enum LocalUsageEventError: Error, Equatable {
@@ -21,6 +25,7 @@ public enum LocalUsageEventError: Error, Equatable {
     case futureTimestamp
     case unreadableFile
     case notRegularFile
+    case noValidEvents(diagnostics: [MalformedLocalUsageEvent], rejectedLineCount: Int, hasFutureTimestampRejection: Bool)
 }
 
 public struct MalformedLocalUsageEvent: Equatable, Sendable {
@@ -35,13 +40,19 @@ public struct LocalUsageImportResult: Equatable, Sendable {
     public let malformedEvents: [MalformedLocalUsageEvent]
     public let failureMessage: String?
     public let hasFutureTimestampRejection: Bool
+    public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
+    public let sourceRevision: String?
 
     public static func empty(fileURL: URL) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: sha256(Data()))
     }
 
     public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: nil)
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -56,8 +67,28 @@ public enum LocalUsageEventParser {
     }
 
     public static func parseLine(_ line: String) throws -> LocalUsageEvent {
-        guard let data = line.data(using: .utf8),
-              let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
+        guard let data = line.data(using: .utf8) else {
+            throw LocalUsageEventError.malformedJSON
+        }
+
+        if hasStrictV2Schema(in: data) {
+            guard let event = try? CollectorSchemaV2.decode(data), case let .provider(provider) = event.identity,
+                  let normalizedProvider = ProviderKind(rawValue: provider.rawValue) else {
+                throw LocalUsageEventError.malformedJSON
+            }
+            return LocalUsageEvent(
+                eventID: event.eventID,
+                provider: normalizedProvider,
+                timestamp: event.timestamp,
+                model: event.model,
+                deployment: event.deployment,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                project: event.project,
+                agent: event.agent
+            )
+        }
+        guard let raw = try? JSONDecoder().decode(RawEvent.self, from: data) else {
             throw LocalUsageEventError.malformedJSON
         }
 
@@ -103,12 +134,15 @@ public enum LocalUsageEventParser {
         }
 
         return LocalUsageEvent(
+            eventID: nil,
             provider: provider,
             timestamp: timestamp,
             model: model,
             deployment: deployment,
             inputTokens: inputTokens,
-            outputTokens: outputTokens
+            outputTokens: outputTokens,
+            project: nil,
+            agent: nil
         )
     }
 
@@ -121,6 +155,13 @@ public enum LocalUsageEventParser {
         let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractionalFormatter.date(from: timestampText)
+    }
+
+    private static func hasStrictV2Schema(in data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let number = object["schemaVersion"] as? NSNumber else { return false }
+        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
+            && number.intValue == CollectorEventV2.schemaVersion
     }
 }
 
@@ -135,6 +176,22 @@ public enum LocalUsageEventImporter {
     private struct AggregateValue {
         var inputTokens: Int
         var outputTokens: Int
+        var latestTimestamp: Date
+    }
+
+    private struct AttributionKey: Hashable {
+        let provider: ProviderKind
+        let window: ExactUsageWindow
+        let model: String
+        let deployment: String?
+        let project: CollectorAttribution?
+        let agent: CollectorAttribution?
+    }
+
+    private struct AttributionValue {
+        var inputTokens: Int
+        var outputTokens: Int
+        var eventIDs: [UUID]
         var latestTimestamp: Date
     }
 
@@ -163,21 +220,14 @@ public enum LocalUsageEventImporter {
     private static let futureTolerance: TimeInterval = 5 * 60
 
     public static func usageEventsURL(applicationSupportDirectory: URL) -> URL {
-        applicationSupportDirectory
-            .appendingPathComponent("LimitBar", isDirectory: true)
-            .appendingPathComponent("usage-events.jsonl")
+        LimitBarFileLocations(
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            applicationSupportDirectory: applicationSupportDirectory
+        ).usageEventsFile
     }
 
     public static func usageEventsURL(fileManager: FileManager = .default) throws -> URL {
-        let applicationSupport = try fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let directory = applicationSupport.appendingPathComponent("LimitBar", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return usageEventsURL(applicationSupportDirectory: applicationSupport)
+        try LimitBarFileLocations.production(fileManager: fileManager).usageEventsFile
     }
 
     @discardableResult
@@ -187,19 +237,30 @@ public enum LocalUsageEventImporter {
         now: Date,
         calendar: Calendar
     ) throws -> LocalUsageImportResult {
+        try importEvents(from: fileURL, to: store, now: now, calendar: calendar, onChunkRead: nil)
+    }
+
+    static func importEvents(
+        from fileURL: URL,
+        to store: SQLiteUsageMetricStore,
+        now: Date,
+        calendar: Calendar,
+        onChunkRead: ((Int) throws -> Void)?
+    ) throws -> LocalUsageImportResult {
         try Task.checkCancellation()
         let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
         let importedWindows = [windows.today, windows.currentWeek]
         let fileHandle: FileHandle
         do {
-            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            let currentFileURL = URL(fileURLWithPath: fileURL.path)
+            let values = try currentFileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
             guard values.isRegularFile == true else {
                 throw LocalUsageEventError.notRegularFile
             }
             guard let fileSize = values.fileSize, fileSize <= maximumFileByteCount else {
                 throw LocalUsageEventError.fileTooLarge
             }
-            fileHandle = try FileHandle(forReadingFrom: fileURL)
+            fileHandle = try FileHandle(forReadingFrom: currentFileURL)
         } catch {
             guard isFileNotFound(error) else {
                 if let typedError = error as? LocalUsageEventError {
@@ -208,11 +269,19 @@ public enum LocalUsageEventImporter {
                 throw LocalUsageEventError.unreadableFile
             }
             try Task.checkCancellation()
-            try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: [:])
-            return .empty(fileURL: fileURL)
+            let empty = LocalUsageImportResult.empty(fileURL: fileURL)
+            try replaceImportedMetrics(
+                in: store,
+                windows: importedWindows,
+                aggregates: [:],
+                sourceRevision: empty.sourceRevision,
+                expectedAttributionBreakdownCount: 0
+            )
+            return empty
         }
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
+        var attributionAggregates: [AttributionKey: AttributionValue] = [:]
         var validEventCount = 0
         var malformedEventCount = 0
         var malformed: [MalformedLocalUsageEvent] = []
@@ -221,6 +290,7 @@ public enum LocalUsageEventImporter {
         var discardingOverlongLine = false
         var bytesRead = 0
         var hasFutureTimestampRejection = false
+        var hasher = SHA256()
 
         while let chunk = try readChunk(from: fileHandle), !chunk.isEmpty {
             try Task.checkCancellation()
@@ -228,6 +298,8 @@ public enum LocalUsageEventImporter {
             guard bytesRead <= maximumFileByteCount else {
                 throw LocalUsageEventError.fileTooLarge
             }
+            hasher.update(data: chunk)
+            try onChunkRead?(bytesRead)
             for byte in chunk {
                 if discardingOverlongLine {
                     if byte == 0x0A {
@@ -242,6 +314,7 @@ public enum LocalUsageEventImporter {
                         lineNumber: lineNumber,
                         windows: importedWindows,
                         aggregates: &aggregates,
+                        attributionAggregates: &attributionAggregates,
                         validEventCount: &validEventCount,
                         malformedEventCount: &malformedEventCount,
                         malformed: &malformed,
@@ -265,6 +338,7 @@ public enum LocalUsageEventImporter {
                 lineNumber: lineNumber,
                 windows: importedWindows,
                 aggregates: &aggregates,
+                attributionAggregates: &attributionAggregates,
                 validEventCount: &validEventCount,
                 malformedEventCount: &malformedEventCount,
                 malformed: &malformed,
@@ -273,8 +347,24 @@ public enum LocalUsageEventImporter {
             )
         }
 
+        if bytesRead > 0, validEventCount == 0, malformedEventCount > 0 {
+            throw LocalUsageEventError.noValidEvents(
+                diagnostics: malformed,
+                rejectedLineCount: malformedEventCount,
+                hasFutureTimestampRejection: hasFutureTimestampRejection
+            )
+        }
+
         try Task.checkCancellation()
-        try replaceImportedMetrics(in: store, windows: importedWindows, aggregates: aggregates)
+        let sourceRevision = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let attributionBreakdowns = breakdowns(from: attributionAggregates)
+        try replaceImportedMetrics(
+            in: store,
+            windows: importedWindows,
+            aggregates: aggregates,
+            sourceRevision: sourceRevision,
+            expectedAttributionBreakdownCount: attributionBreakdowns.count
+        )
 
         return LocalUsageImportResult(
             fileURL: fileURL,
@@ -282,14 +372,18 @@ public enum LocalUsageEventImporter {
             malformedEventCount: malformedEventCount,
             malformedEvents: malformed,
             failureMessage: nil,
-            hasFutureTimestampRejection: hasFutureTimestampRejection
+            hasFutureTimestampRejection: hasFutureTimestampRejection,
+            attributionBreakdowns: attributionBreakdowns,
+            sourceRevision: sourceRevision
         )
     }
 
     private static func replaceImportedMetrics(
         in store: SQLiteUsageMetricStore,
         windows: [ExactUsageWindow],
-        aggregates: [AggregateKey: AggregateValue]
+        aggregates: [AggregateKey: AggregateValue],
+        sourceRevision: String?,
+        expectedAttributionBreakdownCount: Int
     ) throws {
         let replacements = ProviderKind.orderedCases
             .filter { supportedProviders.contains($0) }
@@ -299,7 +393,11 @@ public enum LocalUsageEventImporter {
                     metrics: metrics(from: aggregates.filter { $0.key.provider == provider })
                 )
             }
-        try store.replaceMetrics(replacements)
+        try store.replaceMetrics(
+            replacements,
+            sourceRevision: sourceRevision,
+            expectedAttributionBreakdownCount: expectedAttributionBreakdownCount
+        )
     }
 
     private static func process(
@@ -307,6 +405,7 @@ public enum LocalUsageEventImporter {
         lineNumber: Int,
         windows: [ExactUsageWindow],
         aggregates: inout [AggregateKey: AggregateValue],
+        attributionAggregates: inout [AttributionKey: AttributionValue],
         validEventCount: inout Int,
         malformedEventCount: inout Int,
         malformed: inout [MalformedLocalUsageEvent],
@@ -334,7 +433,7 @@ public enum LocalUsageEventImporter {
             return
         }
         validEventCount += 1
-        try add(event, windows: windows, to: &aggregates)
+        try add(event, windows: windows, to: &aggregates, attributionAggregates: &attributionAggregates)
     }
 
     private static func recordMalformed(
@@ -352,7 +451,8 @@ public enum LocalUsageEventImporter {
     private static func add(
         _ event: LocalUsageEvent,
         windows: [ExactUsageWindow],
-        to aggregates: inout [AggregateKey: AggregateValue]
+        to aggregates: inout [AggregateKey: AggregateValue],
+        attributionAggregates: inout [AttributionKey: AttributionValue]
     ) throws {
         for window in windows {
             try Task.checkCancellation()
@@ -360,7 +460,21 @@ public enum LocalUsageEventImporter {
                 continue
             }
             let key = AggregateKey(provider: event.provider, window: window, model: event.model, deployment: event.deployment)
-            if aggregates[key] == nil, aggregates.count >= maximumAggregateKeys {
+            let attributionKey: AttributionKey? = if event.project != nil || event.agent != nil, event.eventID != nil {
+                AttributionKey(
+                    provider: event.provider,
+                    window: window,
+                    model: event.model,
+                    deployment: event.deployment,
+                    project: event.project,
+                    agent: event.agent
+                )
+            } else {
+                nil
+            }
+            let addedKeyCount = (aggregates[key] == nil ? 1 : 0)
+                + (attributionKey.map { attributionAggregates[$0] == nil ? 1 : 0 } ?? 0)
+            if aggregates.count + attributionAggregates.count + addedKeyCount > maximumAggregateKeys {
                 throw LocalUsageEventError.tooManyAggregates
             }
             var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
@@ -369,6 +483,35 @@ public enum LocalUsageEventImporter {
             _ = try checkedSum(value.inputTokens, value.outputTokens)
             value.latestTimestamp = max(value.latestTimestamp, event.timestamp)
             aggregates[key] = value
+
+            guard let attributionKey, let eventID = event.eventID else { continue }
+            var attribution = attributionAggregates[attributionKey] ?? AttributionValue(inputTokens: 0, outputTokens: 0, eventIDs: [], latestTimestamp: event.timestamp)
+            attribution.inputTokens = try checkedSum(attribution.inputTokens, event.inputTokens)
+            attribution.outputTokens = try checkedSum(attribution.outputTokens, event.outputTokens)
+            _ = try checkedSum(attribution.inputTokens, attribution.outputTokens)
+            attribution.eventIDs.append(eventID)
+            attribution.latestTimestamp = max(attribution.latestTimestamp, event.timestamp)
+            attributionAggregates[attributionKey] = attribution
+        }
+    }
+
+    private static func breakdowns(from aggregates: [AttributionKey: AttributionValue]) -> [ObservedLocalAttributionBreakdown] {
+        aggregates.map { key, value in
+            ObservedLocalAttributionBreakdown(
+                source: .builtInLocalLog,
+                provider: key.provider,
+                window: key.window,
+                model: key.model,
+                deployment: key.deployment,
+                project: key.project,
+                agent: key.agent,
+                tokenUsage: TokenUsage(inputTokens: value.inputTokens, outputTokens: value.outputTokens),
+                eventIDs: value.eventIDs.sorted { $0.uuidString < $1.uuidString },
+                observedAt: value.latestTimestamp
+            )
+        }.sorted {
+            ($0.window.start, $0.provider.rawValue, $0.model, $0.project?.id ?? "", $0.agent?.id ?? "")
+                < ($1.window.start, $1.provider.rawValue, $1.model, $1.project?.id ?? "", $1.agent?.id ?? "")
         }
     }
 

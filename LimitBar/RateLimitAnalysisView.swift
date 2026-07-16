@@ -3,23 +3,41 @@ import LimitBarCore
 
 struct RateLimitAnalysisView: View {
     let state: LimitBarState
+    let workloadPlanningData: any WorkloadPlanningDataProviding
+
+    @State private var investigationSnapshot: ForensicInvestigationSnapshot?
+
+    init(
+        state: LimitBarState,
+        workloadPlanningData: (any WorkloadPlanningDataProviding)? = nil
+    ) {
+        self.state = state
+        self.workloadPlanningData = workloadPlanningData ?? LiveWorkloadPlanningData(state: state)
+    }
 
     private var items: [RateLimitAnalysisItem] {
-        claudeItems + codexItems
+        claudeItems + codexItems + [workloadItem]
     }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                if items.isEmpty {
-                    Label("No rate-limit analysis is available yet.", systemImage: "text.magnifyingglass")
-                        .font(.callout)
+                HStack {
+                    Text("Concise findings from measured local evidence")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    ForEach(items) { item in
-                        RateLimitAnalysisCard(item: item)
+                    Spacer()
+                    Button("Investigate") {
+                        investigationSnapshot = state.investigationPublication
                     }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                    .accessibilityHint("Opens detailed normalized evidence, methods, and limitations")
+                    .accessibilityIdentifier("open-forensic-investigation")
+                }
+
+                ForEach(items) { item in
+                    RateLimitAnalysisCard(item: item)
                 }
             }
         }
@@ -28,106 +46,170 @@ struct RateLimitAnalysisView: View {
             await state.claudeModel.appeared()
             state.claudeActionCompleted()
         }
+        .sheet(item: $investigationSnapshot) { snapshot in
+            ForensicInvestigationView(snapshot: snapshot)
+        }
     }
 
     private var claudeItems: [RateLimitAnalysisItem] {
-        guard state.claudeModel.isPresent else { return [] }
-
-        switch state.claudeModel.state {
-        case .loading:
-            return [RateLimitAnalysisItem(
-                title: "Claude Code",
-                summary: "Claude Code rate-limit analysis is loading."
-            )]
-        case .notConnected:
-            return [RateLimitAnalysisItem(
-                title: "Claude Code",
-                summary: "No Claude Code login was found on this Mac."
-            )]
-        case .authorizationRequired:
-            return [RateLimitAnalysisItem(
-                title: "Claude Code",
-                summary: "Claude Code needs your permission before LimitBar can read its existing login.",
-                detail: "LimitBar performs passive authorization checks first, so macOS is not allowed to show authentication UI in the background. Use the Claude connection flow only when you want macOS to ask for access to the existing Claude Code Keychain item."
-            )]
-        case let .failed(message):
-            return [RateLimitAnalysisItem(
-                title: "Claude Code",
-                summary: "Claude Code analysis is unavailable: \(message)"
-            )]
-        case let .loaded(snapshot, subscription):
-            let limits = snapshot.displayLimits(forSubscriptionType: subscription)
-            guard let busiest = limits.max(by: { $0.percentUsed < $1.percentUsed }) else {
-                return [RateLimitAnalysisItem(
-                    title: "Claude Code",
-                    summary: "Claude Code returned no visible rate-limit windows."
-                )]
+        var result: [RateLimitAnalysisItem] = []
+        if case let .loaded(snapshot, subscription) = state.claudeModel.state {
+            result += snapshot.displayLimits(forSubscriptionType: subscription).map { limit in
+                let identity = QuotaWindowIdentity.claudeCode(limit)
+                return quotaItem(
+                    id: "claude-\(limit.kind)-\(limit.resetsAt?.timeIntervalSince1970 ?? 0)",
+                    title: "Claude Code · \(limit.displayLabel)",
+                    insight: identity.flatMap { state.quotaInsights[$0] },
+                    anomaly: identity.flatMap { state.quotaAnomalies[$0] },
+                    hasExactReset: limit.resetsAt != nil
+                )
             }
-            let active = limits.first(where: \.isActive)?.displayLabel
-            let activeText = active.map { " The active window is \($0)." } ?? ""
-            let planText = subscription.map { " Plan: \($0.capitalized)." } ?? ""
-            return [RateLimitAnalysisItem(
+        } else {
+            result.append(RateLimitAnalysisItem(
+                id: "claude-unavailable",
                 title: "Claude Code",
-                summary: "Claude Code is at \(displayPercent(busiest.percentUsed)) used in its busiest visible window.",
-                detail: "\(busiest.displayLabel) is the busiest visible Claude Code window.\(activeText)\(planText) The snapshot was fetched at \(snapshot.fetchedAt.formatted(date: .omitted, time: .shortened))."
-            )]
+                summary: "Analysis will appear after a Claude Code rate-limit report is available."
+            ))
         }
+
+        let catalog = state.claudeExplanationCatalog
+        let selection = catalog.defaultSelection
+        let explanation = selection?.state ?? .unavailable(.insufficientObservations)
+        let limitations = (selection?.limitations ?? catalog.limitations).map(\.rawValue).joined(separator: ", ")
+        result.append(RateLimitAnalysisItem(
+            id: "claude-movement",
+            title: "Claude Code movement",
+            summary: claudeExplanationSummary(explanation),
+            detail: "\(explanation.displayText) Method: \(ClaudeQuotaExplanationEngine.methodVersion). Limitations: \(limitations.isEmpty ? "none recorded" : limitations)."
+        ))
+        return result
     }
 
     private var codexItems: [RateLimitAnalysisItem] {
-        guard let snapshot = state.local.codexSnapshot else {
-            return [RateLimitAnalysisItem(
-                title: "Codex",
-                summary: "No Codex rate-limit snapshot has been found yet.",
-                detail: "LimitBar reads Codex quota snapshots from local session logs. Run Codex once on this Mac to give LimitBar a local snapshot to analyze."
-            )]
-        }
-
-        if snapshot.isBusinessPlan {
-            return [RateLimitAnalysisItem(
-                title: "Codex",
-                summary: "Codex business seats are analyzed as shared credits, not personal quota windows.",
-                detail: "Codex business sessions expose company-pool credits instead of personal percentage windows. LimitBar can estimate credit usage from local usage and configured pricing without making a network request."
-            )]
-        }
-
-        let windows = [snapshot.primary, snapshot.secondary].compactMap { $0 }
-        guard let busiest = windows.max(by: { $0.percentUsed < $1.percentUsed }) else {
-            if let credits = snapshot.credits, credits.hasCredits, let balance = credits.balance {
-                return [RateLimitAnalysisItem(
-                    title: "Codex",
-                    summary: "Codex reports a credit balance of \(balance.description) credits.",
-                    detail: "This analysis uses the freshest Codex session log found on this Mac. It does not call a Codex network endpoint."
-                )]
+        var result: [RateLimitAnalysisItem] = []
+        if let snapshot = state.local.codexSnapshot {
+            let windows = [("primary", snapshot.primary), ("secondary", snapshot.secondary)]
+            result += windows.compactMap { slot, window in
+                guard let window else { return nil }
+                let identity = QuotaWindowIdentity.codex(slot: slot, window: window)
+                return quotaItem(
+                    id: "codex-\(slot)-\(window.resetsAt?.timeIntervalSince1970 ?? 0)",
+                    title: "Codex · \(window.displayLabel)",
+                    insight: identity.flatMap { state.quotaInsights[$0] },
+                    anomaly: identity.flatMap { state.quotaAnomalies[$0] },
+                    hasExactReset: window.resetsAt != nil
+                )
             }
-            return [RateLimitAnalysisItem(
+        } else {
+            result.append(RateLimitAnalysisItem(
+                id: "codex-unavailable",
                 title: "Codex",
-                summary: "Codex analysis is unavailable because no quota window was reported."
-            )]
+                summary: "Analysis will appear after a local Codex rate-limit report is found."
+            ))
         }
 
-        return [RateLimitAnalysisItem(
-            title: "Codex",
-            summary: "Codex is at \(displayPercent(busiest.percentUsed)) used in its busiest local window.",
-            detail: "\(busiest.displayLabel) is the busiest Codex window in the latest local session snapshot. LimitBar read it from local logs as of \(snapshot.reportedAt.formatted(date: .omitted, time: .shortened)); no network request was made."
-        )]
+        result.append(RateLimitAnalysisItem(
+            id: "codex-movement",
+            title: "Codex movement",
+            summary: codexExplanationSummary(state.local.codexExplanation),
+            detail: "\(state.local.codexExplanation.displayText) Method: \(CodexQuotaExplanationEngine.methodVersion). Adapter: \(CodexRolloutEvidenceAdapter.adapterVersion)."
+        ))
+        return result
+    }
+
+    private var workloadItem: RateLimitAnalysisItem {
+        let result = workloadPlanningData.result(workUnits: 10, concurrency: 1, now: Date())
+        return RateLimitAnalysisItem(
+            id: "planned-workload",
+            title: "Planned workload",
+            summary: result.summary,
+            detail: result.evidence
+        )
+    }
+
+    private func quotaItem(
+        id: String,
+        title: String,
+        insight: QuotaInsightState?,
+        anomaly: QuotaAnomalyState?,
+        hasExactReset: Bool
+    ) -> RateLimitAnalysisItem {
+        guard state.quotaInsightsStorageAvailable else {
+            return RateLimitAnalysisItem(id: id, title: title, summary: "Analysis is unavailable because local insight storage could not be opened.")
+        }
+        guard hasExactReset else {
+            return RateLimitAnalysisItem(id: id, title: title, summary: "Analysis needs an exact provider-reported reset boundary.")
+        }
+
+        return RateLimitAnalysisItem(
+            id: id,
+            title: title,
+            summary: "\(forecastSummary(insight)) \(anomalySummary(anomaly))",
+            detail: "\(forecastDetail(insight)) \(anomaly.map(PercentRateLimitPresentation.anomalyDisclosure) ?? "No anomaly result has been published yet.")"
+        )
+    }
+
+    private func forecastSummary(_ insight: QuotaInsightState?) -> String {
+        switch insight {
+        case let .qualified(value): "Forecast available from \(value.measuredObservationCount) observations."
+        case let .unavailable(value): "Forecast unavailable: \(value.reason.displayText)"
+        case nil: "Collecting observations for a forecast."
+        }
+    }
+
+    private func forecastDetail(_ insight: QuotaInsightState?) -> String {
+        guard let insight else { return "At least four distinct observations spanning 15 minutes are required." }
+        switch insight {
+        case let .qualified(value):
+            let burn = PercentRateLimitPresentation.burnRange(value.calculatedBurnPercentPerHour)
+            let exhaustion = value.calculatedExhaustionRange.map {
+                PercentRateLimitPresentation.exhaustionRange($0)
+            } ?? "not projected before reset"
+            return "Calculated burn: \(burn). Exhaustion: \(exhaustion). \(PercentRateLimitPresentation.methodDisclosure(insight))"
+        case .unavailable:
+            return PercentRateLimitPresentation.methodDisclosure(insight)
+        }
+    }
+
+    private func anomalySummary(_ anomaly: QuotaAnomalyState?) -> String {
+        switch anomaly {
+        case .finding: "Anomaly found."
+        case .noFinding: "No anomaly found."
+        case .observedZero: "Observed Zero."
+        case let .unavailable(value): "Anomaly unavailable: \(value.reason.rawValue)."
+        case nil: "Anomaly check pending."
+        }
+    }
+
+    private func claudeExplanationSummary(_ explanation: ClaudeQuotaExplanationState) -> String {
+        switch explanation {
+        case .movement: "Movement analysis is available."
+        case .flat: "No percentage movement was measured in the selected interval."
+        case let .unavailable(reason): "Movement analysis unavailable: \(reason.displayText)"
+        }
+    }
+
+    private func codexExplanationSummary(_ explanation: CodexQuotaExplanationState) -> String {
+        switch explanation {
+        case .available: "A complete local breakdown is available; quota movement remains unattributed."
+        case .partial: "A partial local breakdown is available; quota movement remains unattributed."
+        case .observedZero: "Observed Zero local activity in the covered interval."
+        case let .unavailable(reason): "Movement analysis unavailable: \(reason.displayText)"
+        }
     }
 }
 
 private struct RateLimitAnalysisItem: Identifiable {
-    let id = UUID()
+    let id: String
     let title: String
     let summary: String
     var detail: String?
 
-    var isLong: Bool {
-        (detail ?? "").count > 120
-    }
+    var presentsDetailInPopover: Bool { (detail ?? "").count > 120 }
 }
 
 private struct RateLimitAnalysisCard: View {
     let item: RateLimitAnalysisItem
-
     @State private var showsDetail = false
 
     var body: some View {
@@ -136,21 +218,18 @@ private struct RateLimitAnalysisCard: View {
                 .font(.headline)
             Text(item.summary)
                 .font(.callout)
-                .foregroundStyle(.primary)
 
             if let detail = item.detail {
-                if item.isLong {
-                    Button("Read analysis") {
-                        showsDetail = true
-                    }
-                    .buttonStyle(.link)
-                    .popover(isPresented: $showsDetail) {
-                        Text(detail)
-                            .font(.callout)
-                            .lineSpacing(3)
-                            .padding(16)
-                            .frame(width: 340, alignment: .leading)
-                    }
+                if item.presentsDetailInPopover {
+                    Button("Read analysis") { showsDetail = true }
+                        .buttonStyle(.link)
+                        .popover(isPresented: $showsDetail) {
+                            Text(detail)
+                                .font(.callout)
+                                .lineSpacing(3)
+                                .padding(16)
+                                .frame(width: 360, alignment: .leading)
+                        }
                 } else {
                     Text(detail)
                         .font(.caption)
@@ -163,8 +242,4 @@ private struct RateLimitAnalysisCard: View {
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.quaternary, lineWidth: 1))
     }
-}
-
-private func displayPercent(_ value: Double) -> String {
-    "\(Int(value.rounded()))%"
 }

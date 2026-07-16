@@ -20,6 +20,16 @@ public enum UsageMetricStoreError: Error, Equatable {
     case replacementScopeMismatch
 }
 
+public struct UsageAttributionSourcePublication: Equatable, Sendable {
+    public let revision: String
+    public let expectedBreakdownCount: Int
+
+    public init(revision: String, expectedBreakdownCount: Int) {
+        self.revision = revision
+        self.expectedBreakdownCount = expectedBreakdownCount
+    }
+}
+
 public final class SQLiteUsageMetricStore {
     private var database: OpaquePointer?
 
@@ -202,6 +212,15 @@ public final class SQLiteUsageMetricStore {
     }
 
     public func replaceMetrics(in scope: UsageReplacementScope, with metrics: [UsageMetric]) throws {
+        try replaceMetrics(in: scope, with: metrics, sourceRevision: nil)
+    }
+
+    public func replaceMetrics(
+        in scope: UsageReplacementScope,
+        with metrics: [UsageMetric],
+        sourceRevision: String?,
+        expectedAttributionBreakdownCount: Int = 0
+    ) throws {
         guard metrics.allSatisfy({ metric in
             guard metric.provider == scope.provider,
                   case let .bounded(source, window) = metric.provenance else {
@@ -216,6 +235,12 @@ public final class SQLiteUsageMetricStore {
         do {
             try mutateMetrics(in: scope, sqlPrefix: "DELETE FROM usage_metrics WHERE")
             try save(metrics)
+            if let sourceRevision {
+                try saveAttributionSourcePublication(
+                    UsageAttributionSourcePublication(revision: sourceRevision, expectedBreakdownCount: expectedAttributionBreakdownCount),
+                    source: scope.source
+                )
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -224,6 +249,14 @@ public final class SQLiteUsageMetricStore {
     }
 
     public func replaceMetrics(_ replacements: [UsageScopedReplacement]) throws {
+        try replaceMetrics(replacements, sourceRevision: nil)
+    }
+
+    public func replaceMetrics(
+        _ replacements: [UsageScopedReplacement],
+        sourceRevision: String?,
+        expectedAttributionBreakdownCount: Int = 0
+    ) throws {
         guard replacements.allSatisfy({ replacement in
             replacement.metrics.allSatisfy { metric in
                 guard metric.provider == replacement.scope.provider,
@@ -241,6 +274,15 @@ public final class SQLiteUsageMetricStore {
             for replacement in replacements {
                 try mutateMetrics(in: replacement.scope, sqlPrefix: "DELETE FROM usage_metrics WHERE")
                 try save(replacement.metrics)
+            }
+            if let sourceRevision, let source = replacements.first?.scope.source {
+                guard replacements.allSatisfy({ $0.scope.source == source }) else {
+                    throw UsageMetricStoreError.replacementScopeMismatch
+                }
+                try saveAttributionSourcePublication(
+                    UsageAttributionSourcePublication(revision: sourceRevision, expectedBreakdownCount: expectedAttributionBreakdownCount),
+                    source: source
+                )
             }
             try execute("COMMIT;")
         } catch {
@@ -265,6 +307,64 @@ public final class SQLiteUsageMetricStore {
         }
         try stepDone(statement)
         return Int(sqlite3_changes(database))
+    }
+
+    public func deleteCustomMetricsAndAttributionRevisions(excluding sourceIDs: Set<UUID>) throws -> Int {
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            let deleted = try deleteCustomMetrics(excluding: sourceIDs)
+            let identifiers = sourceIDs.map { attributionRevisionKey(for: .custom($0)) }.sorted()
+            let statement: OpaquePointer?
+            if identifiers.isEmpty {
+                statement = try prepare("DELETE FROM app_metadata WHERE key LIKE 'attribution_source_%|custom|%';")
+            } else {
+                let countKeys = sourceIDs.map { attributionCountKey(for: .custom($0)) }.sorted()
+                let allKeys = identifiers + countKeys
+                let allPlaceholders = Array(repeating: "?", count: allKeys.count).joined(separator: ", ")
+                statement = try prepare("DELETE FROM app_metadata WHERE key LIKE 'attribution_source_%|custom|%' AND key NOT IN (\(allPlaceholders));")
+                for (index, identifier) in allKeys.enumerated() {
+                    bind(identifier, at: Int32(index + 1), in: statement)
+                }
+            }
+            defer { sqlite3_finalize(statement) }
+            try stepDone(statement)
+            try execute("COMMIT;")
+            return deleted
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    public func attributionSourceRevisions() throws -> [UsageMetricSource: String] {
+        try attributionSourcePublications().mapValues(\.revision)
+    }
+
+    public func attributionSourcePublications() throws -> [UsageMetricSource: UsageAttributionSourcePublication] {
+        let statement = try prepare("SELECT key, value FROM app_metadata WHERE key LIKE 'attribution_source_revision|%';")
+        defer { sqlite3_finalize(statement) }
+        var revisions: [UsageMetricSource: String] = [:]
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            guard let source = decodeAttributionRevisionKey(requiredString(statement, index: 0)) else {
+                throw UsageMetricStoreError.decodeFailed("Invalid attribution source revision key")
+            }
+            revisions[source] = requiredString(statement, index: 1)
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw UsageMetricStoreError.executeFailed(Self.message(from: database)) }
+        var publications: [UsageMetricSource: UsageAttributionSourcePublication] = [:]
+        for (source, revision) in revisions {
+            let countStatement = try prepare("SELECT value FROM app_metadata WHERE key = ?;")
+            defer { sqlite3_finalize(countStatement) }
+            bind(attributionCountKey(for: source), at: 1, in: countStatement)
+            guard sqlite3_step(countStatement) == SQLITE_ROW,
+                  let count = Int(requiredString(countStatement, index: 0)), count >= 0 else {
+                throw UsageMetricStoreError.decodeFailed("Missing attribution source publication count")
+            }
+            publications[source] = UsageAttributionSourcePublication(revision: revision, expectedBreakdownCount: count)
+        }
+        return publications
     }
 
     @discardableResult
@@ -1059,6 +1159,48 @@ public final class SQLiteUsageMetricStore {
         case let .custom(identifier):
             return ("custom", identifier.uuidString)
         }
+    }
+
+    private func saveAttributionSourcePublication(_ publication: UsageAttributionSourcePublication, source: UsageMetricSource) throws {
+        guard !publication.revision.isEmpty,
+              publication.revision.utf8.count <= 128,
+              publication.revision.unicodeScalars.allSatisfy({ $0.isASCII }),
+              publication.expectedBreakdownCount >= 0 else {
+            throw UsageMetricStoreError.replacementScopeMismatch
+        }
+        for (key, value) in [
+            (attributionRevisionKey(for: source), publication.revision),
+            (attributionCountKey(for: source), String(publication.expectedBreakdownCount))
+        ] {
+            let statement = try prepare("INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?);")
+            defer { sqlite3_finalize(statement) }
+            bind(key, at: 1, in: statement)
+            bind(value, at: 2, in: statement)
+            try stepDone(statement)
+        }
+    }
+
+    private func attributionRevisionKey(for source: UsageMetricSource) -> String {
+        switch source {
+        case .builtInLocalLog: "attribution_source_revision|builtInLocalLog"
+        case let .custom(id): "attribution_source_revision|custom|\(id.uuidString.lowercased())"
+        case .providerAPI: "attribution_source_revision|providerAPI"
+        }
+    }
+
+    private func attributionCountKey(for source: UsageMetricSource) -> String {
+        attributionRevisionKey(for: source).replacingOccurrences(
+            of: "attribution_source_revision|",
+            with: "attribution_source_count|"
+        )
+    }
+
+    private func decodeAttributionRevisionKey(_ key: String) -> UsageMetricSource? {
+        let components = key.split(separator: "|", omittingEmptySubsequences: false)
+        guard components.first == "attribution_source_revision" else { return nil }
+        if components.count == 2, components[1] == "builtInLocalLog" { return .builtInLocalLog }
+        if components.count == 3, components[1] == "custom", let id = UUID(uuidString: String(components[2])) { return .custom(id) }
+        return nil
     }
 
     private func encode(_ limitStatus: LimitStatus) -> (status: String, used: Double?, limit: Double?) {

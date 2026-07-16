@@ -122,7 +122,13 @@ final class AlertCoordinator {
         await refreshAuthorizationStatus()
     }
 
-    func evaluate(quota: [QuotaObservation], costs: [CostBudgetObservation], now: Date = Date()) async {
+    func evaluate(
+        quota: [QuotaObservation],
+        costs: [CostBudgetObservation],
+        forecasts: [QuotaInsightState] = [],
+        anomalies: [QuotaAnomalyState] = [],
+        now: Date = Date()
+    ) async {
         guard let deliveryStore, !isClearingHistory else { return }
         activeEvaluations += 1
         defer { activeEvaluations -= 1 }
@@ -133,10 +139,17 @@ final class AlertCoordinator {
         do {
             try deliveryStore.prune(through: now)
             let preferences = settingsStore.preferences
+            let findings = QuotaFindingAlertAdapter.candidates(
+                forecasts: forecasts,
+                anomalies: anomalies,
+                quota: quota,
+                now: now
+            )
             let candidates = AlertEvaluator.evaluate(
                 preferences: preferences,
                 quota: quota,
                 costs: costs,
+                findings: findings,
                 satisfied: [],
                 now: now
             )
@@ -149,6 +162,7 @@ final class AlertCoordinator {
                 preferences: preferences,
                 quota: quota,
                 costs: costs,
+                findings: findings,
                 satisfied: satisfied,
                 now: now
             )

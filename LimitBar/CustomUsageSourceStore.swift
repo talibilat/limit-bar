@@ -38,6 +38,12 @@ struct CustomUsageSourceStore {
         guard !trimmedName.isEmpty, !trimmedPath.isEmpty else {
             return false
         }
+        let fileURL = URL(fileURLWithPath: trimmedPath)
+        guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            return false
+        }
         sources = sources + [CustomUsageSource(name: trimmedName, filePath: trimmedPath)]
         return true
     }

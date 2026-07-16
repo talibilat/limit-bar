@@ -1,14 +1,29 @@
 import Foundation
+import CryptoKit
 
 public struct CodexRateLimitWindow: Equatable, Sendable {
+    public let limitID: String
     public let percentUsed: Double
     public let windowMinutes: Int
     public let resetsAt: Date?
 
-    public init(percentUsed: Double, windowMinutes: Int, resetsAt: Date?) {
+    public init(limitID: String = "codex", percentUsed: Double, windowMinutes: Int, resetsAt: Date?) {
+        self.limitID = Self.normalizedLimitID(limitID)
         self.percentUsed = percentUsed
         self.windowMinutes = windowMinutes
         self.resetsAt = resetsAt
+    }
+
+    public static func normalizedLimitID(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping ?? ""
+        guard !trimmed.isEmpty else { return "codex" }
+        let scalars = Array(trimmed.unicodeScalars)
+        let isSafe = scalars.allSatisfy {
+            CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
+        }
+        if isSafe, trimmed.utf8.count <= 32 { return trimmed.lowercased() }
+        let digest = SHA256.hash(data: Data(trimmed.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "id_\(digest)"
     }
 
     public var displayLabel: String {
@@ -96,6 +111,7 @@ public enum CodexRateLimitMapper {
             }
 
             struct RawRateLimits: Decodable {
+                let limit_id: String?
                 let primary: RawWindow?
                 let secondary: RawWindow?
                 let credits: RawCredits?
@@ -122,8 +138,8 @@ public enum CodexRateLimitMapper {
 
         let snapshot = CodexRateLimitSnapshot(
             planType: rateLimits.plan_type,
-            primary: window(from: rateLimits.primary),
-            secondary: window(from: rateLimits.secondary),
+            primary: window(from: rateLimits.primary, limitID: rateLimits.limit_id),
+            secondary: window(from: rateLimits.secondary, limitID: rateLimits.limit_id),
             credits: credits(from: rateLimits.credits),
             reportedAt: reportedAt
         )
@@ -133,17 +149,26 @@ public enum CodexRateLimitMapper {
         return snapshot
     }
 
-    private static func window(from raw: RawEntry.RawPayload.RawWindow?) -> CodexRateLimitWindow? {
+    private static func window(from raw: RawEntry.RawPayload.RawWindow?, limitID: String?) -> CodexRateLimitWindow? {
         guard let raw, let percent = raw.used_percent, let minutes = raw.window_minutes,
               percent.isFinite, (0...100).contains(percent),
               (1...525_600).contains(minutes) else {
             return nil
         }
+        let reset = raw.resets_at.flatMap { value -> Date? in
+            guard value.isFinite else { return nil }
+            return Date(timeIntervalSince1970: value)
+        }
         return CodexRateLimitWindow(
+            limitID: normalizedLimitID(limitID),
             percentUsed: percent,
             windowMinutes: minutes,
-            resetsAt: raw.resets_at.map { Date(timeIntervalSince1970: $0) }
+            resetsAt: reset
         )
+    }
+
+    private static func normalizedLimitID(_ value: String?) -> String {
+        CodexRateLimitWindow.normalizedLimitID(value)
     }
 
     private static func credits(from raw: RawEntry.RawPayload.RawCredits?) -> CodexCredits? {
@@ -174,9 +199,16 @@ public enum CodexSessionRateLimitReader {
         fileManager: FileManager = .default
     ) throws -> CodexRateLimitSnapshot {
         try Task.checkCancellation()
+        guard let canonicalDirectory = SecureRegularFile.canonicalURL(sessionsDirectory) else {
+            throw CodexRateLimitFailure.notFound
+        }
+        guard !SecureRegularFile.isSymbolicLink(sessionsDirectory),
+              !SecureRegularFile.isSymbolicLink(sessionsDirectory.deletingLastPathComponent()) else {
+            throw CodexRateLimitFailure.notFound
+        }
         guard let enumerator = fileManager.enumerator(
-            at: sessionsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            at: canonicalDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else {
             throw CodexRateLimitFailure.notFound
@@ -189,6 +221,7 @@ public enum CodexSessionRateLimitReader {
             maximumEntries: 10_000,
             maximumFileSize: 8 * 1_024 * 1_024,
             maximumTotalReadSize: 32 * 1_024 * 1_024,
+            allowedDirectory: canonicalDirectory,
             fileManager: fileManager
         )
     }
@@ -200,6 +233,7 @@ public enum CodexSessionRateLimitReader {
         maximumEntries: Int,
         maximumFileSize: Int = 8 * 1_024 * 1_024,
         maximumTotalReadSize: Int = 32 * 1_024 * 1_024,
+        allowedDirectory: URL? = nil,
         fileManager: FileManager = .default,
         readFile: (URL, Int) throws -> Data = boundedRead
     ) throws -> CodexRateLimitSnapshot {
@@ -222,11 +256,20 @@ public enum CodexSessionRateLimitReader {
                 throw CodexRateLimitFailure.traversalLimitExceeded
             }
             guard fileURL.pathExtension == "jsonl" else { continue }
-            guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+            guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true,
                   let modified = values.contentModificationDate,
                   let fileSize = values.fileSize,
                   fileSize <= maximumFileSize,
                   modified >= cutoff else {
+                continue
+            }
+            if let allowedDirectory {
+                let rootPath = allowedDirectory.path
+                guard let candidatePath = SecureRegularFile.canonicalURL(fileURL)?.path else { continue }
+                guard candidatePath.hasPrefix(rootPath + "/") else { continue }
+                candidates.append((URL(fileURLWithPath: candidatePath), modified))
                 continue
             }
             candidates.append((fileURL, modified))
@@ -269,7 +312,7 @@ public enum CodexSessionRateLimitReader {
     }
 
     private static func boundedRead(_ fileURL: URL, byteCount: Int) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: fileURL)
+        let handle = try SecureRegularFile.open(fileURL)
         defer { try? handle.close() }
         var data = Data()
         while data.count < byteCount {

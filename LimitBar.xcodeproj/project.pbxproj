@@ -28,10 +28,16 @@
 		AA0000000000000000000105 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000114 /* XCTest.framework */; };
 		AA0000000000000000000201 /* LocalRefreshSettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */; };
 		AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */; };
+		AA0000000000000000000106 /* ProviderRefreshHistoryPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */; };
 		AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* AlertSettingsStore.swift */; };
 		AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */; };
 		AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* AlertSettingsView.swift */; };
-		AA00000000000000000000F3 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E3 /* RateLimitAnalysisView.swift */; };
+		AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E3 /* DiagnosticExportView.swift */; };
+		AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */; };
+		AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */; };
+		AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */; };
+		AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E4 /* ForensicInvestigationView.swift */; };
+		AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E5 /* RateLimitAnalysisView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,7 +57,7 @@
 		AA00000000000000000000E0 /* AlertSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsStore.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertNotificationCoordinator.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E2 /* AlertSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertSettingsView.swift; sourceTree = "<group>"; };
-		AA00000000000000000000E3 /* RateLimitAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitAnalysisView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E5 /* RateLimitAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RateLimitAnalysisView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* LimitBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LimitBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000111 /* AppUITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUITestSupport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000112 /* LimitBarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitBarUITests.swift; sourceTree = "<group>"; };
@@ -61,6 +67,12 @@
 		AA0000000000000000000116 /* LimitBarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LimitBarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRefreshSettingsStoreTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRefreshSettingsStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRefreshHistoryPresentationTests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportPresentationTests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaFindingAlertCoordinatorTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E3 /* DiagnosticExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E4 /* ForensicInvestigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationView.swift; sourceTree = "<group>"; };
+		AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationPresentationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -138,8 +150,10 @@
 				AA00000000000000000000E0 /* AlertSettingsStore.swift */,
 				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
 				AA00000000000000000000E2 /* AlertSettingsView.swift */,
-				AA00000000000000000000E3 /* RateLimitAnalysisView.swift */,
+				AA00000000000000000000E5 /* RateLimitAnalysisView.swift */,
 				AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */,
+				AA00000000000000000000E3 /* DiagnosticExportView.swift */,
+				AA00000000000000000000E4 /* ForensicInvestigationView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -167,6 +181,10 @@
 			children = (
 				AA0000000000000000000115 /* CustomUsageSourceStoreTests.swift */,
 				AA0000000000000000000211 /* LocalRefreshSettingsStoreTests.swift */,
+				AA0000000000000000000117 /* ProviderRefreshHistoryPresentationTests.swift */,
+				AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */,
+				AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */,
+				AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */,
 			);
 			path = LimitBarTests;
 			sourceTree = "<group>";
@@ -314,8 +332,10 @@
 				AA00000000000000000000F0 /* AlertSettingsStore.swift in Sources */,
 				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
 				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
-				AA00000000000000000000F3 /* RateLimitAnalysisView.swift in Sources */,
+				AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */,
 				AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */,
+				AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */,
+				AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -333,6 +353,10 @@
 			files = (
 				AA0000000000000000000104 /* CustomUsageSourceStoreTests.swift in Sources */,
 				AA0000000000000000000201 /* LocalRefreshSettingsStoreTests.swift in Sources */,
+				AA0000000000000000000106 /* ProviderRefreshHistoryPresentationTests.swift in Sources */,
+				AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */,
+				AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */,
+				AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -459,6 +483,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = LimitBar;
@@ -481,6 +506,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = LimitBar;

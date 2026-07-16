@@ -25,6 +25,17 @@ struct LimitBarSettingsView: View {
     @State private var showsDeleteHistoryConfirmation = false
     @State private var historyMessage: String?
     @State private var localRefreshCadence = LocalRefreshSettingsStore().cadence
+    @State private var refreshHistory: [ProviderRefreshProduct: ProviderRefreshHistorySummary] = [:]
+    @State private var showsClearRefreshHistoryConfirmation = false
+    @State private var refreshHistoryMessage: String?
+    @State private var showsDeleteQuotaConfirmation = false
+    @State private var quotaDeletionMessage: String?
+    @State private var showsDeleteCodexExplanationsConfirmation = false
+    @State private var codexExplanationDeletionMessage: String?
+    @State private var showsDeleteClaudeExplanationsConfirmation = false
+    @State private var claudeExplanationDeletionMessage: String?
+    @State private var showsDeleteAttributionConfirmation = false
+    @State private var attributionDeletionMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -109,6 +120,100 @@ struct LimitBarSettingsView: View {
                     }
                 } else {
                     ProgressView("Loading diagnostics")
+                }
+            }
+
+            DiagnosticExportSection(state: state)
+
+            Section("Quota Observations") {
+                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per Quota window and Exact boundary. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Quota Observations", role: .destructive) {
+                    showsDeleteQuotaConfirmation = true
+                }
+                if let quotaDeletionMessage {
+                    Text(quotaDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Codex Explanations") {
+                Text("Codex explanation findings are retained locally in bounded normalized form so the latest compatible explanation can survive relaunch. They contain no raw JSONL lines, prompts, code, paths, model labels, project labels, or local session digests.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting these findings does not alter current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Codex Explanations", role: .destructive) {
+                    showsDeleteCodexExplanationsConfirmation = true
+                }
+                .accessibilityIdentifier("delete-codex-explanations")
+                if let codexExplanationDeletionMessage {
+                    Text(codexExplanationDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Claude Code Explanations") {
+                Text("Claude Code explanation findings retain only normalized measured movement, provenance, method metadata, and privacy-safe Observed Local Breakdown totals. Raw OTLP payloads, account labels, prompts, code, responses, terminal output, credentials, and paths are never retained.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting these findings does not alter quota observations, current provider reports, settings, credentials, alert rules, or notification delivery history.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Claude Code Explanations", role: .destructive) {
+                    showsDeleteClaudeExplanationsConfirmation = true
+                }
+                .accessibilityIdentifier("delete-claude-explanations")
+                if let claudeExplanationDeletionMessage {
+                    Text(claudeExplanationDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(claudeExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
+            Section("Project And Agent Attribution") {
+                Text("Measured project and agent breakdowns are retained locally in bounded normalized form. Parent usage totals and source files remain separate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Deleting attribution does not change current parent usage, settings, credentials, alert rules, or notification delivery history. Unchanged sources remain suppressed after refresh and relaunch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Project And Agent Attribution", role: .destructive) {
+                    showsDeleteAttributionConfirmation = true
+                }
+                .accessibilityIdentifier("delete-project-agent-attribution")
+                if let attributionDeletionMessage {
+                    Text(attributionDeletionMessage)
+                        .font(.caption)
+                        .foregroundStyle(attributionDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                        .accessibilityIdentifier("project-agent-attribution-deletion-message")
+                }
+            }
+
+            Section("Provider Refresh History") {
+                Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(ProviderRefreshProduct.allCases, id: \.self) { product in
+                    let summary = refreshHistory[product]
+                    LabeledContent("\(product.displayName) latest", value: ProviderRefreshHistoryStatusText.latest(summary?.latest))
+                    LabeledContent("\(product.displayName) last full success", value: ProviderRefreshHistoryStatusText.lastFullSuccess(summary?.lastFullSuccess))
+                }
+                Button("Clear Provider Refresh History", role: .destructive) {
+                    showsClearRefreshHistoryConfirmation = true
+                }
+                .accessibilityIdentifier("clear-provider-refresh-history")
+                if let refreshHistoryMessage {
+                    Text(refreshHistoryMessage)
+                        .font(.caption)
+                        .foregroundStyle(refreshHistoryMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
                 }
             }
 
@@ -221,6 +326,95 @@ struct LimitBarSettingsView: View {
         .task {
             storedMetrics = await UsageDatabase.shared.snapshot()
             historyRetention = await UsageDatabase.shared.historicalRetention()
+            refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerRefreshHistoryDidChange)) { _ in
+            Task { refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries() }
+        }
+        .confirmationDialog(
+            "Delete all quota observations?",
+            isPresented: $showsDeleteQuotaConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Quota Observations", role: .destructive) {
+                Task {
+                    quotaDeletionMessage = await state.deleteQuotaObservations()
+                        ? "Retained quota observations deleted. Current reports may be observed again on a later refresh."
+                        : "Could not delete quota observations."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained quota history and calculated findings only. Current reports remain available and may be observed again on a later refresh. Alert rules and delivery state, settings, credentials, and usage remain unchanged.")
+        }
+        .confirmationDialog(
+            "Delete retained Codex explanations?",
+            isPresented: $showsDeleteCodexExplanationsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Codex Explanations", role: .destructive) {
+                Task {
+                    codexExplanationDeletionMessage = await state.deleteCodexExplanations()
+                        ? "Codex explanation findings deleted. Current usage, quota observations, settings, credentials, alert rules, and delivery history were not changed."
+                        : "Could not delete Codex explanation findings."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained Codex explanation findings only. It does not remove current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
+        }
+        .confirmationDialog(
+            "Delete retained Claude Code explanations?",
+            isPresented: $showsDeleteClaudeExplanationsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Claude Code Explanations", role: .destructive) {
+                Task {
+                    claudeExplanationDeletionMessage = await state.deleteClaudeExplanations()
+                        ? "Claude Code explanation findings deleted. Quota observations, reports, settings, credentials, alert rules, and delivery history were not changed."
+                        : "Could not delete Claude Code explanation findings."
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained Claude Code explanation findings only. It does not remove quota observations, current reports, settings, credentials, alert rules, or notification delivery history.")
+        }
+        .confirmationDialog(
+            "Delete retained project and agent attribution?",
+            isPresented: $showsDeleteAttributionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Attribution", role: .destructive) {
+                Task {
+                    let succeeded = await state.deleteProjectAgentAttribution()
+                    attributionDeletionMessage = AttributionEvidenceDeletionPresentation.message(succeeded: succeeded)
+                    if succeeded {
+                        storedMetrics = await UsageDatabase.shared.snapshot()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes retained project and agent breakdowns only. Current parent usage, source files, settings, credentials, alert rules, and notification delivery history remain unchanged.")
+        }
+        .confirmationDialog(
+            "Clear provider refresh history?",
+            isPresented: $showsClearRefreshHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Refresh History", role: .destructive) {
+                Task {
+                    if await ProviderRefreshHistoryRepository.shared.deleteAll() {
+                        refreshHistory = [:]
+                        refreshHistoryMessage = "Provider refresh history cleared. Usage, settings, and credentials were not changed."
+                    } else {
+                        refreshHistoryMessage = "Could not clear provider refresh history."
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes refresh outcomes only. Current and historical usage, provider settings, and Keychain credentials remain unchanged.")
         }
         .confirmationDialog(
             "Delete all historical usage?",
@@ -337,6 +531,37 @@ struct LimitBarSettingsView: View {
     }
 }
 
+enum AttributionEvidenceDeletionPresentation {
+    static func message(succeeded: Bool) -> String {
+        succeeded
+            ? "Project and agent attribution deleted. Parent usage, source files, settings, credentials, alert rules, and delivery history were not changed."
+            : "Could not delete project and agent attribution. Existing attribution was left available."
+    }
+}
+
+enum ProviderRefreshHistoryStatusText {
+    static func latest(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No explicit refresh recorded" }
+        return "\(outcome(entry.outcome)) \(entry.startedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    static func lastFullSuccess(_ entry: ProviderRefreshHistoryEntry?) -> String {
+        guard let entry else { return "No full success recorded" }
+        return entry.startedAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func outcome(_ outcome: ProviderRefreshOutcome) -> String {
+        switch outcome {
+        case .success: "Succeeded"
+        case .partialFailure: "Partially failed"
+        case .cancelled: "Cancelled"
+        case .authenticationFailure: "Authentication failed"
+        case .networkFailure: "Network failed"
+        case .failed: "Failed"
+        }
+    }
+}
+
 struct CustomUsageSourcesSection: View {
     private let store: CustomUsageSourceStore
     private let chooseFile: () -> String?
@@ -344,6 +569,7 @@ struct CustomUsageSourcesSection: View {
     @State private var sources: [CustomUsageSource]
     @State private var name = ""
     @State private var filePath = ""
+    @State private var validationMessage: String?
 
     init(
         store: CustomUsageSourceStore = CustomUsageSourceStore(),
@@ -372,6 +598,7 @@ struct CustomUsageSourcesSection: View {
                 Button("Choose File...") {
                     if let selectedPath = chooseFile() {
                         filePath = selectedPath
+                        validationMessage = nil
                     }
                 }
                 .accessibilityIdentifier("custom-source-choose-file")
@@ -381,11 +608,21 @@ struct CustomUsageSourcesSection: View {
                     sources = store.sources
                     name = ""
                     filePath = ""
+                    validationMessage = nil
+                } else {
+                    validationMessage = "Choose a readable regular JSONL file. Symbolic links are not accepted."
                 }
             }
             .accessibilityIdentifier("custom-source-add")
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("custom-source-validation")
+            }
 
             if sources.isEmpty {
                 Text("No custom sources configured.")

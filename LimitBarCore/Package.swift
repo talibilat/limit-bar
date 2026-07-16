@@ -27,6 +27,10 @@ let package = Package(
         .executable(
             name: "limitbar-migration-validator",
             targets: ["LimitBarMigrationValidator"]
+        ),
+        .executable(
+            name: "limitbar-quota-forecast-evaluator",
+            targets: ["LimitBarQuotaForecastEvaluator"]
         )
     ],
     targets: [
@@ -57,6 +61,10 @@ let package = Package(
         .executableTarget(
             name: "LimitBarMigrationValidator",
             dependencies: ["LimitBarMigrationValidation"]
+        ),
+        .executableTarget(
+            name: "LimitBarQuotaForecastEvaluator",
+            dependencies: ["LimitBarCore"]
         ),
         .testTarget(
             name: "LimitBarCoreTests",

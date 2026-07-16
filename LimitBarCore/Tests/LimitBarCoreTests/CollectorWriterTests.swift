@@ -35,6 +35,30 @@ struct CollectorWriterTests {
         }
     }
 
+    @Test("v2 retries are idempotent and attribution changes conflict")
+    func v2RetriesAndConflicts() throws {
+        let output = try temporaryOutput()
+        let writer = CollectorWriter()
+        let event = makeV2Event(id: 1)
+
+        #expect(try writer.append(event, to: output, now: now) == .appended)
+        #expect(try writer.append(event, to: output, now: now) == .duplicate)
+        #expect(throws: CollectorWriterError.eventIDConflict) {
+            try writer.append(makeV2Event(id: 1, projectID: "other-project"), to: output, now: now)
+        }
+    }
+
+    @Test("schema version is material to Event ID identity")
+    func schemaVersionChangeConflicts() throws {
+        let output = try temporaryOutput()
+        let writer = CollectorWriter()
+        try writer.append(makeEvent(id: 1), to: output, now: now)
+
+        #expect(throws: CollectorWriterError.eventIDConflict) {
+            try writer.append(makeV2Event(id: 1, projectID: nil), to: output, now: now)
+        }
+    }
+
     @Test("adds a separator when an existing JSONL file has no trailing newline")
     func appendsAfterUnterminatedLine() throws {
         let output = try temporaryOutput()
@@ -100,6 +124,33 @@ struct CollectorWriterTests {
         let activeLines = try Data(contentsOf: output).split(separator: 0x0A)
         #expect(activeLines.count == 1)
         #expect(try CollectorSchemaV1.decode(Data(activeLines[0])).eventID == makeEvent(id: 9).eventID)
+    }
+
+    @Test("schema v2 attribution follows the same active retention and rotation policy")
+    func v2RetentionAndRotation() throws {
+        let output = try temporaryOutput()
+        let old = CollectorEventV2(
+            eventID: uuid(1), identity: .provider(.openAI), timestamp: now.addingTimeInterval(-9 * 24 * 60 * 60),
+            model: "old", inputTokens: 1, outputTokens: 1,
+            project: CollectorAttribution(id: "old-project")
+        )
+        let recent = makeV2Event(id: 2)
+        let new = makeV2Event(id: 3)
+        var existing = try CollectorSchemaV2.encode(old) + Data([0x0A])
+        existing.append(try CollectorSchemaV2.encode(recent))
+        existing.append(0x0A)
+        try existing.write(to: output)
+        let retainedCandidate = try CollectorSchemaV2.encode(recent) + Data([0x0A]) + CollectorSchemaV2.encode(new) + Data([0x0A])
+        let writer = CollectorWriter(policy: CollectorPolicy(maximumActiveFileBytes: retainedCandidate.count))
+
+        guard case .appendedAfterRotation = try writer.append(new, to: output, now: now) else {
+            Issue.record("Expected schema v2 rotation")
+            return
+        }
+
+        let active = try Data(contentsOf: output).split(separator: 0x0A).map { try CollectorSchemaV2.decode(Data($0)) }
+        #expect(active.map(\.eventID) == [uuid(2), uuid(3)])
+        #expect(active.first?.project?.id == "project-one")
     }
 
     @Test("fails rotation rather than dropping retained or malformed lines")
@@ -208,6 +259,15 @@ struct CollectorWriterTests {
 
     private func makeEvent(id: Int, timestamp: Date? = nil, inputTokens: Int = 1) -> CollectorEventV1 {
         CollectorEventV1(eventID: uuid(id), identity: .provider(.openAI), timestamp: timestamp ?? now, model: "model-\(id)", inputTokens: inputTokens, outputTokens: 2)
+    }
+
+    private func makeV2Event(id: Int, projectID: String? = "project-one") -> CollectorEventV2 {
+        CollectorEventV2(
+            eventID: uuid(id), identity: .provider(.openAI), timestamp: now, model: "model-\(id)",
+            inputTokens: 1, outputTokens: 2,
+            project: projectID.map { CollectorAttribution(id: $0, label: "Project One") },
+            agent: CollectorAttribution(id: "agent-one", label: "Agent One")
+        )
     }
 
     private func uuid(_ value: Int) -> UUID {

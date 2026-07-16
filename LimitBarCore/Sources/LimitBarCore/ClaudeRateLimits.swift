@@ -254,8 +254,10 @@ public struct ClaudeOAuthUsageClient: Sendable, ClaudeRateLimitsFetching {
             } catch {
                 return .failure(.malformedResponse)
             }
-        case 401, 403:
+        case 401:
             return .failure(.expiredLogin)
+        case 403:
+            return .failure(.requestRejected)
         default:
             return .failure(.requestRejected)
         }
@@ -311,6 +313,11 @@ public final class ClaudeRateLimitsModel {
         switch await credentials.credential(intent: intent) {
         case let .credential(found):
             isPresent = true
+            guard !found.isExpired() else {
+                await credentials.invalidate()
+                state = .notConnected
+                return
+            }
             credential = found
         case .absent:
             isPresent = true
@@ -336,6 +343,8 @@ public final class ClaudeRateLimitsModel {
         case let .failure(failure):
             if failure == .expiredLogin {
                 await credentials.invalidate()
+                state = .notConnected
+                return
             }
             state = .failed(failure.displayText)
         }

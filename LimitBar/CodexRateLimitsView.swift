@@ -5,6 +5,11 @@ struct CodexRateLimitsView: View {
     let snapshot: CodexRateLimitSnapshot
     let metrics: [UsageMetric]
     let pricingTable: PricingTable
+    let insights: [QuotaWindowIdentity: QuotaInsightState]
+    let anomalies: [QuotaWindowIdentity: QuotaAnomalyState]
+    let insightsStorageAvailable: Bool
+    let explanation: CodexQuotaExplanationState
+    var showsAnalysis = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -12,6 +17,22 @@ struct CodexRateLimitsView: View {
                 businessCreditsSection
             } else {
                 individualPlanSection(snapshot)
+            }
+
+            if showsAnalysis {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Latest measured interval")
+                        .font(.caption.weight(.semibold))
+                    Text(explanation.displayText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("codex-quota-explanation")
+                    Text("Method: \(CodexQuotaExplanationEngine.methodVersion); adapter: \(CodexRolloutEvidenceAdapter.adapterVersion). Local evidence cannot allocate provider-reported percentage movement.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
             Text("As of \(snapshot.reportedAt.formatted(date: .omitted, time: .shortened))")
@@ -33,15 +54,25 @@ struct CodexRateLimitsView: View {
     private func individualPlanSection(_ snapshot: CodexRateLimitSnapshot) -> some View {
         VStack(spacing: 10) {
             if let primary = snapshot.primary {
-                PercentRateLimitRowView(label: primary.displayLabel, percentUsed: primary.percentUsed, severity: .unknown, resetsAt: primary.resetsAt, isActive: false)
+                PercentRateLimitRowView(label: primary.displayLabel, percentUsed: primary.percentUsed, severity: .unknown, resetsAt: primary.resetsAt, isActive: false, insight: insight(slot: "primary", window: primary), anomaly: anomaly(slot: "primary", window: primary), insightsStorageAvailable: insightsStorageAvailable, showsAnalysis: showsAnalysis)
             }
             if let secondary = snapshot.secondary {
-                PercentRateLimitRowView(label: secondary.displayLabel, percentUsed: secondary.percentUsed, severity: .unknown, resetsAt: secondary.resetsAt, isActive: false)
+                PercentRateLimitRowView(label: secondary.displayLabel, percentUsed: secondary.percentUsed, severity: .unknown, resetsAt: secondary.resetsAt, isActive: false, insight: insight(slot: "secondary", window: secondary), anomaly: anomaly(slot: "secondary", window: secondary), insightsStorageAvailable: insightsStorageAvailable, showsAnalysis: showsAnalysis)
             }
             if let credits = snapshot.credits, credits.hasCredits, let balance = credits.balance {
                 CreditsUsageRowView(label: "Credits balance", cost: Cost(amount: balance, currencyCode: "credits", source: .providerReported))
             }
         }
+    }
+
+    private func insight(slot: String, window: CodexRateLimitWindow) -> QuotaInsightState? {
+        guard let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
+        return insights[identity]
+    }
+
+    private func anomaly(slot: String, window: CodexRateLimitWindow) -> QuotaAnomalyState? {
+        guard let identity = QuotaWindowIdentity.codex(slot: slot, window: window) else { return nil }
+        return anomalies[identity]
     }
 
 }
@@ -77,7 +108,11 @@ private struct CreditsUsageRowView: View {
     CodexRateLimitsView(
         snapshot: CodexRateLimitSnapshot(planType: "plus", primary: CodexRateLimitWindow(percentUsed: 10, windowMinutes: 300, resetsAt: nil), secondary: nil, credits: nil, reportedAt: Date()),
         metrics: [],
-        pricingTable: .empty
+        pricingTable: .empty,
+        insights: [:],
+        anomalies: [:],
+        insightsStorageAvailable: true,
+        explanation: .unavailable(.insufficientObservations)
     )
         .padding(20)
         .frame(width: 440, height: 300)
