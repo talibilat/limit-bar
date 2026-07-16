@@ -111,9 +111,7 @@ public enum CustomUsageEventParser {
     }
 
     public static func parseLine(_ line: String) throws -> CustomUsageEvent {
-        guard let data = line.data(using: .utf8) else {
-            throw CustomUsageEventError.malformedJSON
-        }
+        let data = Data(line.utf8)
         if CollectorSchemaV2.hasStrictSchema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .customSource(sourceID) = event.identity else {
                 throw CustomUsageEventError.malformedJSON
