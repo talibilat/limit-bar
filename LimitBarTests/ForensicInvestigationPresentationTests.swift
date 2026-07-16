@@ -227,7 +227,7 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         let v1 = try QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV1, client: .codex0144, providerFormat: .codexLocalReportV1)
         let v2 = try QuotaAnomalyEvidenceVersion(adapter: .quotaObservationV2, client: .codex0145, providerFormat: .codexLocalReportV2)
         var versions = Dictionary(uniqueKeysWithValues: values.map { ($0.stableIdentity, v1) })
-        versions[values.last!.stableIdentity] = v2
+        versions[try XCTUnwrap(values.last).stableIdentity] = v2
         let incompatible = QuotaAnomalyAnalytics.analyze(values, now: now, maximumAge: 60, evidenceVersions: versions)
         let versionText = ForensicInvestigationPresentation.anomaly(incompatible)
         XCTAssertEqual(versionText.status, "Unavailable")
