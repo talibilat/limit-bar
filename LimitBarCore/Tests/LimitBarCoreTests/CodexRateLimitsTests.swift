@@ -71,7 +71,7 @@ struct CodexRateLimitsTests {
         let now = Date(timeIntervalSince1970: 2_000_000)
         let old = codexLine(timestamp: Date(timeIntervalSince1970: now.timeIntervalSince1970 - 10 * 24 * 60 * 60))
         let future = codexLine(timestamp: now.addingTimeInterval(301))
-        let reader = BoundedReaderSequence(data: [old, future])
+        let reader = BoundedReaderSpy(data: [old, future])
         let files = try metadataFiles(count: 2, modifiedAt: now)
         defer { try? FileManager.default.removeItem(at: files.root) }
         let cursor = EntryCursor(entries: files.files)
@@ -458,23 +458,17 @@ private final class EntryCursor: @unchecked Sendable {
 
 private final class BoundedReaderSpy: @unchecked Sendable {
     private let lock = NSLock()
-    private let data: Data
+    private var data: [Data]
     private(set) var requestedByteCounts: [Int] = []
 
-    init(data: Data) { self.data = data }
-
-    func read(_ url: URL, byteCount: Int) throws -> Data {
-        lock.withLock { requestedByteCounts.append(byteCount) }
-        return data
-    }
-}
-
-private final class BoundedReaderSequence: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data: [Data]
+    init(data: Data) { self.data = [data] }
     init(data: [Data]) { self.data = data }
+
     func read(_ url: URL, byteCount: Int) throws -> Data {
-        lock.withLock { data.removeFirst() }
+        lock.withLock {
+            requestedByteCounts.append(byteCount)
+            return data.removeFirst()
+        }
     }
 }
 
