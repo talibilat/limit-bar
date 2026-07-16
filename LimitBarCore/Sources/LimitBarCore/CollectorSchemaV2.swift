@@ -105,6 +105,13 @@ public enum CollectorSchemaV2 {
         "schemaVersion", "eventID", "provider", "customSourceID", "timestamp", "model", "deployment", "inputTokens", "outputTokens"
     ]
 
+    static func hasStrictSchema(in data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let number = object["schemaVersion"] as? NSNumber else { return false }
+        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
+            && number.intValue == CollectorEventV2.schemaVersion
+    }
+
     public static func decode(_ data: Data) throws -> CollectorEventV2 {
         guard data.count <= maximumRequestBytes else { throw CollectorSchemaError.requestTooLarge }
         guard String(data: data, encoding: .utf8) != nil,

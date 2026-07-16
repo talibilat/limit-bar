@@ -114,7 +114,7 @@ public enum CustomUsageEventParser {
         guard let data = line.data(using: .utf8) else {
             throw CustomUsageEventError.malformedJSON
         }
-        if hasStrictV2Schema(in: data) {
+        if CollectorSchemaV2.hasStrictSchema(in: data) {
             guard let event = try? CollectorSchemaV2.decode(data), case let .customSource(sourceID) = event.identity else {
                 throw CustomUsageEventError.malformedJSON
             }
@@ -161,13 +161,6 @@ public enum CustomUsageEventParser {
         let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractionalFormatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
-    }
-
-    private static func hasStrictV2Schema(in data: Data) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let number = object["schemaVersion"] as? NSNumber else { return false }
-        return ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType))
-            && number.intValue == CollectorEventV2.schemaVersion
     }
 }
 
