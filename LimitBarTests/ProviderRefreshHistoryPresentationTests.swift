@@ -480,8 +480,8 @@ private enum AttributionDeletionTestError: Error {
 private final class QuotaDeletionCredentialStore: CredentialStore, @unchecked Sendable {
     private var values: [CredentialKey: Data] = [:]
 
-    func save(_ data: Data, for key: CredentialKey) throws { values[key] = data }
-    func data(for key: CredentialKey) throws -> Data? { values[key] }
-    func contains(_ key: CredentialKey) throws -> Bool { values[key] != nil }
-    func remove(_ key: CredentialKey) throws { values[key] = nil }
+    func save(_ data: Data, for key: CredentialKey) { values[key] = data }
+    func data(for key: CredentialKey) -> Data? { values[key] }
+    func contains(_ key: CredentialKey) -> Bool { values[key] != nil }
+    func remove(_ key: CredentialKey) { values[key] = nil }
 }
