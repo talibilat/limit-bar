@@ -861,8 +861,8 @@ public enum AlertEvaluator {
     ) -> AlertNotification {
         let classifications = Set(finding.traces.map(\.valueClassification))
         let classification: String
-        if classifications.count == 1 {
-            classification = switch classifications.first! {
+        if classifications.count == 1, let soleClassification = classifications.first {
+            classification = switch soleClassification {
             case .reported: "Provider-reported"
             case .measured: "Measured"
             case .calculated: "Calculated"
