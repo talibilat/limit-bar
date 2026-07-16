@@ -410,12 +410,13 @@ struct AnthropicUsageProviderTests {
         try #require(ISO8601DateFormatter().date(from: value))
     }
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        calendar.firstWeekday = 2
-        return calendar
-    }
+}
+
+func utcCalendar() -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .gmt
+    calendar.firstWeekday = 2
+    return calendar
 }
 
 enum AnthropicEndpoint: CaseIterable, CustomTestStringConvertible, Sendable {

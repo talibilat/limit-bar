@@ -796,10 +796,4 @@ struct LocalUsageEventImporterTests {
         return try #require(fractionalFormatter.date(from: iso8601))
     }
 
-    private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        calendar.firstWeekday = 2
-        return calendar
-    }
 }
