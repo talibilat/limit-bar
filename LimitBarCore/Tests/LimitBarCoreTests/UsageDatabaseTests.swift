@@ -1098,9 +1098,7 @@ struct UsageDatabaseTests {
     }
 
     private func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .gmt
-        return calendar
+        gregorianGMTCalendar()
     }
 
 }
