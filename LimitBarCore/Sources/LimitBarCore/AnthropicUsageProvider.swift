@@ -151,7 +151,7 @@ public struct AnthropicAdminClient: Sendable {
         if path.contains("usage_report") {
             components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "model"))
             components.queryItems?.append(URLQueryItem(name: "bucket_width", value: "1m"))
-        } else if path.contains("cost_report") {
+        } else {
             components.queryItems?.append(URLQueryItem(name: "group_by[]", value: "description"))
         }
         if let page {
