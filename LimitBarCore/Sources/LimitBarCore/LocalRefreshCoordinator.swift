@@ -394,7 +394,7 @@ public actor LocalRefreshCoordinator {
         guard refreshGeneration == generation, !Task.isCancelled else { return }
 
         sequence += 1
-        guard refreshGeneration == generation, !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return }
         continuation.yield(LocalRefreshSnapshot(
             sequence: sequence,
             usage: lastUsage,
