@@ -775,12 +775,6 @@ struct LocalUsageEventImporterTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func temporaryFile(contents: String) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        return url
-    }
-
     private func temporaryDatabasePath() -> String {
         URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).sqlite").path
     }

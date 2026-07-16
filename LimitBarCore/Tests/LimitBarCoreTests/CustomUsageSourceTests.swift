@@ -322,12 +322,6 @@ struct CustomUsageSourceTests {
         #expect(try Data(contentsOf: fileURL) == bytesB)
     }
 
-    private func temporaryFile(contents: String) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        return url
-    }
-
     private func date(_ iso8601: String) throws -> Date {
         try #require(ISO8601DateFormatter().date(from: iso8601))
     }
@@ -337,4 +331,10 @@ struct CustomUsageSourceTests {
         calendar.timeZone = .gmt
         return calendar
     }
+}
+
+func temporaryFile(contents: String) throws -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    return url
 }
