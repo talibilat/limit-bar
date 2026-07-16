@@ -448,7 +448,7 @@ private final class RecordingAlertNotificationCenter: AlertNotificationCenter {
     }
 
     func authorizationStatus() -> UNAuthorizationStatus { status }
-    func requestAuthorization() async -> Bool { status == .authorized }
+    func requestAuthorization() -> Bool { status == .authorized }
 
     func add(identifier: String, title: String, body: String) async throws {
         if shouldFailDelivery { throw FixtureError.deliveryFailed }
