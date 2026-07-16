@@ -271,12 +271,7 @@ private struct ExportMetricsRequest: Decodable {
 }
 
 private struct ResourceMetrics: Decodable {
-    let resource: OTLPResource?
     let scopeMetrics: [ScopeMetrics]
-}
-
-private struct OTLPResource: Decodable {
-    let attributes: [OTLPAttribute]
 }
 
 private struct ScopeMetrics: Decodable {
