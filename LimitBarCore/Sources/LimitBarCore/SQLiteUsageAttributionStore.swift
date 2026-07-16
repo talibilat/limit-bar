@@ -277,8 +277,10 @@ public final class SQLiteUsageAttributionStore: @unchecked Sendable {
         guard let provider = ProviderKind(rawValue: requiredString(statement, 2)),
               let timeWindow = TimeWindow(rawValue: requiredString(statement, 3)),
               let basis = UsageWindowBasis(rawValue: requiredString(statement, 6)),
-              let eventData = requiredString(statement, 16).data(using: .utf8),
-              let eventTexts = try? JSONDecoder().decode([String].self, from: eventData) else {
+              let eventTexts = try? JSONDecoder().decode(
+                  [String].self,
+                  from: Data(requiredString(statement, 16).utf8)
+              ) else {
             throw UsageAttributionStoreError.readFailed
         }
         let eventIDs = try eventTexts.map { text -> UUID in
