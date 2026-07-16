@@ -253,12 +253,12 @@ private struct Fixture {
     let weeklyIdentity: QuotaWindowIdentity
     let otherProductIdentity: QuotaWindowIdentity
     let historicalWindowStart: Date
-    let adapter = WorkloadAdapterVersion(uuid(1))
-    let otherAdapter = WorkloadAdapterVersion(uuid(2))
-    let client = WorkloadClientVersion(uuid(3))
-    let otherClient = WorkloadClientVersion(uuid(4))
-    let format = WorkloadProviderFormatVersion(uuid(5))
-    let otherFormat = WorkloadProviderFormatVersion(uuid(6))
+    let adapter: WorkloadAdapterVersion
+    let otherAdapter: WorkloadAdapterVersion
+    let client: WorkloadClientVersion
+    let otherClient: WorkloadClientVersion
+    let format: WorkloadProviderFormatVersion
+    let otherFormat: WorkloadProviderFormatVersion
 
     init(start: Date) throws {
         self.start = start
@@ -276,6 +276,12 @@ private struct Fixture {
             product: .claudeCode, identifier: "session:session", resetBoundary: start.addingTimeInterval(10 * 60)
         )
         historicalWindowStart = start.addingTimeInterval(-300 * 60)
+        adapter = WorkloadAdapterVersion(try uuid(1))
+        otherAdapter = WorkloadAdapterVersion(try uuid(2))
+        client = WorkloadClientVersion(try uuid(3))
+        otherClient = WorkloadClientVersion(try uuid(4))
+        format = WorkloadProviderFormatVersion(try uuid(5))
+        otherFormat = WorkloadProviderFormatVersion(try uuid(6))
     }
 
     func plan(units: Int) throws -> PlannedWorkload {
@@ -319,8 +325,8 @@ private struct Fixture {
             source: quotaIdentity.product == .codex ? .codexLocalReport : .claudeProviderReport
         )
         return try MeasuredHistoricalRun(
-            identity: HistoricalRunIdentity(uuid(index + 100)),
-            revisionIdentity: revisionIdentity ?? HistoricalRunRevisionIdentity(uuid((revision ?? index) + 1_000)),
+            identity: HistoricalRunIdentity(try uuid(index + 100)),
+            revisionIdentity: revisionIdentity ?? HistoricalRunRevisionIdentity(try uuid((revision ?? index) + 1_000)),
             supersedesRevisionIdentity: supersedes,
             quotaWindowIdentity: quotaIdentity,
             quotaWindowStart: historicalWindowStart,
@@ -338,7 +344,7 @@ private struct Fixture {
             clientVersion: client ?? self.client,
             providerFormatVersion: format ?? self.format,
             observationIdentities: [observation.stableIdentity],
-            evidenceIdentities: [WorkloadEvidenceIdentity(uuid(index + 2_000))]
+            evidenceIdentities: [WorkloadEvidenceIdentity(try uuid(index + 2_000))]
         )
     }
 
@@ -416,6 +422,6 @@ private struct Fixture {
 
 }
 
-private func uuid(_ value: Int) -> UUID {
-    UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value))!
+private func uuid(_ value: Int) throws -> UUID {
+    try #require(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", value)))
 }
