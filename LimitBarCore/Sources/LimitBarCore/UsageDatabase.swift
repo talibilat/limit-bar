@@ -69,9 +69,13 @@ public actor UsageDatabase {
     public static func applicationSupport(fileManager: FileManager = .default) -> UsageDatabase {
         let fileManager = SendableFileManager(fileManager)
         return UsageDatabase(
-            pathFactory: { try applicationSupportDatabasePath(fileManager: fileManager.value) },
+            pathFactory: {
+                try LimitBarFileLocations.production(fileManager: fileManager.value).usageMetricsDatabase.path
+            },
             localEventsURLFactory: { try LocalUsageEventImporter.usageEventsURL(fileManager: fileManager.value) },
-            historicalPathFactory: { try applicationSupportHistoricalDatabasePath(fileManager: fileManager.value) }
+            historicalPathFactory: {
+                try LimitBarFileLocations.production(fileManager: fileManager.value).historicalUsageDatabase.path
+            }
         )
     }
 
@@ -918,14 +922,6 @@ public struct CustomUsageRefreshDiagnostic: Equatable, Sendable {
         self.rejectedLineCount = rejectedLineCount
         self.diagnostics = diagnostics
     }
-}
-
-private func applicationSupportDatabasePath(fileManager: FileManager) throws -> String {
-    try LimitBarFileLocations.production(fileManager: fileManager).usageMetricsDatabase.path
-}
-
-private func applicationSupportHistoricalDatabasePath(fileManager: FileManager) throws -> String {
-    try LimitBarFileLocations.production(fileManager: fileManager).historicalUsageDatabase.path
 }
 
 private func historicalDatabasePath(from currentPath: String) throws -> String {
