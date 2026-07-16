@@ -322,14 +322,12 @@ public enum OpenAICostMapper {
                       let amount = row.amount,
                       amount.value.isFinite,
                       amount.value >= 0 else { continue }
-                for window in [window] {
-                    guard start >= window.start, end <= window.end else { continue }
-                    let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
-                    var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
-                    aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
-                    aggregate.latest = max(aggregate.latest, end)
-                    aggregates[key] = aggregate
-                }
+                guard start >= window.start, end <= window.end else { continue }
+                let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
+                var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
+                aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
+                aggregate.latest = max(aggregate.latest, end)
+                aggregates[key] = aggregate
             }
         }
         return aggregates.map { key, value in
