@@ -334,7 +334,7 @@ struct CustomUsageSourceTests {
 
     private func utcCalendar() -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = .gmt
         return calendar
     }
 }
