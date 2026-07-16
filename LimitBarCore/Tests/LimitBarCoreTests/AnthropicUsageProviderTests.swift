@@ -439,7 +439,7 @@ actor UsageProviderRecordingHTTPClient: HTTPClient {
         self.error = error
     }
 
-    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+    func send(_ request: HTTPRequest) throws -> HTTPResponse {
         requests.append(request)
         if let error { throw error }
         return responses.removeFirst()
