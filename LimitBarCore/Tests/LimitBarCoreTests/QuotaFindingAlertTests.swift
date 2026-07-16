@@ -230,7 +230,7 @@ struct QuotaFindingAlertTests {
             quota: [observation(identity: identity, percentage: 96)],
             now: now
         ).first)
-        let ruleID = UUID(uuidString: "81D6673F-08D8-4FE1-A480-94BAB6DB6ECA")!
+        let ruleID = try #require(UUID(uuidString: "81D6673F-08D8-4FE1-A480-94BAB6DB6ECA"))
         let disabled = QuotaAlertRule(id: ruleID, product: .codex, thresholds: try PercentageThresholds([70]), isEnabled: false)
         #expect(try evaluate(rule: disabled, finding: finding).isEmpty)
 
