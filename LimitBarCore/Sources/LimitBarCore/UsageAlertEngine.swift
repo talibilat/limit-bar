@@ -86,15 +86,13 @@ public struct UsageAlertEngine: Sendable {
             }
         }
 
-        if !extensionEvaluators.isEmpty {
-            let context = UsageAlertEvaluationContext(metrics: eligibleMetrics, enabledRules: enabledRules)
-            candidates += extensionEvaluators.flatMap { $0.candidates(in: context) }.filter {
-                guard case .extensionRule = $0.rule else { return false }
-                return enabledRules.contains($0.rule)
-                    && $0.window.aggregationVersion == ExactUsageWindow.currentAggregationVersion
-                    && $0.window.start <= date
-                    && date < $0.window.end
-            }
+        let context = UsageAlertEvaluationContext(metrics: eligibleMetrics, enabledRules: enabledRules)
+        candidates += extensionEvaluators.flatMap { $0.candidates(in: context) }.filter {
+            guard case .extensionRule = $0.rule else { return false }
+            return enabledRules.contains($0.rule)
+                && $0.window.aggregationVersion == ExactUsageWindow.currentAggregationVersion
+                && $0.window.start <= date
+                && date < $0.window.end
         }
 
         var seen = state.delivered
