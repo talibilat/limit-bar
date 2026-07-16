@@ -11,7 +11,7 @@ struct LimitBarRefreshBenchmark {
 
         let now = Date(timeIntervalSince1970: 1_783_890_000)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.timeZone = .gmt
         let eventTimestamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-60))
         let builtInLine = "{\"provider\":\"openAI\",\"timestamp\":\"\(eventTimestamp)\",\"model\":\"synthetic-model\",\"inputTokens\":100,\"outputTokens\":20}\n"
         let customLine = "{\"timestamp\":\"\(eventTimestamp)\",\"model\":\"synthetic-model\",\"inputTokens\":50,\"outputTokens\":10}\n"
