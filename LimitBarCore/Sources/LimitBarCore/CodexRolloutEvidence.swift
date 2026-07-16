@@ -405,7 +405,7 @@ public enum CodexRolloutEvidenceAdapter {
             guard let rawWindow, let percent = rawWindow.usedPercent, percent.isFinite, (0...100).contains(percent),
                   let minutes = rawWindow.windowMinutes, (1...525_600).contains(minutes) else { return nil }
             let reset = rawWindow.resetsAt.flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil }
-            return CodexRateLimitWindow(limitID: normalizedLimitID(raw.limitID), percentUsed: percent, windowMinutes: minutes, resetsAt: reset)
+            return CodexRateLimitWindow(limitID: raw.limitID ?? "codex", percentUsed: percent, windowMinutes: minutes, resetsAt: reset)
         }
         let credits = raw.credits.map {
             CodexCredits(
@@ -422,10 +422,6 @@ public enum CodexRolloutEvidenceAdapter {
             reportedAt: observedAt
         )
         return snapshot.primary == nil && snapshot.secondary == nil && snapshot.credits == nil ? nil : snapshot
-    }
-
-    private static func normalizedLimitID(_ value: String?) -> String {
-        CodexRateLimitWindow.normalizedLimitID(value)
     }
 }
 
