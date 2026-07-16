@@ -775,7 +775,7 @@ struct UsageDatabaseTests {
     @Test("failed custom imports preserve last valid durable attribution")
     func failedCustomImportPreservesAttribution() async throws {
         let path = temporaryDatabasePath()
-        let sourceID = UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65")!
+        let sourceID = try #require(UUID(uuidString: "9598575e-259b-47df-9f34-f161c9015e65"))
         let protectedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedDirectory.path) }
