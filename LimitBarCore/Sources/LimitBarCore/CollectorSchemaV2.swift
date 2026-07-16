@@ -234,10 +234,6 @@ public enum CollectorSchemaV2 {
         guard let number = value as? NSNumber, String(cString: number.objCType) != "c" else { return nil }
         guard ["q", "i", "s", "l", "Q", "I", "S", "L"].contains(String(cString: number.objCType)) else { return nil }
         let decimal = number.decimalValue
-        var source = decimal
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &source, 0, .plain)
-        guard decimal == rounded else { return nil }
         return Int(NSDecimalNumber(decimal: decimal).stringValue)
     }
 }
