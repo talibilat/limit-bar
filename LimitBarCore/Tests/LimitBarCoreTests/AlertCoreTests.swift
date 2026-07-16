@@ -35,7 +35,7 @@ struct AlertCoreTests {
             )
         }
 
-        let id = UUID(uuidString: "AA8DE40F-9802-4AEE-AC63-3D5D1BB5FB56")!
+        let id = try #require(UUID(uuidString: "AA8DE40F-9802-4AEE-AC63-3D5D1BB5FB56"))
         let preferences = try AlertPreferences(
             quotaRules: [QuotaAlertRule(id: id, product: .claudeCode, thresholds: PercentageThresholds([90, 50, 90]))],
             costBudgetRules: []
