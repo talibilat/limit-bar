@@ -355,7 +355,7 @@ public enum AnthropicCostMapper {
         }
     }
     struct Row: Decodable { let description: String?; let amount: String; let currency: String }
-    private struct Key: Hashable { let window: ExactUsageWindow; let label: String; let currency: String }
+    private struct Key: Hashable { let label: String; let currency: String }
     private struct Aggregate { var cents: Decimal; var latest: Date }
 
     public static func metrics(from data: Data, now: Date, calendar: Calendar) throws -> [UsageMetric] {
@@ -382,7 +382,7 @@ public enum AnthropicCostMapper {
                       let cents = Decimal(string: row.amount),
                       cents.isFinite,
                       cents >= 0 else { continue }
-                let key = Key(window: window, label: label, currency: row.currency)
+                let key = Key(label: label, currency: row.currency)
                 var aggregate = aggregates[key] ?? Aggregate(cents: 0, latest: end)
                 aggregate.cents = try checkedAdd(aggregate.cents, cents)
                 aggregate.latest = max(aggregate.latest, end)
@@ -396,7 +396,7 @@ public enum AnthropicCostMapper {
                 projectLabel: nil,
                 modelLabel: key.label,
                 deploymentLabel: nil,
-                provenance: .bounded(source: .providerAPI, window: key.window),
+                provenance: .bounded(source: .providerAPI, window: window),
                 tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0),
                 cost: Cost(amount: aggregate.cents / 100, currencyCode: key.currency, source: .providerReported),
                 limitStatus: .unsupportedByProviderAPI,
