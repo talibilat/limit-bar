@@ -366,10 +366,6 @@ public enum AnthropicCostMapper {
         try JSONDecoder().decode(Response.self, from: data)
     }
 
-    static func metrics(from buckets: [Bucket], now: Date, calendar: Calendar) throws -> [UsageMetric] {
-        try metrics(from: buckets, windows: CurrentUsageWindows.resolve(at: now, calendar: calendar))
-    }
-
     static func metrics(from buckets: [Bucket], windows: CurrentUsageWindows) throws -> [UsageMetric] {
         let formatter = ISO8601DateFormatter()
         let window = windows.utcBillingWeek
