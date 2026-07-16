@@ -501,7 +501,7 @@ public struct DiagnosticEvidenceRemainder: Codable, Equatable, Sendable {
         guard !limitations.isEmpty, limitations.count <= DiagnosticExport.maximumEvidenceLimitations,
               unit == .percentagePoints,
               (availability == .available) == (value != nil && provenance != nil && unavailableReason == nil),
-              availability == .unavailable || (value?.isFinite == true && value! >= 0 && value! <= 10_000),
+              availability == .unavailable || value.map({ $0.isFinite && (0...10_000).contains($0) }) == true,
               availability == .available || (value == nil && provenance == nil && method == nil && unavailableReason != nil),
               method == nil || provenance == .inferred else { throw DiagnosticExportError.invalidQuotaEvidence }
         self.availability = availability
