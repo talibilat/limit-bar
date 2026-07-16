@@ -165,7 +165,7 @@ private final class ClaudeClientSpy: ClaudeRateLimitsFetching, @unchecked Sendab
         self.results = results
     }
 
-    func fetchRateLimits(accessToken: String) async -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+    func fetchRateLimits(accessToken: String) -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
         lock.withLock {
             tokens.append(accessToken)
             return results.count == 1 ? results[0] : results.removeFirst()
