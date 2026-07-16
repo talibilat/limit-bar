@@ -13,7 +13,7 @@ struct UsageModelTests {
     @Test("today window covers the local day containing the reference date")
     func todayWindowCoversReferenceDay() throws {
         let calendar = Calendar(identifier: .gregorian)
-        let reference = try #require(calendar.date(from: DateComponents(timeZone: TimeZone(secondsFromGMT: 0), year: 2026, month: 7, day: 10, hour: 15, minute: 30)))
+        let reference = try #require(calendar.date(from: DateComponents(timeZone: .gmt, year: 2026, month: 7, day: 10, hour: 15, minute: 30)))
 
         let interval = TimeWindow.today.interval(containing: reference, calendar: calendar)
 
