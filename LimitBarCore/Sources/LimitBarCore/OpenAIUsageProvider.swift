@@ -289,7 +289,7 @@ public enum OpenAICostMapper {
         enum CodingKeys: String, CodingKey { case projectID = "project_id"; case lineItem = "line_item"; case amount }
     }
     struct Amount: Decodable { let value: Decimal; let currency: String }
-    private struct Key: Hashable { let window: ExactUsageWindow; let organization: String; let project: String; let lineItem: String; let currency: String }
+    private struct Key: Hashable { let organization: String; let project: String; let lineItem: String; let currency: String }
     private struct Aggregate { var amount: Decimal; var latest: Date }
 
     static func decode(_ data: Data) throws -> Response { try JSONDecoder().decode(Response.self, from: data) }
@@ -315,7 +315,7 @@ public enum OpenAICostMapper {
                       amount.value.isFinite,
                       amount.value >= 0 else { continue }
                 guard start >= window.start, end <= window.end else { continue }
-                let key = Key(window: window, organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
+                let key = Key(organization: organization, project: project, lineItem: lineItem, currency: amount.currency.uppercased())
                 var aggregate = aggregates[key] ?? Aggregate(amount: 0, latest: end)
                 aggregate.amount = try checkedAdd(aggregate.amount, amount.value)
                 aggregate.latest = max(aggregate.latest, end)
@@ -323,7 +323,7 @@ public enum OpenAICostMapper {
             }
         }
         return aggregates.map { key, value in
-            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: key.window), tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
+            UsageMetric(provider: .openAI, accountLabel: key.organization, projectLabel: key.project, modelLabel: key.lineItem, deploymentLabel: nil, provenance: .bounded(source: .providerAPI, window: window), tokenUsage: TokenUsage(inputTokens: 0, outputTokens: 0), cost: Cost(amount: value.amount, currencyCode: key.currency, source: .providerReported), limitStatus: .unsupportedByProviderAPI, refreshedAt: value.latest, freshness: .fresh)
         }
     }
 
