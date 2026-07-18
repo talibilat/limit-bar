@@ -31,6 +31,10 @@ let package = Package(
         .executable(
             name: "limitbar-quota-forecast-evaluator",
             targets: ["LimitBarQuotaForecastEvaluator"]
+        ),
+        .executable(
+            name: "limitbar",
+            targets: ["LimitBarCLI"]
         )
     ],
     targets: [
@@ -64,6 +68,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "LimitBarQuotaForecastEvaluator",
+            dependencies: ["LimitBarCore"]
+        ),
+        .executableTarget(
+            name: "LimitBarCLI",
             dependencies: ["LimitBarCore"]
         ),
         .testTarget(

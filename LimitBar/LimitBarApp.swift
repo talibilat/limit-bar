@@ -88,6 +88,7 @@ final class LimitBarState {
     private let codexExplanationStore: SQLiteCodexExplanationStore?
     private let claudeExplanationStore: SQLiteClaudeExplanationStore?
     private let attributionEvidenceStore: any AttributionEvidenceDeleting
+    private let capacityPublicationWriter: CapacityPublicationWriter?
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
@@ -105,6 +106,7 @@ final class LimitBarState {
         self.codexExplanationStore = codexExplanationStore
         self.claudeExplanationStore = claudeExplanationStore
         attributionEvidenceStore = UsageDatabase.shared
+        capacityPublicationWriter = try? .production()
         coordinator = LocalRefreshCoordinator(dependencies: .live(
             usage: ApplicationLocalUsageRefresher(),
             codexEvidence: CodexSessionScanner(sessionsDirectory: sessionsDirectory, explanationStore: codexExplanationStore)
@@ -134,6 +136,7 @@ final class LimitBarState {
         codexExplanationStore: SQLiteCodexExplanationStore? = nil,
         claudeExplanationStore: SQLiteClaudeExplanationStore? = nil,
         attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared,
+        capacityPublicationWriter: CapacityPublicationWriter? = nil,
         investigationPublication: ForensicInvestigationSnapshot? = nil
     ) {
         self.providerSettings = providerSettings
@@ -143,6 +146,7 @@ final class LimitBarState {
         self.codexExplanationStore = codexExplanationStore
         self.claudeExplanationStore = claudeExplanationStore
         self.attributionEvidenceStore = attributionEvidenceStore
+        self.capacityPublicationWriter = capacityPublicationWriter
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
         let alertSettingsStore = AlertSettingsStore()
@@ -194,6 +198,7 @@ final class LimitBarState {
         guard case let .loaded(snapshot, subscription) = claudeModel.state else { return }
         let now = Date()
         let observations = QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now)
+        publishCapacity(now: now, claude: observations)
         Task {
             await recordClaudeInsights(snapshot, now: now)
             await alertCoordinator.evaluate(
@@ -317,6 +322,7 @@ final class LimitBarState {
         let quota = latestCodexRefreshed
             ? local.codexSnapshot.map { QuotaObservationAdapter.codex($0, now: now) } ?? []
             : []
+        publishCapacity(now: now, codex: quota)
         let health: AlertObservationHealth = latestUsageRefreshed && local.storeHealth.isOpen ? .healthy : .unhealthy
         let metrics = local.localImport.failureMessage == nil
             ? local.metrics
@@ -334,6 +340,29 @@ final class LimitBarState {
             anomalies: Array(quotaAnomalies.values),
             now: now
         )
+    }
+
+    private func publishCapacity(
+        now: Date,
+        claude: [QuotaObservation]? = nil,
+        codex: [QuotaObservation]? = nil
+    ) {
+        guard let capacityPublicationWriter else { return }
+        let currentClaude: [QuotaObservation]
+        if let claude {
+            currentClaude = claude
+        } else if case let .loaded(snapshot, subscription) = claudeModel.state {
+            currentClaude = QuotaObservationAdapter.claude(snapshot, subscriptionType: subscription, now: now)
+        } else {
+            currentClaude = []
+        }
+        let currentCodex = codex ?? (latestCodexRefreshed
+            ? local.codexSnapshot.map { QuotaObservationAdapter.codex($0, now: now) } ?? []
+            : [])
+        try? capacityPublicationWriter.publish(CapacityPublication(
+            publishedAt: now,
+            quotaObservations: currentClaude + currentCodex
+        ))
     }
 
     private func recordClaudeInsights(_ snapshot: ClaudeRateLimitSnapshot, now: Date) async {

@@ -33,6 +33,10 @@ public struct LimitBarFileLocations: Equatable, Sendable {
         limitBarApplicationSupportDirectory.appendingPathComponent("historical-usage-trends.sqlite")
     }
 
+    public var capacityPublication: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("capacity-v1.json")
+    }
+
     public static func production(fileManager: FileManager = .default) throws -> Self {
         let applicationSupport = try fileManager.url(
             for: .applicationSupportDirectory,

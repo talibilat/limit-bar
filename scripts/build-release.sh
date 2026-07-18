@@ -51,7 +51,22 @@ xcodebuild archive \
   CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER"
 
 app="$archive/Products/Applications/LimitBar.app"
+cli_build="$RUNNER_TEMP/limitbar-cli-build"
+DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+  xcrun swift build --package-path LimitBarCore --scratch-path "$cli_build" -c release --product limitbar
+cp "$cli_build/release/limitbar" "$app/Contents/MacOS/limitbar"
+codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$app/Contents/MacOS/limitbar"
+codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
+codesign --verify --strict --verbose=2 "$app/Contents/MacOS/limitbar"
+set +e
+"$app/Contents/MacOS/limitbar" capacity --product unsupported --operation prompt >/dev/null
+cli_status=$?
+set -e
+if [[ "$cli_status" -ne 64 ]]; then
+  printf 'error: bundled capacity command returned unexpected status %s\n' "$cli_status" >&2
+  exit 1
+fi
 verify_security_boundary "$app"
 bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
 if [[ "$bundle_identifier" != "$expected_bundle_identifier" ]]; then

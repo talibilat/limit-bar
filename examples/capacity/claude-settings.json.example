@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/claude-user-prompt-submit.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
