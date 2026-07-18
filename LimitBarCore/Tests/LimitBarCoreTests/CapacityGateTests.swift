@@ -67,7 +67,7 @@ struct CapacityGateTests {
     @Test("publication decoder is a positive allow-list")
     func strictContract() throws {
         let valid = try CapacityPublicationCodec.encode(publication(observations: [observation(percentage: 20)]))
-        #expect(try CapacityPublicationCodec.decode(valid).schemaVersion == 1)
+        #expect(try CapacityPublicationCodec.decode(valid).schemaVersion == 2)
 
         var unknown = try #require(JSONSerialization.jsonObject(with: valid) as? [String: Any])
         unknown["account_id"] = "prohibited"
@@ -323,7 +323,7 @@ struct CapacityCommandProcessTests {
         try Data("not-json".utf8).write(to: state)
         #expect(try run(base).response.reasons == [.malformedEvidence])
 
-        try Data(#"{"incidents":[],"observations":[],"published_at":"2030-01-01T00:00:00Z","schema_version":2}"#.utf8).write(to: state)
+        try Data(#"{"incidents":[],"observations":[],"published_at":"2030-01-01T00:00:00Z","schema_version":3}"#.utf8).write(to: state)
         #expect(try run(base).response.reasons == [.incompatibleEvidence])
 
         let unsupported = try run(["capacity", "--product", "openai-api", "--operation", "prompt"])

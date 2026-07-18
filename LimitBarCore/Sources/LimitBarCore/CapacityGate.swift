@@ -21,6 +21,20 @@ public enum CapacityProviderProduct: String, Codable, CaseIterable, Equatable, S
     }
 }
 
+public enum CapacityQuotaWindowKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case session
+    case weekly
+    case other
+
+    init(_ kind: QuotaInsightWindowKind) {
+        switch kind {
+        case .session: self = .session
+        case .weekly: self = .weekly
+        case .other: self = .other
+        }
+    }
+}
+
 public enum CapacityOperationClass: String, Codable, CaseIterable, Equatable, Sendable {
     case prompt
     case subagent
@@ -82,10 +96,11 @@ public struct CapacityRequest: Codable, Equatable, Sendable {
 }
 
 public struct CapacityPublication: Codable, Equatable, Sendable {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public struct Observation: Codable, Equatable, Sendable {
         public let product: CapacityProviderProduct
+        public let windowKind: CapacityQuotaWindowKind
         public let percentageUsed: Double
         public let observedAt: Date
         public let expiresAt: Date
@@ -93,12 +108,14 @@ public struct CapacityPublication: Codable, Equatable, Sendable {
 
         public init(
             product: CapacityProviderProduct,
+            windowKind: CapacityQuotaWindowKind = .other,
             percentageUsed: Double,
             observedAt: Date,
             expiresAt: Date,
             resetBoundary: Date
         ) {
             self.product = product
+            self.windowKind = windowKind
             self.percentageUsed = percentageUsed
             self.observedAt = observedAt
             self.expiresAt = expiresAt
@@ -109,6 +126,7 @@ public struct CapacityPublication: Codable, Equatable, Sendable {
             guard let product = CapacityProviderProduct(observation.identity.product) else { return nil }
             self.init(
                 product: product,
+                windowKind: CapacityQuotaWindowKind(observation.identity.insightWindowKind),
                 percentageUsed: observation.percentageUsed,
                 observedAt: observation.observedAt,
                 expiresAt: observation.expiresAt,
@@ -118,6 +136,7 @@ public struct CapacityPublication: Codable, Equatable, Sendable {
 
         private enum CodingKeys: String, CodingKey {
             case product
+            case windowKind = "window_kind"
             case percentageUsed = "percentage_used"
             case observedAt = "observed_at"
             case expiresAt = "expires_at"
@@ -271,7 +290,7 @@ public enum CapacityPublicationCodec {
             throw CapacityPublicationReadError.malformed
         }
         for observation in observations {
-            let allowed: Set<String> = ["product", "percentage_used", "observed_at", "expires_at", "reset_boundary"]
+            let allowed: Set<String> = ["product", "window_kind", "percentage_used", "observed_at", "expires_at", "reset_boundary"]
             if observation["reset_boundary"] == nil {
                 throw CapacityPublicationReadError.boundaryUnavailable
             }

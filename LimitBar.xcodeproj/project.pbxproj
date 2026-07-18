@@ -40,6 +40,8 @@
 		AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E5 /* RateLimitAnalysisView.swift */; };
 		AA00000000000000000002F0 /* ActivityReceiptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E0 /* ActivityReceiptView.swift */; };
 		AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */; };
+		AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000003E0 /* RecoveryInboxView.swift */; };
+		AA00000000000000000004F0 /* RecoveryInboxPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -77,6 +79,8 @@
 		AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationPresentationTests.swift; sourceTree = "<group>"; };
 		AA00000000000000000002E0 /* ActivityReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptView.swift; sourceTree = "<group>"; };
 		AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptPresentationTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000003E0 /* RecoveryInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxView.swift; sourceTree = "<group>"; };
+		AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxPresentationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -159,6 +163,7 @@
 				AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */,
 				AA00000000000000000000E3 /* DiagnosticExportView.swift */,
 				AA00000000000000000000E4 /* ForensicInvestigationView.swift */,
+				AA00000000000000000003E0 /* RecoveryInboxView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -191,6 +196,7 @@
 				AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */,
 				AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */,
 				AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */,
+				AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */,
 			);
 			path = LimitBarTests;
 			sourceTree = "<group>";
@@ -343,6 +349,7 @@
 				AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */,
 				AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */,
 				AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */,
+				AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -365,6 +372,7 @@
 				AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */,
 				AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */,
 				AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */,
+				AA00000000000000000004F0 /* RecoveryInboxPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

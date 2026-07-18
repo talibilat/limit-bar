@@ -129,6 +129,8 @@ struct LimitBarSettingsView: View {
 
             ActivityReceiptSettingsSection(state: state)
 
+            RecoveryInboxSection(model: state.recoveryInbox)
+
             Section("Quota Observations") {
                 Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per Quota window and Exact boundary. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
                     .font(.caption)

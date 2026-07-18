@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import LimitBarCore
 import Observation
@@ -71,6 +72,7 @@ final class LimitBarState {
     let claudeModel: ClaudeRateLimitsModel
     let alertSettingsStore: AlertSettingsStore
     let alertCoordinator: AlertCoordinator
+    let recoveryInbox = RecoveryInboxModel()
     private(set) var quotaAnalysis = QuotaFindingAnalysisSnapshot.empty
     var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] { quotaAnalysis.forecasts }
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
@@ -183,6 +185,7 @@ final class LimitBarState {
 
     func start() {
         guard usesLiveRefresh else { return }
+        recoveryInbox.refresh()
         startProviderStatusSubscriptionIfNeeded()
         guard observationTask == nil else { return }
         beginInvestigationRefreshRequest()
@@ -495,6 +498,7 @@ final class LimitBarState {
             quotaObservations: currentClaude + currentCodex,
             incidents: capacityIncidents(now: now)
         ))
+        recoveryInbox.refresh(now: now)
     }
 
     private func performProviderStatusCheck() async {
@@ -692,6 +696,10 @@ private struct MenuBarStatusLabel: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .alertSettingsDidChange)) { _ in
                 state.alertSettingsChanged()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+                state.recoveryInbox.refresh()
+                state.requestLocalRefresh()
             }
     }
 

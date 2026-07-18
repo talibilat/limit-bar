@@ -37,6 +37,14 @@ public struct LimitBarFileLocations: Equatable, Sendable {
         limitBarApplicationSupportDirectory.appendingPathComponent("capacity-v1.json")
     }
 
+    public var recoveryInbox: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("recovery-inbox-v1.json")
+    }
+
+    public var recoveryFingerprintKey: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("recovery-fingerprint-v1.key")
+    }
+
     public var activityReceiptsDatabase: URL {
         limitBarApplicationSupportDirectory.appendingPathComponent("activity-receipts-v1.sqlite")
     }

@@ -1,0 +1,3 @@
+# Configure this only through a quota-boundary adapter that exports the four
+# required structured environment values documented in RECOVERY_INBOX.md.
+notify = ["/absolute/path/to/codex-quota-checkpoint.sh"]

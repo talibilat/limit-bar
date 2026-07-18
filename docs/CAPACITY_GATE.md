@@ -108,12 +108,13 @@ Stable reasons are:
 Version 1 uses measured percentage thresholds of 80 percent for `warn` and 90 percent for `pause`.
 An active separately supplied official provider incident raises an otherwise healthy result to `warn`, but does not claim that the incident caused local behavior.
 
-The application publication is also schema version 1 and uses a positive allow-list.
+The application publication is schema version 2 and uses a positive allow-list.
+Each publication observation includes `window_kind` with `session`, `weekly`, or `other` so consumers can preserve quota-window semantics without exposing provider labels.
 Unknown fields and unsupported versions are incompatible rather than optimistically ignored.
 Readers must reject response schema versions they do not implement.
-Future compatible additions require a new documented schema version because version 1 does not permit extension fields.
+Future compatible additions require a new documented schema version because each version uses an exact positive allow-list.
 
-Capacity output and publications contain only product, normalized percentage used, observation time and age, freshness expiry, exact reset boundary, incident overlap, decision, and typed reasons.
+Capacity output and publications contain only product, privacy-safe quota window kind, normalized percentage used, observation time and age, freshness expiry, exact reset boundary, incident overlap, decision, and typed reasons.
 They exclude credentials, account identifiers, prompts, code, responses, commands, tool arguments, file paths, project names, cookies, raw sessions, and raw provider responses.
 
 ## Claude Code Example
