@@ -127,6 +127,8 @@ struct LimitBarSettingsView: View {
 
             DiagnosticExportSection(state: state)
 
+            OrganizationPlannerSettingsLink()
+
             ActivityReceiptSettingsSection(state: state)
 
             Section("API Spend Reconciliation") {

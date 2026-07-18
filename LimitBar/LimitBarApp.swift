@@ -61,6 +61,11 @@ struct LimitBarApp: App {
         }
         .defaultSize(width: 700, height: 760)
         .commands { ModelLifecycleRadarCommands() }
+
+        Window("Team Capacity Planner", id: "team-capacity-planner") {
+            OrganizationCapacityPlannerView()
+        }
+        .defaultSize(width: 820, height: 780)
     }
 }
 
