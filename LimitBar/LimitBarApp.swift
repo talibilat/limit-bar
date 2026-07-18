@@ -76,6 +76,7 @@ final class LimitBarState {
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
     private(set) var quotaInsightsStorageAvailable: Bool
     private(set) var claudeExplanationCatalog: ClaudeQuotaExplanationCatalog = .empty
+    private(set) var activityDebuggerState: ActivityDebuggerState = .unavailable(.noReceipts)
     private(set) var investigationPublication = ForensicInvestigationSnapshot(
         publicationState: .loading,
         publishedAt: Date(),
@@ -87,6 +88,7 @@ final class LimitBarState {
     private let quotaInsightsService: (any QuotaInsightsServing)?
     private let codexExplanationStore: SQLiteCodexExplanationStore?
     private let claudeExplanationStore: SQLiteClaudeExplanationStore?
+    private let activityReceiptStore: SQLiteActivityReceiptStore?
     private let attributionEvidenceStore: any AttributionEvidenceDeleting
     private let capacityPublicationWriter: CapacityPublicationWriter?
     private let usesLiveRefresh: Bool
@@ -103,8 +105,10 @@ final class LimitBarState {
         providerSettings = ProviderSettingsStore().settings
         let codexExplanationStore = try? SQLiteCodexExplanationStore.applicationSupportStore()
         let claudeExplanationStore = try? SQLiteClaudeExplanationStore.applicationSupportStore()
+        let activityReceiptStore = try? SQLiteActivityReceiptStore.applicationSupportStore()
         self.codexExplanationStore = codexExplanationStore
         self.claudeExplanationStore = claudeExplanationStore
+        self.activityReceiptStore = activityReceiptStore
         attributionEvidenceStore = UsageDatabase.shared
         capacityPublicationWriter = try? .production()
         coordinator = LocalRefreshCoordinator(dependencies: .live(
@@ -125,6 +129,7 @@ final class LimitBarState {
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
         claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
+        activityDebuggerState = Self.activityState(store: activityReceiptStore)
         publishInvestigation(generation: nil, at: Date())
     }
 
@@ -135,6 +140,7 @@ final class LimitBarState {
         quotaInsightsService: (any QuotaInsightsServing)? = nil,
         codexExplanationStore: SQLiteCodexExplanationStore? = nil,
         claudeExplanationStore: SQLiteClaudeExplanationStore? = nil,
+        activityReceiptStore: SQLiteActivityReceiptStore? = nil,
         attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared,
         capacityPublicationWriter: CapacityPublicationWriter? = nil,
         investigationPublication: ForensicInvestigationSnapshot? = nil
@@ -145,6 +151,7 @@ final class LimitBarState {
         self.quotaInsightsService = quotaInsightsService
         self.codexExplanationStore = codexExplanationStore
         self.claudeExplanationStore = claudeExplanationStore
+        self.activityReceiptStore = activityReceiptStore
         self.attributionEvidenceStore = attributionEvidenceStore
         self.capacityPublicationWriter = capacityPublicationWriter
         quotaInsightsStorageAvailable = quotaInsightsService != nil
@@ -154,6 +161,7 @@ final class LimitBarState {
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
         claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
+        activityDebuggerState = Self.activityState(store: activityReceiptStore)
         if let investigationPublication {
             self.investigationPublication = investigationPublication
         } else {
@@ -252,6 +260,36 @@ final class LimitBarState {
         }
     }
 
+    func importActivityReceipts(source: ActivityReceiptSource, url: URL) -> String {
+        guard let activityReceiptStore else { return "Could not open Activity Receipt storage." }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size <= 8 * 1_024 * 1_024,
+              let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            return "Could not read a regular Activity Receipt file of 8 MB or less."
+        }
+        let importer = ActivityReceiptImporter(store: activityReceiptStore)
+        let result = source == .claudeCode ? importer.importClaude(data: data) : importer.importCodexJSONL(data: data)
+        switch result {
+        case let .imported(receipts):
+            activityDebuggerState = Self.activityState(store: activityReceiptStore)
+            return "Imported \(receipts.count) normalized Activity Receipts."
+        case let .unavailable(reason):
+            return "Could not import Activity Receipts: \(reason.rawValue)."
+        }
+    }
+
+    func deleteActivityReceipts() -> Bool {
+        guard let activityReceiptStore else { return false }
+        do {
+            try activityReceiptStore.deleteAll()
+            activityDebuggerState = .unavailable(.noReceipts)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func deleteProjectAgentAttribution() async -> Bool {
         do {
             try await attributionEvidenceStore.deleteAllAttributionEvidence(now: Date())
@@ -260,6 +298,12 @@ final class LimitBarState {
         } catch {
             return false
         }
+    }
+
+    private static func activityState(store: SQLiteActivityReceiptStore?) -> ActivityDebuggerState {
+        guard let store else { return .unavailable(.storageUnavailable) }
+        guard let receipts = try? store.all() else { return .unavailable(.storageUnavailable) }
+        return ActivityReceiptDebugger.latestRunFindings(for: receipts)
     }
 
     func refreshQuotaInsights(for snapshot: LocalRefreshSnapshot) async {

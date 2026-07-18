@@ -16,7 +16,7 @@ struct RateLimitAnalysisView: View {
     }
 
     private var items: [RateLimitAnalysisItem] {
-        claudeItems + codexItems + [workloadItem]
+        claudeItems + codexItems + [activityReceiptItem, workloadItem]
     }
 
     var body: some View {
@@ -124,6 +124,15 @@ struct RateLimitAnalysisView: View {
             title: "Planned workload",
             summary: result.summary,
             detail: result.evidence
+        )
+    }
+
+    private var activityReceiptItem: RateLimitAnalysisItem {
+        RateLimitAnalysisItem(
+            id: "activity-receipt-debugger",
+            title: "Activity Receipt debugger",
+            summary: ActivityReceiptPresentation.summary(state.activityDebuggerState),
+            detail: ActivityReceiptPresentation.detail(state.activityDebuggerState)
         )
     }
 

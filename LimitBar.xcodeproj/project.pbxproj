@@ -38,6 +38,8 @@
 		AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */; };
 		AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E4 /* ForensicInvestigationView.swift */; };
 		AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E5 /* RateLimitAnalysisView.swift */; };
+		AA00000000000000000002F0 /* ActivityReceiptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E0 /* ActivityReceiptView.swift */; };
+		AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +75,8 @@
 		AA00000000000000000000E3 /* DiagnosticExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportView.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E4 /* ForensicInvestigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationView.swift; sourceTree = "<group>"; };
 		AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationPresentationTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000002E0 /* ActivityReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptView.swift; sourceTree = "<group>"; };
+		AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptPresentationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -151,6 +155,7 @@
 				AA00000000000000000000E1 /* AlertNotificationCoordinator.swift */,
 				AA00000000000000000000E2 /* AlertSettingsView.swift */,
 				AA00000000000000000000E5 /* RateLimitAnalysisView.swift */,
+				AA00000000000000000002E0 /* ActivityReceiptView.swift */,
 				AA0000000000000000000212 /* LocalRefreshSettingsStore.swift */,
 				AA00000000000000000000E3 /* DiagnosticExportView.swift */,
 				AA00000000000000000000E4 /* ForensicInvestigationView.swift */,
@@ -185,6 +190,7 @@
 				AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */,
 				AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */,
 				AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */,
+				AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */,
 			);
 			path = LimitBarTests;
 			sourceTree = "<group>";
@@ -333,6 +339,7 @@
 				AA00000000000000000000F1 /* AlertNotificationCoordinator.swift in Sources */,
 				AA00000000000000000000F2 /* AlertSettingsView.swift in Sources */,
 				AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */,
+				AA00000000000000000002F0 /* ActivityReceiptView.swift in Sources */,
 				AA0000000000000000000202 /* LocalRefreshSettingsStore.swift in Sources */,
 				AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */,
 				AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */,
@@ -357,6 +364,7 @@
 				AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */,
 				AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */,
 				AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */,
+				AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
