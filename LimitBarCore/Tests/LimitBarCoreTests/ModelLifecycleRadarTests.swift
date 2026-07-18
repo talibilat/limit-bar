@@ -244,7 +244,8 @@ struct ModelLifecycleRadarTests {
 
     @Test("explicit refresh request contains no local context")
     func refreshPrivacy() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let store = ModelLifecycleCatalogStore(fileURL: directory.appendingPathComponent("catalog.json"), verifier: BundledModelLifecycleCatalog.verifier)
         let encoded = try ModelLifecycleCatalogJSON.encoder.encode(BundledModelLifecycleCatalog.envelope)
         let transport = RecordingCatalogTransport(response: .init(data: encoded, statusCode: 200))
@@ -260,13 +261,12 @@ struct ModelLifecycleRadarTests {
         #expect(!serialized.contains("token"))
         #expect(!serialized.contains("account"))
         #expect(!serialized.contains("project"))
-        try? FileManager.default.removeItem(at: directory)
     }
 
     @Test("selected signed artifacts load locally and symbolic links fail closed")
     func selectedArtifactLoading() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let artifact = directory.appendingPathComponent("catalog.json")
         try ModelLifecycleCatalogJSON.encoder.encode(BundledModelLifecycleCatalog.envelope).write(to: artifact)
         #expect(try ModelCatalogArtifactLoader.load(from: artifact) == BundledModelLifecycleCatalog.envelope)
@@ -274,12 +274,12 @@ struct ModelLifecycleRadarTests {
         let link = directory.appendingPathComponent("catalog-link.json")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: artifact)
         #expect(throws: ModelCatalogArtifactError.invalidFile) { try ModelCatalogArtifactLoader.load(from: link) }
-        try? FileManager.default.removeItem(at: directory)
     }
 
     @Test("validly signed catalog rollbacks are rejected without replacing current state")
     func monotonicCatalogInstallation() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let store = ModelLifecycleCatalogStore(fileURL: directory.appendingPathComponent("catalog.json"), verifier: BundledModelLifecycleCatalog.verifier)
         let current = try store.recordCatalog(BundledModelLifecycleCatalog.envelope)
 
@@ -317,12 +317,12 @@ struct ModelLifecycleRadarTests {
         )
         #expect(throws: ModelCatalogValidationError.rollbackPricingRevision) { try store.recordCatalog(signed(changedRevision)) }
         #expect(try store.latestCatalog() == current)
-        try? FileManager.default.removeItem(at: directory)
     }
 
     @Test("catalog and scenario persistence is bounded and independently deletable")
     func boundedPersistence() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("catalog.json")
         let store = ModelLifecycleCatalogStore(fileURL: file, verifier: BundledModelLifecycleCatalog.verifier)
         for _ in 0..<8 { _ = try store.recordCatalog(BundledModelLifecycleCatalog.envelope) }
@@ -372,13 +372,12 @@ struct ModelLifecycleRadarTests {
         try store.deleteAll()
         #expect(try store.catalogHistory().isEmpty)
         #expect(try store.scenarios().isEmpty)
-        try? FileManager.default.removeItem(at: directory)
     }
 
     @Test("schema zero migrates verified catalogs and unknown schemas are preserved")
     func persistenceMigration() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("catalog.json")
         let envelopeData = try ModelLifecycleCatalogJSON.encoder.encode(BundledModelLifecycleCatalog.envelope)
         let envelopeObject = try JSONSerialization.jsonObject(with: envelopeData)
@@ -394,7 +393,6 @@ struct ModelLifecycleRadarTests {
         try unsupported.write(to: file)
         #expect(throws: ModelLifecycleCatalogStoreError.unsupportedSchema(999)) { try store.latestCatalog() }
         #expect(try Data(contentsOf: file) == unsupported)
-        try? FileManager.default.removeItem(at: directory)
     }
 
     private func calculatedScenario() throws -> CalculatedReplacementCostScenario {
@@ -444,6 +442,13 @@ struct ModelLifecycleRadarTests {
         );
         """)
         return path
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LimitBarCoreTests-ModelLifecycleRadar-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
     }
 
     private func insertDaily(path: String, id: String, model: String, start: String, input: Int, output: Int) throws {

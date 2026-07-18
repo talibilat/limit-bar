@@ -574,7 +574,10 @@ public enum RecoveryWorkspaceFingerprint {
 
     public static func loadOrCreateKey(at destination: URL) throws -> Data {
         if FileManager.default.fileExists(atPath: destination.path) {
-            let handle = try SecureRegularFile.open(destination)
+            guard let canonicalURL = SecureRegularFile.canonicalURL(destination) else {
+                throw RecoveryCheckpointError.invalidValue
+            }
+            let handle = try SecureRegularFile.open(canonicalURL)
             defer { try? handle.close() }
             let data = try handle.readToEnd() ?? Data()
             guard data.count == 32 else { throw RecoveryCheckpointError.invalidValue }
@@ -630,6 +633,38 @@ public enum RecoveryWorkspaceFingerprint {
             throw RecoveryCheckpointError.invalidValue
         }
         return data
+    }
+}
+
+public struct RecoveryReviewedWorkspace: Equatable, Sendable {
+    public let canonicalURL: URL
+    public let device: UInt64
+    public let inode: UInt64
+    public let fingerprint: String
+
+    public static func inspect(workspace: URL, key: Data) throws -> Self {
+        guard let canonicalURL = SecureRegularFile.canonicalURL(workspace) else {
+            throw RecoveryCheckpointError.invalidValue
+        }
+        var status = stat()
+        let result = canonicalURL.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return lstat(path, &status)
+        }
+        guard result == 0, status.st_mode & S_IFMT == S_IFDIR else {
+            throw RecoveryCheckpointError.invalidValue
+        }
+        return Self(
+            canonicalURL: canonicalURL,
+            device: UInt64(status.st_dev),
+            inode: UInt64(status.st_ino),
+            fingerprint: try RecoveryWorkspaceFingerprint.make(workspace: canonicalURL, key: key)
+        )
+    }
+
+    public func revalidated(key: Data) -> RecoveryReviewedWorkspace? {
+        guard let current = try? Self.inspect(workspace: canonicalURL, key: key), current == self else { return nil }
+        return current
     }
 }
 

@@ -115,6 +115,10 @@ LimitBar regenerates its keyed content-free fingerprint in memory and reports on
 A changed workspace remains visibly changed and requires the same fresh resume confirmation.
 A deleted or unavailable workspace withholds resume.
 Because no path is retained, use the explicit `Workspace Deleted` action when the former location no longer exists.
+During review, LimitBar keeps the canonical workspace URL, filesystem device and inode, and keyed fingerprint only in memory.
+The pending confirmation is bound to that exact reviewed workspace identity.
+Immediately before launch, LimitBar verifies that the canonical directory still exists, has the same device and inode, and produces the same fingerprint.
+A changed, deleted, replaced, or newly redirected workspace withholds launch and requires a new review.
 
 The review also distinguishes stale Capacity Gate evidence, a changed reset boundary, session revalidation required, an expired session, an unsupported client version, and an unavailable resume command.
 No documented read-only provider command currently proves that either provider-owned session still exists without attempting resume.
@@ -139,6 +143,7 @@ The review displays that exact absolute executable and arguments before action i
 Selecting `Validate & Resume...` revalidates the session and opens a second confirmation that repeats the exact action.
 Only `Confirm Session and Launch` launches that exact executable directly with a structured argument array.
 LimitBar performs no shell interpolation and rechecks the executable's device, inode, size, and SHA-256 immediately before launch.
+The provider process receives the exact reviewed canonical workspace as its current directory.
 Cancellation launches nothing.
 LimitBar records only that the explicit launch was accepted and does not monitor, retry, queue, or interpret provider execution.
 

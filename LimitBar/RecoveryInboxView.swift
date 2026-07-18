@@ -33,16 +33,17 @@ private struct RecoveryUserNotifications: RecoveryNotificationSending {
 
 @MainActor
 protocol RecoveryCommandLaunching {
-    func launch(_ command: RecoveryResumeCommand) throws
+    func launch(_ command: RecoveryResumeCommand, currentDirectoryURL: URL) throws
 }
 
 @MainActor
-private struct RecoveryDirectCommandLauncher: RecoveryCommandLaunching {
-    func launch(_ command: RecoveryResumeCommand) throws {
+struct RecoveryDirectCommandLauncher: RecoveryCommandLaunching {
+    func launch(_ command: RecoveryResumeCommand, currentDirectoryURL: URL) throws {
         guard command.isStillValid() else { throw RecoveryCheckpointError.invalidValue }
         let process = Process()
         process.executableURL = command.executableURL
         process.arguments = command.arguments
+        process.currentDirectoryURL = currentDirectoryURL
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -52,6 +53,7 @@ private struct RecoveryDirectCommandLauncher: RecoveryCommandLaunching {
 struct RecoveryPendingResume: Equatable {
     let item: RecoveryInboxItem
     let command: RecoveryResumeCommand
+    let workspace: RecoveryReviewedWorkspace
     let confirmedAt: Date
 }
 
@@ -73,6 +75,7 @@ final class RecoveryInboxModel {
     private let executableCandidates: (RecoveryProduct) -> [URL]
     private let now: () -> Date
     private var workspaceStates: [String: RecoveryWorkspaceState] = [:]
+    private var reviewedWorkspaces: [String: RecoveryReviewedWorkspace] = [:]
     private var sessionConfirmations: [String: Date] = [:]
     private var expiredSessions: Set<String> = []
     private var commands: [String: RecoveryResumeCommand] = [:]
@@ -193,22 +196,26 @@ final class RecoveryInboxModel {
         guard panel.runModal() == .OK, let url = panel.url, let fingerprintKeyURL else { return }
         do {
             let key = try RecoveryWorkspaceFingerprint.loadOrCreateKey(at: fingerprintKeyURL)
-            let current = try RecoveryWorkspaceFingerprint.make(workspace: url, key: key)
-            workspaceStates[item.id] = current == item.checkpoint.workspaceFingerprint ? .unchanged : .changed
+            let review = try RecoveryReviewedWorkspace.inspect(workspace: url, key: key)
+            reviewedWorkspaces[item.id] = review
+            workspaceStates[item.id] = review.fingerprint == item.checkpoint.workspaceFingerprint ? .unchanged : .changed
             refresh()
         } catch {
+            reviewedWorkspaces.removeValue(forKey: item.id)
             workspaceStates[item.id] = .deleted
             refresh()
         }
     }
 
     func markWorkspaceDeleted(for item: RecoveryInboxItem) {
+        reviewedWorkspaces.removeValue(forKey: item.id)
         workspaceStates[item.id] = .deleted
         refresh()
     }
 
-    func recordWorkspaceReview(itemID: String, state: RecoveryWorkspaceState) {
-        workspaceStates[itemID] = state
+    func recordWorkspaceReview(itemID: String, review: RecoveryReviewedWorkspace, expectedFingerprint: String) {
+        reviewedWorkspaces[itemID] = review
+        workspaceStates[itemID] = review.fingerprint == expectedFingerprint ? .unchanged : .changed
         refresh()
     }
 
@@ -236,11 +243,17 @@ final class RecoveryInboxModel {
         refresh(now: confirmationTime)
         guard let current = items.first(where: { $0.id == item.id }),
               current.state == .readyForReview || current.state == .changedWorkspace,
-              let command = commands[item.id] else {
+              let command = commands[item.id],
+              let workspace = reviewedWorkspaces[item.id] else {
             message = "The session or resume command could not be revalidated."
             return
         }
-        pendingResume = RecoveryPendingResume(item: current, command: command, confirmedAt: confirmationTime)
+        pendingResume = RecoveryPendingResume(
+            item: current,
+            command: command,
+            workspace: workspace,
+            confirmedAt: confirmationTime
+        )
     }
 
     func launchConfirmedResume() {
@@ -251,6 +264,18 @@ final class RecoveryInboxModel {
             sessionConfirmations.removeValue(forKey: pending.item.id)
             refresh(now: launchTime)
             message = "Session confirmation expired. Revalidate before resuming."
+            return
+        }
+        guard let fingerprintKeyURL,
+              let key = try? RecoveryWorkspaceFingerprint.loadOrCreateKey(at: fingerprintKeyURL) else {
+            message = "The reviewed workspace could not be revalidated. Review it again before resuming."
+            return
+        }
+        guard pending.workspace.revalidated(key: key) != nil,
+              pending.workspace.fingerprint == pending.item.checkpoint.workspaceFingerprint else {
+            recordInvalidWorkspace(for: pending.item, previous: pending.workspace, key: key)
+            refresh(now: launchTime)
+            message = "The reviewed workspace changed or is no longer available. Review it again before resuming."
             return
         }
         refresh(now: launchTime)
@@ -266,8 +291,14 @@ final class RecoveryInboxModel {
             message = "The validated provider executable changed. Review it again before resuming."
             return
         }
+        guard pending.workspace.revalidated(key: key) != nil else {
+            recordInvalidWorkspace(for: pending.item, previous: pending.workspace, key: key)
+            refresh(now: launchTime)
+            message = "The reviewed workspace changed or is no longer available. Review it again before resuming."
+            return
+        }
         do {
-            try launcher.launch(pending.command)
+            try launcher.launch(pending.command, currentDirectoryURL: pending.workspace.canonicalURL)
             update(item, state: .resumed)
         } catch {
             message = "The documented provider resume command could not be opened. No retry was scheduled."
@@ -304,6 +335,20 @@ final class RecoveryInboxModel {
             return .revalidationRequired
         }
         return .confirmed
+    }
+
+    private func recordInvalidWorkspace(
+        for item: RecoveryInboxItem,
+        previous: RecoveryReviewedWorkspace,
+        key: Data
+    ) {
+        if let current = try? RecoveryReviewedWorkspace.inspect(workspace: previous.canonicalURL, key: key) {
+            reviewedWorkspaces[item.id] = current
+            workspaceStates[item.id] = .changed
+        } else {
+            reviewedWorkspaces.removeValue(forKey: item.id)
+            workspaceStates[item.id] = .deleted
+        }
     }
 
     func deliverReadyNotifications() async {
