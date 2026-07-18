@@ -5,7 +5,7 @@ struct RateLimitAnalysisView: View {
     let state: LimitBarState
     let workloadPlanningData: any WorkloadPlanningDataProviding
 
-    @State private var investigationSnapshot: ForensicInvestigationSnapshot?
+    @State private var showsInvestigation = false
 
     init(
         state: LimitBarState,
@@ -28,7 +28,7 @@ struct RateLimitAnalysisView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Investigate") {
-                        investigationSnapshot = state.investigationPublication
+                        showsInvestigation = true
                     }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("i", modifiers: [.command, .shift])
@@ -46,8 +46,16 @@ struct RateLimitAnalysisView: View {
             await state.claudeModel.appeared()
             state.claudeActionCompleted()
         }
-        .sheet(item: $investigationSnapshot) { snapshot in
-            ForensicInvestigationView(snapshot: snapshot)
+        .sheet(isPresented: $showsInvestigation) {
+            ForensicInvestigationView(
+                snapshot: state.investigationPublication,
+                statusObservations: state.providerStatusObservations,
+                localFailures: state.forensicLocalFailures,
+                authentication: state.forensicAuthentication,
+                statusSubscriptionEnabled: state.providerStatusSubscription.isEnabled,
+                statusCheckInProgress: state.providerStatusCheckInProgress,
+                checkProviderStatus: { state.checkProviderStatus() }
+            )
         }
     }
 

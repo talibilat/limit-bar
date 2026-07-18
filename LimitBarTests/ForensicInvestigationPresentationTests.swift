@@ -46,6 +46,103 @@ final class ForensicInvestigationPresentationTests: XCTestCase {
         XCTAssertTrue(ForensicInvestigationPresentation.intersects(start: start, end: end, rangeStart: start, rangeEnd: end))
     }
 
+    func testProviderIncidentLanePreservesEveryUnavailableAndStaleState() {
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let outcomes: [(ProviderStatusCheckOutcome, String)] = [
+            (.endpointUnavailable, "endpoint unavailable"),
+            (.malformedPayload, "Malformed"),
+            (.unsupportedSchema, "Unsupported official status schema"),
+            (.unsupportedComponent, "Unsupported component"),
+            (.noPublishedIncident, "does not establish provider health or quota exhaustion"),
+        ]
+        for (outcome, expected) in outcomes {
+            let text = ForensicStatusPresentation.incidentLane(
+                product: .codex,
+                service: .openAI,
+                observations: [ProviderStatusObservation(service: .openAI, checkedAt: now, outcome: outcome)],
+                failures: [],
+                rangeStart: now.addingTimeInterval(-60),
+                rangeEnd: now.addingTimeInterval(60),
+                now: now
+            )
+            XCTAssertTrue(text.localizedCaseInsensitiveContains(expected), outcome.rawValue)
+            XCTAssertFalse(text.localizedCaseInsensitiveContains("provider was healthy"))
+        }
+        let stale = ForensicStatusPresentation.incidentLane(
+            product: .codex,
+            service: .openAI,
+            observations: [ProviderStatusObservation(service: .openAI, checkedAt: now.addingTimeInterval(-ProviderStatusLimits.freshness - 1), outcome: .noPublishedIncident)],
+            failures: [], rangeStart: now.addingTimeInterval(-60), rangeEnd: now.addingTimeInterval(60), now: now
+        )
+        XCTAssertTrue(stale.contains("Stale status"))
+        XCTAssertTrue(stale.contains("not used to infer provider health"))
+    }
+
+    func testProviderIncidentLaneCorrelatesConcurrentTypedFailuresWithoutCausation() {
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let incident = NormalizedProviderIncident(
+            id: "incident", service: .openAI, products: [.codex], impact: .major, status: .monitoring,
+            startedAt: now.addingTimeInterval(-60), updatedAt: now, resolvedAt: nil,
+            componentStates: [.codex: .degradedPerformance], latestUpdateState: .monitoring
+        )
+        let failures = [
+            ProviderLocalFailure(product: .codex, failureClass: .rateLimited, occurredAt: now),
+            ProviderLocalFailure(product: .codex, failureClass: .concurrency, occurredAt: now.addingTimeInterval(1)),
+            ProviderLocalFailure(product: .codex, failureClass: .authentication, occurredAt: now.addingTimeInterval(2)),
+        ]
+        let text = ForensicStatusPresentation.incidentLane(
+            product: .codex, service: .openAI,
+            observations: [ProviderStatusObservation(service: .openAI, checkedAt: now, outcome: .incidentsPublished, incidents: [incident])],
+            failures: failures, rangeStart: now.addingTimeInterval(-120), rangeEnd: now.addingTimeInterval(120), now: now
+        )
+        XCTAssertTrue(text.contains("Official incident overlapped this failure"))
+        XCTAssertTrue(text.contains("does not establish causation"))
+        XCTAssertFalse(text.contains("caused"))
+    }
+
+    func testHistoricalIncidentCorrelationUsesRetainedTimelineAfterLatestCheckRetiresIncident() {
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let failureAt = now.addingTimeInterval(-30)
+        let incident = NormalizedProviderIncident(
+            id: "retained", service: .openAI, products: [.codex], impact: .major, status: .monitoring,
+            startedAt: now.addingTimeInterval(-60), updatedAt: now.addingTimeInterval(-45), resolvedAt: nil,
+            componentStates: [.codex: .degradedPerformance], latestUpdateState: .monitoring
+        )
+        let observations = [
+            ProviderStatusObservation(service: .openAI, checkedAt: now, outcome: .incidentsPublished, incidents: [incident]),
+            ProviderStatusObservation(service: .openAI, checkedAt: now.addingTimeInterval(60), outcome: .noPublishedIncident),
+        ]
+
+        let text = ForensicStatusPresentation.incidentLane(
+            product: .codex, service: .openAI, observations: observations,
+            failures: [ProviderLocalFailure(product: .codex, failureClass: .rateLimited, occurredAt: failureAt)],
+            rangeStart: now.addingTimeInterval(-120), rangeEnd: now.addingTimeInterval(120), now: now.addingTimeInterval(60)
+        )
+
+        XCTAssertTrue(text.contains("Official incident overlapped this failure"))
+        XCTAssertTrue(text.contains("no_published_incident"))
+    }
+
+    @MainActor
+    func testCodexAuthenticationDoesNotReuseOpenAIAPIAuthentication() {
+        var openAI = ProviderSettings.defaultSettings.first { $0.provider == .openAI }!
+        openAI.state = .connected
+        let state = LimitBarState(
+            providerSettings: [openAI],
+            claudeModel: ClaudeRateLimitsModel(
+                credentials: ClaudeCredentialBroker.shared,
+                client: ClaudeOAuthUsageClient(httpClient: URLSessionHTTPClient())
+            ),
+            coordinator: LocalRefreshCoordinator(dependencies: LocalRefreshDependencies(
+                refreshUsage: { _, _ in throw CancellationError() },
+                scanCodex: { _ in nil }
+            ))
+        )
+
+        XCTAssertEqual(state.forensicAuthentication[.openAIAPI], .connected)
+        XCTAssertEqual(state.forensicAuthentication[.codex], .unavailable)
+    }
+
     func testTraceDetailsRevealTruncatedStableIdentitiesWithoutFullDigest() throws {
         let now = Date(timeIntervalSince1970: 1_900_000_000)
         let identity = try QuotaWindowIdentity(product: .codex, identifier: "limit:primary:300", resetBoundary: now.addingTimeInterval(3_600))

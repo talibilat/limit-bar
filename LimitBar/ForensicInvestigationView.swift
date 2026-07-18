@@ -779,18 +779,86 @@ enum QuotaEvidenceReportBuilder {
     }
 }
 
+enum ForensicStatusPresentation {
+    static func incidentLane(
+        product: ProviderStatusProduct?,
+        service: ProviderStatusService?,
+        observations: [ProviderStatusObservation],
+        failures: [ProviderLocalFailure],
+        rangeStart: Date,
+        rangeEnd: Date,
+        now: Date
+    ) -> String {
+        guard let product, let service else {
+            return "Unsupported component - no official component is mapped to this provider product."
+        }
+        guard let observation = observations.filter({ $0.service == service }).max(by: { $0.checkedAt < $1.checkedAt }) else {
+            return "Unknown - official status has not been checked. Absence of status evidence does not establish provider health or quota exhaustion."
+        }
+        let age = max(0, now.timeIntervalSince(observation.checkedAt))
+        let check = "Last check \(ForensicInvestigationPresentation.exact(observation.checkedAt)); observation age \(wholeSecondDuration(age)); outcome \(observation.outcome.rawValue)."
+        let exactFailures = failures.filter { $0.product == product && $0.occurredAt >= rangeStart && $0.occurredAt < rangeEnd }
+        let overlaps = exactFailures.flatMap {
+            ProviderStatusCorrelation.incidents(overlapping: $0.occurredAt, product: product, observations: observations)
+        }
+        if !overlaps.isEmpty { return "\(ProviderStatusCorrelation.overlapLanguage) \(check)" }
+        if age > ProviderStatusLimits.freshness {
+            return "Stale status. \(check) Stale evidence is not used to infer provider health, quota exhaustion, or causation."
+        }
+        switch observation.outcome {
+        case .endpointUnavailable:
+            return "Official endpoint unavailable. \(check) Prior incident evidence remains independent."
+        case .malformedPayload:
+            return "Malformed official status payload. \(check) No incident state was inferred."
+        case .unsupportedSchema:
+            return "Unsupported official status schema. \(check) No incident state was inferred."
+        case .unsupportedComponent:
+            return "Unsupported component or incident association. \(check) Unlinked or unknown components were not mapped to this product."
+        case .noPublishedIncident:
+            return "No published incident. \(check) This does not establish provider health or quota exhaustion."
+        case .incidentsPublished:
+            if !exactFailures.isEmpty { return "\(ProviderStatusCorrelation.noIncidentLanguage) \(check)" }
+            return "Official incidents were published. \(check) No exact typed local failure is available in the selected range, so no temporal correlation or causal claim is made."
+        }
+    }
+}
+
 struct ForensicInvestigationView: View {
     let snapshot: ForensicInvestigationSnapshot
     let reduceMotionOverride: Bool?
+    let statusObservations: [ProviderStatusObservation]
+    let localFailures: [ProviderLocalFailure]
+    let authentication: [ProviderStatusProduct: ProviderAuthenticationEvidence]
+    let statusSubscriptionEnabled: Bool
+    let statusCheckInProgress: Bool
+    let statusNow: Date
+    let checkProviderStatus: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedProduct: ProviderProduct?
     @State private var rangeStart: Date
     @State private var rangeEnd: Date
 
-    init(snapshot: ForensicInvestigationSnapshot, reduceMotionOverride: Bool? = nil) {
+    init(
+        snapshot: ForensicInvestigationSnapshot,
+        reduceMotionOverride: Bool? = nil,
+        statusObservations: [ProviderStatusObservation] = [],
+        localFailures: [ProviderLocalFailure] = [],
+        authentication: [ProviderStatusProduct: ProviderAuthenticationEvidence] = [:],
+        statusSubscriptionEnabled: Bool = false,
+        statusCheckInProgress: Bool = false,
+        statusNow: Date = Date(),
+        checkProviderStatus: @escaping () -> Void = {}
+    ) {
         self.snapshot = snapshot
         self.reduceMotionOverride = reduceMotionOverride
+        self.statusObservations = statusObservations
+        self.localFailures = localFailures
+        self.authentication = authentication
+        self.statusSubscriptionEnabled = statusSubscriptionEnabled
+        self.statusCheckInProgress = statusCheckInProgress
+        self.statusNow = statusNow
+        self.checkProviderStatus = checkProviderStatus
         let records = snapshot.products.flatMap(\.records)
         _selectedProduct = State(initialValue: snapshot.supportedProducts.first)
         _rangeStart = State(initialValue: records.map(\.start).min() ?? snapshot.publishedAt.addingTimeInterval(-3_600))
@@ -815,6 +883,7 @@ struct ForensicInvestigationView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     publicationState
                     controls
+                    forensicLanes
                     Text("Selected exact range: \(ForensicInvestigationPresentation.exact(rangeStart)) to \(ForensicInvestigationPresentation.exact(rangeEnd)); half-open [start, end); Gregorian calendar; UTC basis.")
                         .font(.caption)
                         .textSelection(.enabled)
@@ -854,6 +923,91 @@ struct ForensicInvestigationView: View {
             Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
         }
         .padding(20)
+    }
+
+    private var selectedStatusProduct: ProviderStatusProduct? {
+        switch selectedProduct {
+        case .claudeCode: .claudeCode
+        case .codex: .codex
+        case .anthropicAPI: .anthropicAPI
+        case .openAIAPI: .openAIAPI
+        case .azureOpenAI, nil: nil
+        }
+    }
+
+    private var selectedStatusService: ProviderStatusService? {
+        switch selectedStatusProduct {
+        case .claudeCode, .anthropicAPI, .claudeConsole, .claudeAI: .anthropic
+        case .codex, .openAIAPI, .codexVSCode, .codexChatGPT: .openAI
+        case nil: nil
+        }
+    }
+
+    private var forensicLanes: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Independent evidence lanes").font(.headline)
+                Spacer()
+                Button(statusCheckInProgress ? "Checking Official Status..." : "Check Provider Status") { checkProviderStatus() }
+                    .disabled(statusCheckInProgress)
+                    .accessibilityIdentifier("check-provider-status")
+            }
+            Text("Official public status checks are separate from Local Refresh and provider refresh. Optional six-hour subscription: \(statusSubscriptionEnabled ? "Enabled" : "Disabled").")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("provider-status-subscription-state")
+            evidenceLane("Provider incident", detail: providerIncidentLane, identifier: "investigation-incident-lane")
+            evidenceLane("Quota state", detail: quotaLane, identifier: "investigation-quota-lane")
+            evidenceLane("Typed local failure", detail: localFailureLane, identifier: "investigation-failure-lane")
+            evidenceLane("Authentication", detail: authenticationLane, identifier: "investigation-authentication-lane")
+        }
+    }
+
+    private var providerIncidentLane: String {
+        ForensicStatusPresentation.incidentLane(
+            product: selectedStatusProduct,
+            service: selectedStatusService,
+            observations: statusObservations,
+            failures: localFailures,
+            rangeStart: rangeStart,
+            rangeEnd: rangeEnd,
+            now: statusNow
+        )
+    }
+
+    private var quotaLane: String {
+        guard selectedProduct != nil else { return "Unavailable - no supported quota product is selected." }
+        guard !records.isEmpty else { return "Gap - no trustworthy normalized quota evidence intersects this exact range. This is not Observed Zero." }
+        let gaps = records.filter(\.isGap).count
+        return "\(records.count) normalized quota evidence interval(s) intersect the selected range; \(gaps) Gap interval(s). Quota evidence remains independent of provider incidents, local failures, and authentication."
+    }
+
+    private var localFailureLane: String {
+        guard let product = selectedStatusProduct else { return "Unsupported for this provider product." }
+        let failures = localFailures.filter { $0.product == product && $0.occurredAt >= rangeStart && $0.occurredAt < rangeEnd }
+            .sorted { $0.occurredAt > $1.occurredAt }
+        guard !failures.isEmpty else { return "Unavailable - no typed local client failure was captured in the selected exact range. No failure class is inferred from quota or status evidence." }
+        return failures.map { "\($0.failureClass.rawValue) at \(ForensicInvestigationPresentation.exact($0.occurredAt))" }.joined(separator: "; ")
+    }
+
+    private var authenticationLane: String {
+        guard let product = selectedStatusProduct else { return "Unsupported for this provider product." }
+        guard let state = authentication[product] else { return "Unknown - no authentication evidence is available. Incident and quota evidence do not substitute for authentication state." }
+        return "\(state.rawValue). Authentication evidence remains independent of incident, quota, and local failure evidence."
+    }
+
+    private func evidenceLane(_ title: String, detail: String, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .accessibilityIdentifier(identifier)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var publicationState: some View {

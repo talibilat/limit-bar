@@ -267,6 +267,7 @@ public final class ClaudeRateLimitsModel {
     public private(set) var state: ClaudeRateLimitsModelState
     public private(set) var isPresent = true
     public private(set) var isRefreshing = false
+    public private(set) var lastLocalFailure: ProviderLocalFailure?
 
     private let credentials: any ClaudeCredentialProviding
     private let client: any ClaudeRateLimitsFetching
@@ -279,6 +280,7 @@ public final class ClaudeRateLimitsModel {
         self.credentials = credentials
         self.client = client
         self.state = state
+        lastLocalFailure = nil
     }
 
     public func appeared() async {
@@ -304,6 +306,7 @@ public final class ClaudeRateLimitsModel {
             isPresent = true
             guard !found.isExpired() else {
                 await credentials.invalidate()
+                lastLocalFailure = ProviderLocalFailure(product: .claudeCode, failureClass: .authentication, occurredAt: Date())
                 state = .notConnected
                 return
             }
@@ -320,6 +323,7 @@ public final class ClaudeRateLimitsModel {
             return
         case let .failure(error):
             isPresent = true
+            lastLocalFailure = ProviderLocalFailure(product: .claudeCode, failureClass: .authentication, occurredAt: Date())
             state = .failed(error.displayText)
             return
         }
@@ -332,9 +336,18 @@ public final class ClaudeRateLimitsModel {
         case let .failure(failure):
             if failure == .expiredLogin {
                 await credentials.invalidate()
+                lastLocalFailure = ProviderLocalFailure(product: .claudeCode, failureClass: .authentication, occurredAt: Date())
                 state = .notConnected
                 return
             }
+            let failureClass: ProviderLocalFailureClass = switch failure {
+            case .networkUnavailable: .network
+            case .malformedResponse: .malformedResponse
+            case .requestRejected: .unknown
+            case .expiredLogin: .authentication
+            case .cancelled: .unknown
+            }
+            lastLocalFailure = ProviderLocalFailure(product: .claudeCode, failureClass: failureClass, occurredAt: Date())
             state = .failed(failure.displayText)
         }
     }

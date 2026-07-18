@@ -77,6 +77,9 @@ final class LimitBarState {
     private(set) var quotaInsightsStorageAvailable: Bool
     private(set) var claudeExplanationCatalog: ClaudeQuotaExplanationCatalog = .empty
     private(set) var activityDebuggerState: ActivityDebuggerState = .unavailable(.noReceipts)
+    private(set) var providerStatusObservations: [ProviderStatusObservation] = []
+    private(set) var providerStatusSubscription = ProviderStatusSubscriptionSettings()
+    private(set) var providerStatusCheckInProgress = false
     private(set) var investigationPublication = ForensicInvestigationSnapshot(
         publicationState: .loading,
         publishedAt: Date(),
@@ -91,8 +94,10 @@ final class LimitBarState {
     private let activityReceiptStore: SQLiteActivityReceiptStore?
     private let attributionEvidenceStore: any AttributionEvidenceDeleting
     private let capacityPublicationWriter: CapacityPublicationWriter?
+    private let providerStatusStore: ProviderStatusStore?
     private let usesLiveRefresh: Bool
     private var observationTask: Task<Void, Never>?
+    private var providerStatusSubscriptionTask: Task<Void, Never>?
     private var latestUsageRefreshed = false
     private var latestCodexRefreshed = false
     private var pendingInvestigationRefresh: PendingInvestigationRefresh?
@@ -109,6 +114,7 @@ final class LimitBarState {
         self.codexExplanationStore = codexExplanationStore
         self.claudeExplanationStore = claudeExplanationStore
         self.activityReceiptStore = activityReceiptStore
+        providerStatusStore = try? .production()
         attributionEvidenceStore = UsageDatabase.shared
         capacityPublicationWriter = try? .production()
         coordinator = LocalRefreshCoordinator(dependencies: .live(
@@ -127,6 +133,8 @@ final class LimitBarState {
         let alertSettingsStore = AlertSettingsStore()
         self.alertSettingsStore = alertSettingsStore
         alertCoordinator = AlertCoordinator(settingsStore: alertSettingsStore)
+        providerStatusSubscription = ProviderStatusSubscriptionSettings.decode(UserDefaults.standard.data(forKey: "limitbar.providerStatusSubscription"))
+        providerStatusObservations = (try? providerStatusStore?.load()) ?? []
         local.restoreCodexExplanation(try? codexExplanationStore?.latest())
         claudeExplanationCatalog = Self.catalog(restoring: try? claudeExplanationStore?.latest())
         activityDebuggerState = Self.activityState(store: activityReceiptStore)
@@ -143,7 +151,9 @@ final class LimitBarState {
         activityReceiptStore: SQLiteActivityReceiptStore? = nil,
         attributionEvidenceStore: any AttributionEvidenceDeleting = UsageDatabase.shared,
         capacityPublicationWriter: CapacityPublicationWriter? = nil,
-        investigationPublication: ForensicInvestigationSnapshot? = nil
+        investigationPublication: ForensicInvestigationSnapshot? = nil,
+        providerStatusStore: ProviderStatusStore? = nil,
+        providerStatusObservations: [ProviderStatusObservation] = []
     ) {
         self.providerSettings = providerSettings
         self.claudeModel = claudeModel
@@ -154,6 +164,8 @@ final class LimitBarState {
         self.activityReceiptStore = activityReceiptStore
         self.attributionEvidenceStore = attributionEvidenceStore
         self.capacityPublicationWriter = capacityPublicationWriter
+        self.providerStatusStore = providerStatusStore
+        self.providerStatusObservations = providerStatusObservations
         quotaInsightsStorageAvailable = quotaInsightsService != nil
         usesLiveRefresh = false
         let alertSettingsStore = AlertSettingsStore()
@@ -171,6 +183,7 @@ final class LimitBarState {
 
     func start() {
         guard usesLiveRefresh else { return }
+        startProviderStatusSubscriptionIfNeeded()
         guard observationTask == nil else { return }
         beginInvestigationRefreshRequest()
         observationTask = Task { [weak self, coordinator] in
@@ -196,6 +209,80 @@ final class LimitBarState {
         guard usesLiveRefresh else { return }
         let cadence = LocalRefreshSettingsStore().cadence
         Task { [coordinator] in await coordinator.setRefreshInterval(cadence.seconds) }
+    }
+
+    func checkProviderStatus() {
+        guard !providerStatusCheckInProgress else { return }
+        Task { await performProviderStatusCheck() }
+    }
+
+    func setProviderStatusSubscription(enabled: Bool) {
+        providerStatusSubscription = ProviderStatusSubscriptionSettings(isEnabled: enabled)
+        if let data = try? JSONEncoder().encode(providerStatusSubscription) {
+            UserDefaults.standard.set(data, forKey: "limitbar.providerStatusSubscription")
+        }
+        providerStatusSubscriptionTask?.cancel()
+        providerStatusSubscriptionTask = nil
+        startProviderStatusSubscriptionIfNeeded()
+    }
+
+    func deleteProviderStatusHistory() -> Bool {
+        do {
+            try providerStatusStore?.deleteAll()
+            providerStatusObservations = []
+            publishCapacity(now: Date())
+            return providerStatusStore != nil
+        } catch {
+            return false
+        }
+    }
+
+    var forensicLocalFailures: [ProviderLocalFailure] {
+        let providerFailures: [ProviderLocalFailure] = providerSettings.compactMap { setting -> ProviderLocalFailure? in
+            guard setting.updatedAt.timeIntervalSince1970 > 0,
+                  setting.state == .failed || setting.state == .expired || setting.state == .adminRequired else { return nil }
+            let product: ProviderStatusProduct
+            switch setting.provider {
+            case .anthropic: product = .anthropicAPI
+            case .openAI: product = .openAIAPI
+            case .azureOpenAI, .custom: return nil
+            }
+            let failureClass: ProviderLocalFailureClass = switch setting.failureReason {
+            case .authenticationRejected, .insufficientPermissions, .expiredCredential: .authentication
+            case .networkUnavailable: .network
+            case .invalidConfiguration, .refreshFailed, nil: .unknown
+            }
+            return ProviderLocalFailure(product: product, failureClass: failureClass, occurredAt: setting.updatedAt)
+        }
+        return providerFailures + [claudeModel.lastLocalFailure].compactMap { $0 }
+    }
+
+    var forensicAuthentication: [ProviderStatusProduct: ProviderAuthenticationEvidence] {
+        var result: [ProviderStatusProduct: ProviderAuthenticationEvidence] = [:]
+        for setting in providerSettings {
+            let evidence: ProviderAuthenticationEvidence = switch setting.state {
+            case .connected: .connected
+            case .missing: .notConfigured
+            case .expired: .expired
+            case .adminRequired: .authorizationRequired
+            case .failed where setting.failureReason == .authenticationRejected: .rejected
+            case .failed, .configured, .unsupported, .cancelled: .unknown
+            }
+            switch setting.provider {
+            case .anthropic: result[.anthropicAPI] = evidence
+            case .openAI: result[.openAIAPI] = evidence
+            case .azureOpenAI, .custom: break
+            }
+        }
+        result[.claudeCode] = switch claudeModel.state {
+        case .loaded: .connected
+        case .authorizationRequired: .authorizationRequired
+        case .notConnected: .notConfigured
+        case .failed: .unavailable
+        case .loading: .unknown
+        }
+        result[.codex] = .unavailable
+        return result
     }
 
     func clearHistoricalUsage() {
@@ -405,8 +492,48 @@ final class LimitBarState {
             : [])
         try? capacityPublicationWriter.publish(CapacityPublication(
             publishedAt: now,
-            quotaObservations: currentClaude + currentCodex
+            quotaObservations: currentClaude + currentCodex,
+            incidents: capacityIncidents(now: now)
         ))
+    }
+
+    private func performProviderStatusCheck() async {
+        guard !providerStatusCheckInProgress else { return }
+        providerStatusCheckInProgress = true
+        defer { providerStatusCheckInProgress = false }
+        let now = Date()
+        async let anthropic = AnthropicPublicStatusClient().check(now: now)
+        async let openAI = OpenAIPublicStatusClient().check(now: now)
+        let observations = [await anthropic, await openAI]
+        if let providerStatusStore, let retained = try? providerStatusStore.record(observations, now: now) {
+            providerStatusObservations = retained
+        } else {
+            providerStatusObservations = observations + providerStatusObservations
+        }
+        publishCapacity(now: now)
+    }
+
+    private func startProviderStatusSubscriptionIfNeeded() {
+        guard usesLiveRefresh, providerStatusSubscription.isEnabled, providerStatusSubscriptionTask == nil else { return }
+        providerStatusSubscriptionTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let now = Date()
+                let lastCheck = providerStatusObservations.map(\.checkedAt).max()
+                if ProviderStatusSubscriptionSchedule.isDue(enabled: providerStatusSubscription.isEnabled, lastCheck: lastCheck, now: now) {
+                    await performProviderStatusCheck()
+                }
+                let delay = ProviderStatusSubscriptionSchedule.delay(
+                    lastCheck: providerStatusObservations.map(\.checkedAt).max(),
+                    now: Date()
+                )
+                try? await Task.sleep(for: .seconds(max(60, min(300, delay))))
+            }
+        }
+    }
+
+    private func capacityIncidents(now: Date) -> [CapacityPublication.Incident] {
+        ProviderStatusCapacity.incidents(from: providerStatusObservations, now: now)
     }
 
     private func recordClaudeInsights(_ snapshot: ClaudeRateLimitSnapshot, now: Date) async {

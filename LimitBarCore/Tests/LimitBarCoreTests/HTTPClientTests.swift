@@ -40,12 +40,24 @@ struct HTTPClientTests {
         #expect(!URLSessionRedirectPolicy.shouldFollow(from: original, to: redirected))
     }
 
-    @Test("public requests may follow cross-origin redirects")
-    func publicRedirectsAreAllowed() throws {
+    @Test("default public requests may follow cross-origin redirects")
+    func publicRedirectsAreAllowedByDefault() throws {
         let original = URLRequest(url: try #require(URL(string: "https://public.example/start")))
         let redirected = URLRequest(url: try #require(URL(string: "http://cdn.example/next")))
 
         #expect(URLSessionRedirectPolicy.shouldFollow(from: original, to: redirected))
+    }
+
+    @Test("same-origin mode rejects cross-origin public redirects")
+    func pinnedPublicRedirects() throws {
+        let original = URLRequest(url: try #require(URL(string: "https://status.openai.com/api/v2/summary.json")))
+        let sameOrigin = URLRequest(url: try #require(URL(string: "https://status.openai.com/api/v2/summary.json?next=1")))
+        let crossOrigin = URLRequest(url: try #require(URL(string: "https://example.com/status")))
+        let downgrade = URLRequest(url: try #require(URL(string: "http://status.openai.com/status")))
+
+        #expect(URLSessionRedirectPolicy.shouldFollow(from: original, to: sameOrigin, mode: .sameOrigin))
+        #expect(!URLSessionRedirectPolicy.shouldFollow(from: original, to: crossOrigin, mode: .sameOrigin))
+        #expect(!URLSessionRedirectPolicy.shouldFollow(from: original, to: downgrade, mode: .sameOrigin))
     }
 
     @Test("releasing the client invalidates its owned URL session exactly once")

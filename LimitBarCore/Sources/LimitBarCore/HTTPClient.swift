@@ -65,9 +65,22 @@ struct PaginationGuard {
 }
 
 public enum URLSessionRedirectPolicy {
+    public enum Mode: Equatable, Sendable {
+        case credentialAware
+        case sameOrigin
+    }
+
     private static let credentialHeaders = ["authorization", "proxy-authorization", "x-api-key", "api-key"]
 
-    public static func shouldFollow(from original: URLRequest, to redirected: URLRequest) -> Bool {
+    public static func shouldFollow(
+        from original: URLRequest,
+        to redirected: URLRequest,
+        mode: Mode = .credentialAware
+    ) -> Bool {
+        if mode == .sameOrigin {
+            guard let originalURL = original.url, let redirectedURL = redirected.url else { return false }
+            return origin(of: originalURL) == origin(of: redirectedURL)
+        }
         let hasCredentials = original.allHTTPHeaderFields?.keys.contains {
             credentialHeaders.contains($0.lowercased())
         } == true
@@ -93,8 +106,16 @@ public enum URLSessionRedirectPolicy {
 public final class URLSessionHTTPClient: @unchecked Sendable, HTTPClient {
     private let sessionBox: OwnedURLSession
 
-    public init() {
-        let session = URLSession(configuration: Self.secureConfiguration(), delegate: RedirectDelegate(), delegateQueue: nil)
+    public convenience init() {
+        self.init(redirectPolicy: .credentialAware)
+    }
+
+    public init(redirectPolicy: URLSessionRedirectPolicy.Mode) {
+        let session = URLSession(
+            configuration: Self.secureConfiguration(),
+            delegate: RedirectDelegate(mode: redirectPolicy),
+            delegateQueue: nil
+        )
         sessionBox = OwnedURLSession(session: session, invalidate: { $0.invalidateAndCancel() })
     }
 
@@ -148,6 +169,12 @@ private final class OwnedURLSession: @unchecked Sendable {
 }
 
 private final class RedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let mode: URLSessionRedirectPolicy.Mode
+
+    init(mode: URLSessionRedirectPolicy.Mode = .credentialAware) {
+        self.mode = mode
+    }
+
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -159,6 +186,6 @@ private final class RedirectDelegate: NSObject, URLSessionTaskDelegate, @uncheck
             completionHandler(nil)
             return
         }
-        completionHandler(URLSessionRedirectPolicy.shouldFollow(from: original, to: request) ? request : nil)
+        completionHandler(URLSessionRedirectPolicy.shouldFollow(from: original, to: request, mode: mode) ? request : nil)
     }
 }

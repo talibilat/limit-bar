@@ -36,6 +36,8 @@ struct LimitBarSettingsView: View {
     @State private var claudeExplanationDeletionMessage: String?
     @State private var showsDeleteAttributionConfirmation = false
     @State private var attributionDeletionMessage: String?
+    @State private var statusSubscriptionEnabled = false
+    @State private var providerStatusMessage: String?
 
     private var canSavePricing: Bool {
         guard let input = PricingSettingsStore.strictDecimal(from: inputPrice),
@@ -236,6 +238,31 @@ struct LimitBarSettingsView: View {
                 }
             }
 
+            Section("Official Provider Status") {
+                Text("Checks use only the public Anthropic and OpenAI status endpoints. No credentials, cookies, account labels, local failures, quota evidence, client identifiers, or other local context are sent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Check every six hours", isOn: $statusSubscriptionEnabled)
+                    .accessibilityIdentifier("provider-status-subscription")
+                    .onChange(of: statusSubscriptionEnabled) { _, enabled in
+                        state.setProviderStatusSubscription(enabled: enabled)
+                    }
+                Text("Disabled by default. This low-frequency subscription is separate from Local Refresh and explicit provider refreshes. Status observations are retained locally for at most 14 days and 96 checks; arbitrary incident prose is never retained.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Delete Provider Status History", role: .destructive) {
+                    providerStatusMessage = state.deleteProviderStatusHistory()
+                        ? "Provider status history deleted. Quota, failures, authentication, settings, and credentials were not changed."
+                        : "Could not delete provider status history."
+                }
+                .accessibilityIdentifier("delete-provider-status-history")
+                if let providerStatusMessage {
+                    Text(providerStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(providerStatusMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                }
+            }
+
             Section("Local Refresh") {
                 Text("Choose how often LimitBar imports Local Usage Events and Custom Usage Sources, reads its SQLite snapshot, and scans local Codex sessions.")
                     .font(.caption)
@@ -329,6 +356,7 @@ struct LimitBarSettingsView: View {
             storedMetrics = await UsageDatabase.shared.snapshot()
             historyRetention = await UsageDatabase.shared.historicalRetention()
             refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries()
+            statusSubscriptionEnabled = state.providerStatusSubscription.isEnabled
         }
         .onReceive(NotificationCenter.default.publisher(for: .providerRefreshHistoryDidChange)) { _ in
             Task { refreshHistory = await ProviderRefreshHistoryRepository.shared.summaries() }
