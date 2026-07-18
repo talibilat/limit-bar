@@ -166,36 +166,28 @@ final class AlertCoordinator {
                 satisfied: satisfied,
                 now: now
             )
-            for evaluation in evaluations {
-                do {
-                    guard let reservation = try deliveryStore.reserve(evaluation.occurrence, now: now) else { continue }
-                    let identifier = Self.identifier(for: reservation)
-                    let pending = await notificationCenter.pendingIdentifiers()
-                    let delivered = await notificationCenter.deliveredIdentifiers()
-                    let accepted = Set(pending + delivered)
-                    if !accepted.contains(identifier) {
-                        do {
-                            try await notificationCenter.add(
-                                identifier: identifier,
-                                title: evaluation.notification.title,
-                                body: evaluation.notification.body
-                            )
-                        } catch {
-                            try? deliveryStore.markFailed(reservation)
-                            lastErrorMessage = "A notification could not be delivered and will be retried."
-                            continue
-                        }
-                    }
-                    do {
-                        try deliveryStore.markDelivered(reservation, at: Date())
-                    } catch {
-                        try? deliveryStore.retainAcceptedReservation(reservation)
-                        lastErrorMessage = "An accepted notification could not be recorded yet."
-                    }
-                } catch {
-                    lastErrorMessage = "Notification delivery history could not be updated."
-                }
+            await deliver(evaluations, store: deliveryStore, now: now)
+        } catch {
+            lastErrorMessage = "Notification delivery history could not be maintained."
+        }
+    }
+
+    func evaluateRetirements(_ items: [ModelLifecycleRadarItem], now: Date = Date()) async {
+        guard let deliveryStore, !isClearingHistory else { return }
+        activeEvaluations += 1
+        defer { activeEvaluations -= 1 }
+        let systemStatus = await notificationCenter.authorizationStatus()
+        authorizationStatus = Self.simpleStatus(systemStatus)
+        guard systemStatus == .authorized || systemStatus == .provisional else { return }
+        do {
+            try deliveryStore.prune(through: now)
+            let initial = ModelRetirementAlertEvaluator.evaluate(items: items, satisfied: [], now: now)
+            var satisfied = Set<AlertThresholdSatisfaction>()
+            for evaluation in initial {
+                satisfied.formUnion(try deliveryStore.satisfactions(for: evaluation.occurrence.ruleID, window: evaluation.occurrence.window))
             }
+            let evaluations = ModelRetirementAlertEvaluator.evaluate(items: items, satisfied: satisfied, now: now)
+            await deliver(evaluations, store: deliveryStore, now: now)
         } catch {
             lastErrorMessage = "Notification delivery history could not be maintained."
         }
@@ -227,6 +219,37 @@ final class AlertCoordinator {
         case .authorized: .authorized
         case .provisional, .ephemeral: .provisional
         @unknown default: .unknown
+        }
+    }
+
+    private func deliver(_ evaluations: [AlertEvaluation], store: SQLiteAlertDeliveryStore, now: Date) async {
+        for evaluation in evaluations {
+            do {
+                guard let reservation = try store.reserve(evaluation.occurrence, now: now) else { continue }
+                let identifier = Self.identifier(for: reservation)
+                let accepted = Set(await notificationCenter.pendingIdentifiers() + notificationCenter.deliveredIdentifiers())
+                if !accepted.contains(identifier) {
+                    do {
+                        try await notificationCenter.add(
+                            identifier: identifier,
+                            title: evaluation.notification.title,
+                            body: evaluation.notification.body
+                        )
+                    } catch {
+                        try? store.markFailed(reservation)
+                        lastErrorMessage = "A notification could not be delivered and will be retried."
+                        continue
+                    }
+                }
+                do {
+                    try store.markDelivered(reservation, at: now)
+                } catch {
+                    try? store.retainAcceptedReservation(reservation)
+                    lastErrorMessage = "An accepted notification could not be recorded yet."
+                }
+            } catch {
+                lastErrorMessage = "Notification delivery history could not be updated."
+            }
         }
     }
 

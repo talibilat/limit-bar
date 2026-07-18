@@ -58,6 +58,27 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.deliveryStore.satisfactions(for: fixture.rule.id, window: .quota(fixture.identity)).map(\.threshold), [70])
     }
 
+    func testExactModelRetirementUsesDurableDeliveryLedger() async throws {
+        let fixture = try makeFixture(status: .authorized)
+        defer { fixture.cleanup() }
+        let retirement = now.addingTimeInterval(30 * 24 * 60 * 60)
+        let identity = CatalogModelIdentity(product: .openAIAPI, platform: .openAIAPI, modelID: "gpt-retiring")
+        let source = CatalogSourceReference(url: URL(string: "https://platform.openai.com/docs/deprecations")!, retrievedAt: now)
+        let record = ModelLifecycleRecord(identity: identity, status: .deprecated, effectiveAt: now.addingTimeInterval(-1), retirementDate: CatalogDate.utcDate(containing: retirement), replacement: nil, lifecycleSource: source, pricingRevisionIDs: [])
+        let usage = RetainedModelUsage(identity: identity, observedModelID: identity.modelID, workloadPeriod: DateInterval(start: now.addingTimeInterval(-100), end: now), tokenUsage: TokenUsage(inputTokens: 1, outputTokens: 1))
+        let item = ModelLifecycleRadarItem(usage: usage, lifecycle: record, scenario: .unavailable([.noDocumentedReplacement]))
+        let evaluation = try XCTUnwrap(ModelRetirementAlertEvaluator.evaluate(items: [item], satisfied: [], now: now).first)
+
+        await fixture.coordinator.evaluateRetirements([item], now: now)
+        await fixture.coordinator.evaluateRetirements([item], now: now)
+
+        XCTAssertEqual(fixture.center.added.map(\.title), ["Model retirement"])
+        XCTAssertEqual(
+            try fixture.deliveryStore.satisfactions(for: ModelRetirementAlertEvaluator.ruleID, window: evaluation.occurrence.window).map(\.threshold),
+            [1]
+        )
+    }
+
     func testFailedAnalysisPreservesLastCoherentForecastAndAnomalyPair() async throws {
         let initial = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 0)
         let attempted = try analysisSnapshot(identifier: "codex:primary:300", percentageOffset: 1)

@@ -55,6 +55,12 @@ struct LimitBarApp: App {
             LimitBarSettingsView(state: state)
 #endif
         }
+
+        Window("Model Lifecycle Radar", id: "model-lifecycle-radar") {
+            ModelLifecycleRadarView(state: state)
+        }
+        .defaultSize(width: 700, height: 760)
+        .commands { ModelLifecycleRadarCommands() }
     }
 }
 
@@ -474,6 +480,15 @@ final class LimitBarState {
             anomalies: Array(quotaAnomalies.values),
             now: now
         )
+        if UserDefaults.standard.bool(forKey: ModelLifecycleAlertSettings.storageKey),
+           let store = try? ModelLifecycleCatalogStore.production(verifier: BundledModelLifecycleCatalog.verifier),
+           let catalog = try? store.latestCatalog(),
+           let inventory = try? ModelLifecycleInventoryLoader.production().load(catalog: catalog, now: now) {
+            await alertCoordinator.evaluateRetirements(
+                ModelLifecycleRadar.items(inventory: inventory.models, catalog: catalog, at: now),
+                now: now
+            )
+        }
     }
 
     private func publishCapacity(

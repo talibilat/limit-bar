@@ -43,6 +43,7 @@
 		AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000003E0 /* RecoveryInboxView.swift */; };
 		AA00000000000000000004F0 /* RecoveryInboxPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */; };
 		AA00000000000000000005F0 /* APISpendReconciliationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000005E0 /* APISpendReconciliationView.swift */; };
+		AA00000000000000000006F0 /* ModelLifecycleRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000006E0 /* ModelLifecycleRadarView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +84,7 @@
 		AA00000000000000000003E0 /* RecoveryInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxView.swift; sourceTree = "<group>"; };
 		AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxPresentationTests.swift; sourceTree = "<group>"; };
 		AA00000000000000000005E0 /* APISpendReconciliationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APISpendReconciliationView.swift; sourceTree = "<group>"; };
+		AA00000000000000000006E0 /* ModelLifecycleRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelLifecycleRadarView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -167,6 +169,7 @@
 				AA00000000000000000000E4 /* ForensicInvestigationView.swift */,
 				AA00000000000000000003E0 /* RecoveryInboxView.swift */,
 				AA00000000000000000005E0 /* APISpendReconciliationView.swift */,
+				AA00000000000000000006E0 /* ModelLifecycleRadarView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -354,6 +357,7 @@
 				AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */,
 				AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */,
 				AA00000000000000000005F0 /* APISpendReconciliationView.swift in Sources */,
+				AA00000000000000000006F0 /* ModelLifecycleRadarView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
