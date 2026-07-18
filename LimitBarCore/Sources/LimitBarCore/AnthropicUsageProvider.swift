@@ -141,6 +141,40 @@ public struct AnthropicAdminClient: Sendable {
         }
     }
 
+    public func fetchSpendReconciliation(apiKey: String, interval: DateInterval, policy: SpendDimensionPolicy = .omitProviderIdentities) async -> AnthropicSpendRefreshResult {
+        var page: String?
+        var pagination = PaginationGuard()
+        var buckets: [ProviderReportedSpendBucket] = []
+        var fingerprints = Set<String>()
+        do {
+            repeat {
+                try pagination.registerRequest(token: page)
+                let response = try await httpClient.send(reconciliationRequest(apiKey: apiKey, interval: interval, page: page))
+                switch response.statusCode {
+                case 200:
+                    let decoded = try AnthropicSpendReportImporter.import(response.data, policy: policy)
+                    for bucket in decoded {
+                        guard fingerprints.insert(try AnthropicSpendReportImporter.fingerprint(bucket)).inserted else {
+                            throw APISpendReconciliationError.duplicateBucket
+                        }
+                        buckets.append(bucket)
+                    }
+                    let paginationData = try AnthropicCostMapper.decode(response.data)
+                    page = try pagination.nextToken(hasMore: paginationData.hasMore, token: paginationData.nextPage)
+                case 401: return .failure(.authenticationRejected)
+                case 403: return .failure(.insufficientPermissions)
+                default: return .failure(.refreshFailed)
+                }
+            } while page != nil
+            return .success(buckets)
+        } catch is CancellationError {
+            return .cancelled
+        } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return .cancelled }
+            return .failure(.refreshFailed)
+        }
+    }
+
     private func request(apiKey: String, interval: DateInterval, page: String? = nil, path: String = "v1/organizations/usage_report/messages") -> HTTPRequest {
         let formatter = ISO8601DateFormatter()
         var queryItems = [
@@ -158,6 +192,24 @@ public struct AnthropicAdminClient: Sendable {
         }
         return HTTPRequest(
             url: baseURL.appendingPathComponent(path).appending(queryItems: queryItems),
+            method: .get,
+            headers: ["x-api-key": apiKey, "anthropic-version": "2023-06-01"]
+        )
+    }
+
+    private func reconciliationRequest(apiKey: String, interval: DateInterval, page: String?) -> HTTPRequest {
+        let formatter = ISO8601DateFormatter()
+        var queryItems = [
+            URLQueryItem(name: "starting_at", value: formatter.string(from: interval.start)),
+            URLQueryItem(name: "ending_at", value: formatter.string(from: interval.end)),
+            URLQueryItem(name: "bucket_width", value: "1d")
+        ]
+        for dimension in ["workspace_id", "api_key_id", "model"] {
+            queryItems.append(URLQueryItem(name: "group_by[]", value: dimension))
+        }
+        if let page { queryItems.append(URLQueryItem(name: "page", value: page)) }
+        return HTTPRequest(
+            url: baseURL.appendingPathComponent("v1/organizations/cost_report").appending(queryItems: queryItems),
             method: .get,
             headers: ["x-api-key": apiKey, "anthropic-version": "2023-06-01"]
         )

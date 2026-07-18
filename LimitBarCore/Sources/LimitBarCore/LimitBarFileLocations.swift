@@ -49,6 +49,10 @@ public struct LimitBarFileLocations: Equatable, Sendable {
         limitBarApplicationSupportDirectory.appendingPathComponent("activity-receipts-v1.sqlite")
     }
 
+    public var apiSpendReconciliationDatabase: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("api-spend-reconciliation-v2.sqlite")
+    }
+
     public static func production(fileManager: FileManager = .default) throws -> Self {
         let applicationSupport = try fileManager.url(
             for: .applicationSupportDirectory,

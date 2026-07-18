@@ -34,6 +34,8 @@ struct ProviderSettingsView: View {
     }
 
     @State private var anthropicAPIKey = ""
+    @State private var anthropicWorkspaceAlias = ""
+    @State private var anthropicAPIKeyAlias = ""
     @State private var azureAPIKey = ""
     @State private var openAIAdminAPIKey = ""
     @State private var openAIOAuthToken = ""
@@ -111,6 +113,11 @@ struct ProviderSettingsView: View {
     private func anthropicControls(index: Int) -> some View {
         if settings[index].authMethod == .anthropicAdminAPIKey {
             SecureField("Admin API key", text: $anthropicAPIKey)
+            TextField("Workspace mappings: raw=project alias; ...", text: $anthropicWorkspaceAlias)
+            TextField("API-key mappings: raw=agent alias; ...", text: $anthropicAPIKeyAlias)
+            Text("Mappings are per exact provider identity and exist only for this explicit refresh. Unmapped identities are omitted before persistence. Aliases equal to or derived from raw identifiers are rejected.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             credentialButtons(secret: anthropicAPIKey, provider: .anthropic, kind: .apiKey)
             Button(isRefreshingAnthropic ? "Refreshing..." : "Validate & Refresh") {
                 Task { await refreshAnthropic(index: index) }
@@ -306,7 +313,10 @@ struct ProviderSettingsView: View {
             defer { credentialData.resetBytes(in: credentialData.startIndex..<credentialData.endIndex) }
             let startedMethod = settings[index].authMethod
             let startedFingerprint = Data(SHA256.hash(data: credentialData))
-            guard let result = await anthropicRefreshService.fetch(apiKey: apiKey) else {
+            defer { anthropicWorkspaceAlias = ""; anthropicAPIKeyAlias = "" }
+            let workspaceAliases = try aliasMap(anthropicWorkspaceAlias)
+            let apiKeyAliases = try aliasMap(anthropicAPIKeyAlias)
+            guard let result = await anthropicRefreshService.fetch(apiKey: apiKey, workspaceAliases: workspaceAliases, apiKeyAliases: apiKeyAliases) else {
                 guard !Task.isCancelled else { return ProviderRefreshExecution(outcome: .cancelled) }
                 settings[index].state = .failed
                 settings[index].failureReason = .refreshFailed
@@ -328,17 +338,60 @@ struct ProviderSettingsView: View {
             )
             guard ProviderSettingsPersistenceDecision.evaluate(diagnostic, taskIsCancelled: Task.isCancelled) == .persist else { return execution(.cancelled) }
             guard await UsageDatabase.shared.isProviderConfigurationGenerationCurrent(result.generation, for: .anthropic) else { return execution(.cancelled) }
+            var reconciliationMessage: String?
+            if case let .success(buckets) = result.reconciliation, !buckets.isEmpty {
+                do {
+                    let evidence = try APISpendLocalEvidenceLoader.loadActiveSource()
+                    let rawLocal = evidence.breakdowns.filter { breakdown in
+                        breakdown.provider == .anthropic && buckets.contains { $0.window == breakdown.window }
+                    }
+                    let pricingStore = PricingSettingsStore()
+                    let local = ObservedLocalSpendBreakdown.priced(rawLocal, pricing: pricingStore.pricingTable)
+                    let evidenceIdentity = LocalSpendEvidenceIdentity.make(sourceRevision: evidence.sourceRevision, breakdowns: rawLocal)
+                    let conclusion = try APISpendReconciler.conclude(
+                        provider: buckets,
+                        local: local,
+                        pricingRevision: pricingStore.revision,
+                        localEvidenceIdentity: evidenceIdentity,
+                        hasUnpricedLocalEvidence: rawLocal.count > local.count
+                    )
+                    let store = try SQLiteAPISpendReconciliationStore.applicationSupportStore()
+                    try store.record(conclusion)
+                    NotificationCenter.default.post(name: .apiSpendReconciliationDidChange, object: nil)
+                } catch {
+                    reconciliationMessage = "Provider usage refreshed, but reconciliation storage was unavailable. Prior reconciliation data was left unchanged."
+                }
+            } else if case .failure = result.reconciliation {
+                reconciliationMessage = "Provider usage refreshed, but grouped reconciliation was unavailable. Prior reconciliation data was left unchanged."
+            }
             settings[index].state = diagnostic.state
             settings[index].failureReason = diagnostic.failureReason
             settings[index].updatedAt = diagnostic.updatedAt
             settingsStore.update(settings[index])
-            keychainMessage = nil
+            keychainMessage = reconciliationMessage
             let fetchedOutcome = ProviderRefreshOutcome(usage: result.result.usage, cost: result.result.cost)
             return execution(diagnostic.state == .connected ? fetchedOutcome : diagnostic.failureReason.map(ProviderRefreshOutcome.init(failureReason:)) ?? .failed)
+        } catch APISpendReconciliationError.invalidAlias {
+            keychainMessage = "Alias mappings are invalid. No reconciliation request was made."
+            return ProviderRefreshExecution(outcome: .failed, affectedWindows: affectedWindows)
         } catch {
             keychainMessage = "Could not update Keychain."
             return ProviderRefreshExecution(outcome: .failed, affectedWindows: affectedWindows)
         }
+    }
+
+    private func aliasMap(_ text: String) throws -> SpendIdentityAliasMap {
+        let entries = text.split(separator: ";", omittingEmptySubsequences: true)
+        var mappings: [String: String] = [:]
+        for entry in entries {
+            let pair = entry.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard pair.count == 2 else { throw APISpendReconciliationError.invalidAlias }
+            let raw = pair[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            let alias = pair[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard mappings[raw] == nil else { throw APISpendReconciliationError.invalidAlias }
+            mappings[raw] = alias
+        }
+        return try SpendIdentityAliasMap(mappings)
     }
 
     private func refreshOpenAI(index: Int) async {

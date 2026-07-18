@@ -42,6 +42,7 @@
 		AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */; };
 		AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000003E0 /* RecoveryInboxView.swift */; };
 		AA00000000000000000004F0 /* RecoveryInboxPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */; };
+		AA00000000000000000005F0 /* APISpendReconciliationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000005E0 /* APISpendReconciliationView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -81,6 +82,7 @@
 		AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptPresentationTests.swift; sourceTree = "<group>"; };
 		AA00000000000000000003E0 /* RecoveryInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxView.swift; sourceTree = "<group>"; };
 		AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxPresentationTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000005E0 /* APISpendReconciliationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APISpendReconciliationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
@@ -164,6 +166,7 @@
 				AA00000000000000000000E3 /* DiagnosticExportView.swift */,
 				AA00000000000000000000E4 /* ForensicInvestigationView.swift */,
 				AA00000000000000000003E0 /* RecoveryInboxView.swift */,
+				AA00000000000000000005E0 /* APISpendReconciliationView.swift */,
 			);
 			path = LimitBar;
 			sourceTree = "<group>";
@@ -350,6 +353,7 @@
 				AA00000000000000000000F3 /* DiagnosticExportView.swift in Sources */,
 				AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */,
 				AA00000000000000000003F0 /* RecoveryInboxView.swift in Sources */,
+				AA00000000000000000005F0 /* APISpendReconciliationView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

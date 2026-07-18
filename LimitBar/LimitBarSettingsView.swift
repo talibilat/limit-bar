@@ -129,6 +129,10 @@ struct LimitBarSettingsView: View {
 
             ActivityReceiptSettingsSection(state: state)
 
+            Section("API Spend Reconciliation") {
+                APISpendReconciliationView()
+            }
+
             RecoveryInboxSection(model: state.recoveryInbox)
 
             Section("Quota Observations") {
