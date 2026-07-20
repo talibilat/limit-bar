@@ -292,7 +292,7 @@ struct LimitBarSettingsView: View {
             }
 
             Section("Historical Usage") {
-                Text("Normalized daily and weekly aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
+                Text("Normalized daily, weekly, and hidden six-hour local-event aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("Retention", selection: $historyRetention) {

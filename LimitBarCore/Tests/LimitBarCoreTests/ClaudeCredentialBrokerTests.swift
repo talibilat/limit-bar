@@ -67,13 +67,13 @@ struct ClaudeCredentialBrokerTests {
         #expect(query.queries.count == 2)
     }
 
-    @Test("expired and no-expiry credentials are never cached")
-    func doesNotCacheUnboundedCredentials() async throws {
+    @Test("credentials without an expiry are cached, while expired credentials are not")
+    func cachesCredentialsWithoutExpiry() async throws {
         let noExpiry = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: nil))
         let noExpiryBroker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: noExpiry.call))
         _ = await noExpiryBroker.credential(intent: .passive)
         _ = await noExpiryBroker.credential(intent: .passive)
-        #expect(noExpiry.queries.count == 2)
+        #expect(noExpiry.queries.count == 1)
 
         let expired = QuerySpy(status: errSecSuccess, data: try credentialData(expiresAt: 1_000))
         let expiredBroker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: expired.call), now: { Date(timeIntervalSince1970: 2) })
@@ -93,6 +93,19 @@ struct ClaudeCredentialBrokerTests {
         #expect(await broker.credential(intent: .passive) == .failure(.interactionRequired))
         #expect(await broker.credential(intent: .interactive).credential?.accessToken == "token")
         #expect(query.queries.count == 2)
+    }
+
+    @Test("interactive authorization caches a credential without an expiry for the app session")
+    func interactiveCachesCredentialWithoutExpiry() async throws {
+        let query = QuerySpy(responses: [
+            SecurityQueryResponse(status: errSecSuccess, data: try credentialData(expiresAt: nil)),
+            SecurityQueryResponse(status: errSecInteractionNotAllowed, data: nil)
+        ])
+        let broker = ClaudeCredentialBroker(reader: SecurityClaudeCredentialReader(query: query.call))
+
+        #expect(await broker.credential(intent: .interactive).credential?.accessToken == "token")
+        #expect(await broker.credential(intent: .passive).credential?.accessToken == "token")
+        #expect(query.queries.count == 1)
     }
 }
 

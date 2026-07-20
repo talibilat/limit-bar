@@ -44,6 +44,16 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.buttons["settings-action"].exists)
     }
 
+    func testRecoveryInboxShowsUnchangedAndChangedWorkspacesForBothProducts() {
+        launch(screen: "recovery-inbox")
+
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Claude Code'")).count, 2)
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Codex'")).count, 2)
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Ready - workspace unchanged'")).count, 2)
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == 'Ready - workspace changed'")).count, 2)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == 'Validate & Resume...'")).count, 4)
+    }
+
     func testAnalysisTabPresentsClaudeAuthorizationAnalysis() {
         launch(screen: "popover")
 
@@ -71,6 +81,24 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Session (5 hours)"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["75% left"].exists)
         XCTAssertFalse(authorizationMessage.exists)
+    }
+
+    func testConnectAuthorizesPassiveRefreshForRemainderOfAppSession() {
+        launch(screen: "popover")
+
+        let authorizationMessage = app.staticTexts["claude-authorization-required"]
+        XCTAssertTrue(authorizationMessage.waitForExistence(timeout: 5))
+        app.buttons["claude-connect"].click()
+        XCTAssertTrue(app.staticTexts["claude-loaded-state"].waitForExistence(timeout: 5))
+
+        app.buttons["Refresh"].click()
+
+        XCTAssertTrue(app.staticTexts["claude-loaded-state"].waitForExistence(timeout: 5))
+        XCTAssertFalse(authorizationMessage.waitForExistence(timeout: 1))
+
+        app.terminate()
+        launch(screen: "popover")
+        XCTAssertTrue(app.staticTexts["claude-authorization-required"].waitForExistence(timeout: 5))
     }
 
     func testMissingClaudeLoginProvidesRecoveryInstructions() {
@@ -300,6 +328,21 @@ final class LimitBarUITests: XCTestCase {
         XCTAssertTrue(text(of: app.staticTexts["investigation-observed-zero"]).contains("Observed Zero"))
         XCTAssertTrue(text(of: app.staticTexts["investigation-gap"]).contains("Gap"))
         XCTAssertFalse(text(of: app.staticTexts["investigation-gap"]).contains("Observed Zero"))
+    }
+
+    func testInvestigationShowsFourIndependentLanesAndExactOverlapLanguage() {
+        launch(screen: "investigation-four-lanes")
+
+        XCTAssertTrue(app.staticTexts["investigation-incident-lane"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["investigation-quota-lane"].exists)
+        XCTAssertTrue(app.staticTexts["investigation-failure-lane"].exists)
+        XCTAssertTrue(app.staticTexts["investigation-authentication-lane"].exists)
+        XCTAssertTrue(text(of: app.staticTexts["investigation-incident-lane"]).contains("Official incident overlapped this failure"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-incident-lane"]).contains("does not establish causation"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-failure-lane"]).contains("rate_limited_429"))
+        XCTAssertTrue(text(of: app.staticTexts["investigation-authentication-lane"]).contains("connected"))
+        XCTAssertTrue(text(of: app.staticTexts["provider-status-subscription-state"]).contains("Enabled"))
+        XCTAssertTrue(app.buttons["check-provider-status"].exists)
     }
 
     func testInvestigationHasDistinctLoadingEmptyUnavailableAndErrorFixtures() {

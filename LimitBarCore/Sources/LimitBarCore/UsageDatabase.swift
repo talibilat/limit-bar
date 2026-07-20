@@ -8,7 +8,7 @@ public actor UsageDatabase {
 
     private let pathFactory: @Sendable () throws -> String
     private let localEventsURLFactory: @Sendable () throws -> URL
-    private let historicalPathFactory: @Sendable () throws -> String
+    private let historicalPathFactory: (@Sendable () throws -> String)?
     private let busyTimeoutMilliseconds: Int32
     private let customUsageLoader: CustomUsageLoader
     private var store: SQLiteUsageMetricStore?
@@ -34,7 +34,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = defaultCustomUsageLoader
     }
@@ -48,7 +48,7 @@ public actor UsageDatabase {
     ) {
         self.pathFactory = pathFactory
         self.localEventsURLFactory = { localEventsURL }
-        self.historicalPathFactory = historicalPathFactory ?? { historicalDatabasePath(from: try pathFactory()) }
+        self.historicalPathFactory = historicalPathFactory
         self.busyTimeoutMilliseconds = busyTimeoutMilliseconds
         self.customUsageLoader = customUsageLoader
     }
@@ -122,7 +122,7 @@ public actor UsageDatabase {
             }
 
             let eventsURL = try localEventsURLFactory()
-            let importResult: LocalUsageImportResult
+            var importResult: LocalUsageImportResult
             do {
                 try Task.checkCancellation()
                 let windows = try CurrentUsageWindows.resolve(at: now, calendar: calendar)
@@ -136,6 +136,14 @@ public actor UsageDatabase {
                         now: now,
                         calendar: calendar
                     )
+                    try Task.checkCancellation()
+                    if let sourceRevision = importResult.sourceRevision {
+                        try? openHistoricalStore().recordSixHourAggregates(
+                            importResult.sixHourAggregates,
+                            sourceRevision: sourceRevision,
+                            now: now
+                        )
+                    }
                     if let fingerprint, !importResult.hasFutureTimestampRejection {
                         localImportCache = LocalImportCacheEntry(fingerprint: fingerprint, result: importResult)
                     } else {
@@ -153,7 +161,8 @@ public actor UsageDatabase {
                     failureMessage: "Local usage import failed",
                     hasFutureTimestampRejection: hasFutureTimestampRejection,
                     attributionBreakdowns: [],
-                    sourceRevision: nil
+                    sourceRevision: nil,
+                    sixHourAggregates: []
                 )
             } catch {
                 importResult = .failed(fileURL: eventsURL, message: "Local usage import failed")
@@ -262,6 +271,14 @@ public actor UsageDatabase {
 
     public func historicalRetention() -> HistoricalUsageRetention {
         (try? openHistoricalStore().retention()) ?? lastValidHistory?.retention ?? .default
+    }
+
+    public func historicalSixHourUsage(
+        from start: Date,
+        through end: Date,
+        source: UsageMetricSource? = nil
+    ) throws -> [HistoricalSixHourUsageAggregateObservation] {
+        try openHistoricalStore().sixHourAggregates(from: start, through: end, source: source)
     }
 
     @discardableResult
@@ -407,6 +424,7 @@ public actor UsageDatabase {
                     }
                     let result = try await customUsageLoader(fileURL, source, now, calendar)
                     guard customRefreshGeneration == generation else { return diagnostics }
+                    guard !Task.isCancelled else { return diagnostics }
                     let scope = UsageReplacementScope(provider: .custom, source: .custom(source.id), windows: [windows.today, windows.currentWeek])
                     try store.replaceMetrics(
                         in: scope,
@@ -428,6 +446,13 @@ public actor UsageDatabase {
                             attributionStorageFailures.insert(.custom(source.id))
                             attributionFailureMessage = "Attribution storage unavailable"
                         }
+                    }
+                    if let sourceRevision = result.sourceRevision {
+                        try? openHistoricalStore().recordSixHourAggregates(
+                            result.sixHourAggregates,
+                            sourceRevision: sourceRevision,
+                            now: now
+                        )
                     }
                     let diagnostic = CustomUsageRefreshDiagnostic(
                         sourceID: source.id,
@@ -592,7 +617,7 @@ public actor UsageDatabase {
     private func openHistoricalStore() throws -> HistoricalUsageTrendStore {
         if let historicalStore { return historicalStore }
         let opened = try HistoricalUsageTrendStore(
-            path: historicalPathFactory(),
+            path: try historicalPathFactory?() ?? historicalDatabasePath(from: resolvedDatabasePath()),
             busyTimeoutMilliseconds: busyTimeoutMilliseconds
         )
         historicalStore = opened

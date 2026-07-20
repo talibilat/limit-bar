@@ -20,8 +20,8 @@ The current canonical schemas are planned first public baselines, so a public bi
 | `codex-explanations-pre-release-v1.sql` | Canonical pre-release Codex explanation schema | 1 | Open through `SQLiteCodexExplanationStore`, validate the canonical fingerprint, and preserve bounded normalized explanation findings unchanged. |
 | `codex-explanations-first-release-v1.sql` | Planned first public Codex explanation baseline | 1 | Validate the canonical fingerprint and preserve bounded normalized explanation findings unchanged. |
 
-`historical-usage-trends.sqlite` currently opens only its canonical pre-release schema and has no older migration fixture.
-Its exact canonical fingerprint, opening behavior, retention, and recovery behavior are covered by `HistoricalUsageTrendStoreTests`; the first public release procedure below freezes its first release-owned fixture alongside the other three databases.
+`historical-usage-trends.sqlite` transactionally migrates its known pre-release schema 3 to schema 4 by preserving daily and weekly observations and adding hidden fixed UTC six-hour local-event aggregates.
+Its exact fingerprints, preservation, retention, and recovery behavior are covered by `HistoricalUsageTrendStoreTests`; the first public release procedure below freezes its first release-owned fixture alongside the other databases.
 
 ## Opening, Storage, And Recovery Inventory
 
@@ -29,7 +29,7 @@ Its exact canonical fingerprint, opening behavior, retention, and recovery behav
 | --- | --- | --- | --- |
 | `usage-metrics.sqlite` | `SQLiteUsageMetricStore` | Current Usage Aggregates, import metadata, and the alert delivery ledger | Retry opening or use **Create Clean Database** to archive the complete database set before replacement; retained normalized sources can then be reimported. |
 | `usage-metrics-attribution.sqlite` | `SQLiteUsageAttributionStore` | Bounded Observed Local Breakdowns, exact Event IDs, source revisions, and deletion suppressions | Retry opening, explicitly delete attribution in Settings, or use **Create Clean Database**; recovery archives this database and its WAL/SHM files with `usage-metrics.sqlite` before either active database is replaced. |
-| `historical-usage-trends.sqlite` | `HistoricalUsageTrendStore` | Revisioned historical Usage Aggregates, gaps, observed zeros, and frozen calculated costs | Retry opening with the same or a newer release; explicit history deletion is independent from current usage, and backup restoration must retain the complete database set. |
+| `historical-usage-trends.sqlite` | `HistoricalUsageTrendStore` | Revisioned daily and weekly Usage Aggregates plus hidden fixed UTC six-hour local-event token aggregates, gaps, observed zeros, and frozen calculated costs | Retry opening with the same or a newer release; explicit history deletion is independent from current usage, and backup restoration must retain the complete database set. |
 | `quota-observations.sqlite` | `SQLiteQuotaObservationStore` | Bounded measured quota observations with exact reset identity and observation provenance | Retry opening with the same or a newer release, restore the complete database set, or explicitly clear quota history in Settings. |
 | `provider-refresh-history.sqlite` | `SQLiteProviderRefreshHistoryStore` | Bounded provider refresh outcomes and affected Exact Usage Windows | Retry opening with the same or a newer release, restore the complete database set, or explicitly clear provider refresh history in Settings. |
 | `codex-explanations.sqlite` | `SQLiteCodexExplanationStore` | Bounded normalized Codex explanation findings with status, coverage, adapter version, counts, token-category totals, and barrier categories | Retry opening with the same or a newer release, restore the complete database set, or explicitly delete Codex explanations in Settings. |

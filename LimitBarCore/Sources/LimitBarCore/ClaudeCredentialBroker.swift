@@ -129,15 +129,14 @@ public actor ClaudeCredentialBroker {
     }
 
     public func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
-        if let cachedCredential, let expiry = cachedCredential.expiresAt, expiry > now() {
+        if let cachedCredential, !cachedCredential.isExpired(now: now()) {
             return .credential(cachedCredential)
         }
 
         cachedCredential = nil
         let result = reader.read(intent: intent)
         if case let .credential(credential) = result,
-           let expiry = credential.expiresAt,
-           expiry > now() {
+           !credential.isExpired(now: now()) {
             cachedCredential = credential
         }
         return result

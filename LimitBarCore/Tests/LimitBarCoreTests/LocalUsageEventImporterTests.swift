@@ -121,6 +121,38 @@ struct LocalUsageEventImporterTests {
         #expect(week.count == 2)
     }
 
+    @Test("collects retained events into exact UTC six-hour boundaries during the current parse")
+    func collectsSixHourHistoryAcrossUTCBoundaries() throws {
+        let store = try SQLiteUsageMetricStore.inMemory()
+        let fileURL = try temporaryFile(contents: [
+            #"{"provider":"openAI","timestamp":"2026-07-09T23:59:59Z","model":"gpt-5","inputTokens":1,"outputTokens":2}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T05:59:59Z","model":"gpt-5","inputTokens":3,"outputTokens":4}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T06:00:00Z","model":"gpt-5","inputTokens":5,"outputTokens":6}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T11:59:59Z","model":"gpt-5","inputTokens":7,"outputTokens":8}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T12:00:00Z","model":"gpt-5","inputTokens":9,"outputTokens":10}"#
+        ].joined(separator: "\n"))
+
+        let result = try LocalUsageEventImporter.importEvents(
+            from: fileURL,
+            to: store,
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar()
+        )
+
+        #expect(result.sixHourAggregates.map(\.window.start) == [
+            try date("2026-07-09T18:00:00Z"),
+            try date("2026-07-10T00:00:00Z"),
+            try date("2026-07-10T06:00:00Z"),
+            try date("2026-07-10T12:00:00Z")
+        ])
+        #expect(result.sixHourAggregates.map(\.tokenUsage) == [
+            TokenUsage(inputTokens: 1, outputTokens: 2),
+            TokenUsage(inputTokens: 3, outputTokens: 4),
+            TokenUsage(inputTokens: 12, outputTokens: 14),
+            TokenUsage(inputTokens: 9, outputTokens: 10)
+        ])
+    }
+
     @Test("missing JSONL file is a successful empty import")
     func missingJSONLFileIsSuccessfulEmptyImport() throws {
         let store = try SQLiteUsageMetricStore.inMemory()

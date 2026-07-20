@@ -116,6 +116,28 @@ struct CustomUsageSourceTests {
         #expect(claude.tokenUsage == TokenUsage(inputTokens: 10, outputTokens: 1))
     }
 
+    @Test("custom streaming load includes retained six-hour aggregates with stable source identity")
+    func customLoadCollectsSixHourHistory() async throws {
+        let fileURL = try temporaryFile(contents: [
+            #"{"timestamp":"2026-07-09T05:59:59Z","model":"local","inputTokens":1,"outputTokens":2}"#,
+            #"{"timestamp":"2026-07-09T06:00:00Z","model":"local","inputTokens":3,"outputTokens":4}"#
+        ].joined(separator: "\n"))
+        let source = CustomUsageSource(name: "Tool", filePath: fileURL.path)
+
+        let result = try await CustomUsageAggregator.loadMetrics(
+            from: fileURL,
+            source: source,
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: gregorianGMTCalendar()
+        )
+
+        #expect(result.sixHourAggregates.map(\.window.start) == [
+            try date("2026-07-09T00:00:00Z"),
+            try date("2026-07-09T06:00:00Z")
+        ])
+        #expect(result.sixHourAggregates.allSatisfy { $0.source == .custom(source.id) && $0.provider == .custom })
+    }
+
     @Test("a missing file produces no metrics instead of an error")
     func missingFileProducesNoMetrics() async {
         let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)

@@ -42,13 +42,14 @@ public struct LocalUsageImportResult: Equatable, Sendable {
     public let hasFutureTimestampRejection: Bool
     public let attributionBreakdowns: [ObservedLocalAttributionBreakdown]
     public let sourceRevision: String?
+    public let sixHourAggregates: [HistoricalSixHourUsageAggregate]
 
     public static func empty(fileURL: URL) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: sha256(Data()))
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: nil, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: sha256(Data()), sixHourAggregates: [])
     }
 
     public static func failed(fileURL: URL, message: String) -> LocalUsageImportResult {
-        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: nil)
+        LocalUsageImportResult(fileURL: fileURL, validEventCount: 0, malformedEventCount: 0, malformedEvents: [], failureMessage: message, hasFutureTimestampRejection: false, attributionBreakdowns: [], sourceRevision: nil, sixHourAggregates: [])
     }
 
     private static func sha256(_ data: Data) -> String {
@@ -161,6 +162,12 @@ public enum LocalUsageEventImporter {
         var latestTimestamp: Date
     }
 
+    private struct SixHourAggregateKey: Hashable {
+        let provider: ProviderKind
+        let window: HistoricalSixHourUsageWindow
+        let model: String
+    }
+
     private struct AttributionKey: Hashable {
         let provider: ProviderKind
         let window: ExactUsageWindow
@@ -263,6 +270,7 @@ public enum LocalUsageEventImporter {
         }
         defer { try? fileHandle.close() }
         var aggregates: [AggregateKey: AggregateValue] = [:]
+        var sixHourAggregates: [SixHourAggregateKey: TokenUsage] = [:]
         var attributionAggregates: [AttributionKey: AttributionValue] = [:]
         var validEventCount = 0
         var malformedEventCount = 0
@@ -296,6 +304,7 @@ public enum LocalUsageEventImporter {
                         lineNumber: lineNumber,
                         windows: importedWindows,
                         aggregates: &aggregates,
+                        sixHourAggregates: &sixHourAggregates,
                         attributionAggregates: &attributionAggregates,
                         validEventCount: &validEventCount,
                         malformedEventCount: &malformedEventCount,
@@ -320,6 +329,7 @@ public enum LocalUsageEventImporter {
                 lineNumber: lineNumber,
                 windows: importedWindows,
                 aggregates: &aggregates,
+                sixHourAggregates: &sixHourAggregates,
                 attributionAggregates: &attributionAggregates,
                 validEventCount: &validEventCount,
                 malformedEventCount: &malformedEventCount,
@@ -356,7 +366,8 @@ public enum LocalUsageEventImporter {
             failureMessage: nil,
             hasFutureTimestampRejection: hasFutureTimestampRejection,
             attributionBreakdowns: attributionBreakdowns,
-            sourceRevision: sourceRevision
+            sourceRevision: sourceRevision,
+            sixHourAggregates: try historicalAggregates(from: sixHourAggregates)
         )
     }
 
@@ -387,6 +398,7 @@ public enum LocalUsageEventImporter {
         lineNumber: Int,
         windows: [ExactUsageWindow],
         aggregates: inout [AggregateKey: AggregateValue],
+        sixHourAggregates: inout [SixHourAggregateKey: TokenUsage],
         attributionAggregates: inout [AttributionKey: AttributionValue],
         validEventCount: inout Int,
         malformedEventCount: inout Int,
@@ -415,7 +427,13 @@ public enum LocalUsageEventImporter {
             return
         }
         validEventCount += 1
-        try add(event, windows: windows, to: &aggregates, attributionAggregates: &attributionAggregates)
+        try add(
+            event,
+            windows: windows,
+            to: &aggregates,
+            sixHourAggregates: &sixHourAggregates,
+            attributionAggregates: &attributionAggregates
+        )
     }
 
     private static func recordMalformed(
@@ -434,8 +452,21 @@ public enum LocalUsageEventImporter {
         _ event: LocalUsageEvent,
         windows: [ExactUsageWindow],
         to aggregates: inout [AggregateKey: AggregateValue],
+        sixHourAggregates: inout [SixHourAggregateKey: TokenUsage],
         attributionAggregates: inout [AttributionKey: AttributionValue]
     ) throws {
+        let sixHourWindow = try HistoricalSixHourUsageWindow.containing(event.timestamp)
+        let sixHourKey = SixHourAggregateKey(provider: event.provider, window: sixHourWindow, model: event.model)
+        if sixHourAggregates[sixHourKey] == nil,
+           aggregates.count + attributionAggregates.count + sixHourAggregates.count == maximumAggregateKeys {
+            throw LocalUsageEventError.tooManyAggregates
+        }
+        let sixHourValue = sixHourAggregates[sixHourKey] ?? TokenUsage(inputTokens: 0, outputTokens: 0)
+        let sixHourInput = try checkedSum(sixHourValue.inputTokens, event.inputTokens)
+        let sixHourOutput = try checkedSum(sixHourValue.outputTokens, event.outputTokens)
+        _ = try checkedSum(sixHourInput, sixHourOutput)
+        sixHourAggregates[sixHourKey] = TokenUsage(inputTokens: sixHourInput, outputTokens: sixHourOutput)
+
         for window in windows {
             try Task.checkCancellation()
             guard event.timestamp >= window.start, event.timestamp < window.end else {
@@ -456,7 +487,7 @@ public enum LocalUsageEventImporter {
             }
             let addedKeyCount = (aggregates[key] == nil ? 1 : 0)
                 + (attributionKey.map { attributionAggregates[$0] == nil ? 1 : 0 } ?? 0)
-            if aggregates.count + attributionAggregates.count + addedKeyCount > maximumAggregateKeys {
+            if aggregates.count + attributionAggregates.count + sixHourAggregates.count + addedKeyCount > maximumAggregateKeys {
                 throw LocalUsageEventError.tooManyAggregates
             }
             var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
@@ -520,6 +551,23 @@ public enum LocalUsageEventImporter {
             let lhsWindow = importedWindows.firstIndex(of: lhs.timeWindow) ?? importedWindows.endIndex
             let rhsWindow = importedWindows.firstIndex(of: rhs.timeWindow) ?? importedWindows.endIndex
             return (lhsWindow, lhs.modelLabel, lhs.deploymentLabel ?? "") < (rhsWindow, rhs.modelLabel, rhs.deploymentLabel ?? "")
+        }
+    }
+
+    private static func historicalAggregates(
+        from aggregates: [SixHourAggregateKey: TokenUsage]
+    ) throws -> [HistoricalSixHourUsageAggregate] {
+        try aggregates.map { key, value in
+            try HistoricalSixHourUsageAggregate(
+                provider: key.provider,
+                source: .builtInLocalLog,
+                model: key.model,
+                window: key.window,
+                tokenUsage: value
+            )
+        }.sorted {
+            ($0.window.start, $0.provider.rawValue, $0.model)
+                < ($1.window.start, $1.provider.rawValue, $1.model)
         }
     }
 

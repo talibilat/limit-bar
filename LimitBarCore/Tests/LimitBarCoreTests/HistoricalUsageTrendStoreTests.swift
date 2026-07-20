@@ -305,14 +305,19 @@ struct HistoricalUsageTrendStoreTests {
         let store = try HistoricalUsageTrendStore.inMemory()
 
         #expect(try store.schemaColumnNames() == HistoricalUsageTrendStore.observationColumnNames)
+        #expect(try store.sixHourSchemaColumnNames() == HistoricalUsageTrendStore.sixHourAggregateColumnNames)
         #expect(try store.schemaColumnNames().isDisjoint(with: [
             "account", "account_label", "project", "project_label", "deployment", "deployment_label",
             "prompt", "response", "raw_content", "raw_provider_response", "api_key", "access_token"
         ]))
+        #expect(try store.sixHourSchemaColumnNames().isDisjoint(with: [
+            "account", "account_label", "project", "project_label", "deployment", "deployment_label",
+            "prompt", "response", "raw_content", "raw_provider_response", "api_key", "access_token", "path"
+        ]))
     }
 
-    @Test("an unshipped draft schema resets transactionally and remains recoverable")
-    func draftSchemaResetIsRecoverable() throws {
+    @Test("an unknown schema fails without mutation")
+    func unknownSchemaFailsWithoutMutation() throws {
         let path = temporaryDatabasePath()
         defer { removeDatabase(at: path) }
         try withDatabase(at: path) { database in
@@ -329,12 +334,118 @@ struct HistoricalUsageTrendStoreTests {
         }
         #expect(try scalarText("SELECT sentinel FROM historical_usage_trends;", at: path) == "preserved-on-rollback")
 
-        try withDatabase(at: path) { database in
-            try execute("DROP VIEW historical_usage_observations;", in: database)
+        #expect(try databaseVersion(at: path) == 2)
+    }
+
+    @Test("six-hour windows are UTC anchored and half open")
+    func sixHourWindowsAreUTCAnchored() throws {
+        let before = try HistoricalSixHourUsageWindow.containing(date("2026-07-10T05:59:59Z"))
+        let edge = try HistoricalSixHourUsageWindow.containing(date("2026-07-10T06:00:00Z"))
+        let midnight = try date("2026-07-10T00:00:00Z")
+        let noon = try date("2026-07-10T12:00:00Z")
+
+        #expect(before.start == midnight)
+        #expect(before.end == edge.start)
+        #expect(edge.end == noon)
+    }
+
+    @Test("six-hour persistence is idempotent, revisioned, and preserves absent intervals")
+    func sixHourPersistenceMergeSemantics() throws {
+        let store = try HistoricalUsageTrendStore.inMemory()
+        let first = try sixHourAggregate(start: "2026-07-10T00:00:00Z", input: 10)
+        let second = try sixHourAggregate(start: "2026-07-10T06:00:00Z", input: 20)
+
+        let initial = try #require(try store.recordSixHourAggregates([first, second], sourceRevision: "scan-1").first)
+        let repeated = try #require(try store.recordSixHourAggregates([first], sourceRevision: "scan-1").first)
+        let corrected = try sixHourAggregate(start: "2026-07-10T00:00:00Z", input: 12)
+        let revision = try #require(try store.recordSixHourAggregates([corrected], sourceRevision: "scan-2").first)
+        let current = try store.sixHourAggregates(
+            from: date("2026-07-10T00:00:00Z"),
+            through: date("2026-07-10T12:00:00Z")
+        )
+
+        #expect(repeated.id == initial.id)
+        #expect(revision.revision == 2)
+        #expect(revision.supersedesID == initial.id)
+        #expect(current.map(\.aggregate.tokenUsage.inputTokens) == [12, 20])
+        #expect(try store.sixHourRevisions(matching: corrected).map(\.revision) == [1, 2])
+    }
+
+    @Test("six-hour retention, custom removal, and delete all apply to dedicated aggregates")
+    func sixHourDeletionPolicies() throws {
+        let store = try HistoricalUsageTrendStore.inMemory()
+        let customID = UUID()
+        let old = try sixHourAggregate(start: "2026-06-01T00:00:00Z", input: 1)
+        let custom = try sixHourAggregate(
+            start: "2026-07-10T00:00:00Z",
+            input: 2,
+            provider: .custom,
+            source: .custom(customID)
+        )
+        try store.recordSixHourAggregates([old, custom], sourceRevision: "scan")
+
+        #expect(try store.setRetention(.days30, now: date("2026-07-15T12:00:00Z")) == 1)
+        #expect(try store.deleteCustomSources(excluding: []) == 1)
+        #expect(try store.sixHourAggregates(from: .distantPast, through: .distantFuture).isEmpty)
+        try store.recordSixHourAggregates([custom], sourceRevision: "scan")
+        #expect(try store.deleteAll() == 1)
+        #expect(try store.sixHourAggregates(from: .distantPast, through: .distantFuture).isEmpty)
+    }
+
+    @Test("known v3 migration preserves daily history and retention")
+    func versionThreeMigrationPreservesHistory() throws {
+        let path = temporaryDatabasePath()
+        defer { removeDatabase(at: path) }
+        let day = try period(2026, 7, 10, calendar: calendar(timeZone: "UTC"))
+        do {
+            let store = try HistoricalUsageTrendStore(path: path)
+            try store.record([try sample(period: day, input: 17)], now: day.window.end)
+            try store.setRetention(.days90, now: day.window.end)
         }
-        let recovered = try HistoricalUsageTrendStore(path: path)
-        #expect(try recovered.schemaColumnNames() == HistoricalUsageTrendStore.observationColumnNames)
-        #expect(try databaseVersion(at: path) == HistoricalUsageTrendStore.schemaVersion)
+        try withDatabase(at: path) { database in
+            try execute("""
+            DROP INDEX historical_six_hour_period;
+            DROP INDEX historical_six_hour_one_correction;
+            DROP INDEX historical_six_hour_revision;
+            DROP TABLE historical_six_hour_aggregates;
+            PRAGMA user_version = 3;
+            """, in: database)
+        }
+
+        let migrated = try HistoricalUsageTrendStore(path: path)
+
+        #expect(try databaseVersion(at: path) == 4)
+        #expect(try migrated.retention() == .days90)
+        #expect(observations(in: try #require(migrated.buckets(for: [day]).first)).first?.sample.tokenUsage.inputTokens == 17)
+        #expect(try migrated.sixHourSchemaColumnNames() == HistoricalUsageTrendStore.sixHourAggregateColumnNames)
+    }
+
+    @Test("malformed v3 fingerprint fails without changing stored history")
+    func malformedVersionThreeFailsWithoutMutation() throws {
+        let path = temporaryDatabasePath()
+        defer { removeDatabase(at: path) }
+        let day = try period(2026, 7, 10, calendar: calendar(timeZone: "UTC"))
+        do {
+            let store = try HistoricalUsageTrendStore(path: path)
+            try store.record([try sample(period: day, input: 23)], now: day.window.end)
+        }
+        try withDatabase(at: path) { database in
+            try execute("""
+            DROP INDEX historical_six_hour_period;
+            DROP INDEX historical_six_hour_one_correction;
+            DROP INDEX historical_six_hour_revision;
+            DROP TABLE historical_six_hour_aggregates;
+            DROP INDEX historical_usage_period;
+            CREATE INDEX historical_usage_period ON historical_usage_observations (period_start);
+            PRAGMA user_version = 3;
+            """, in: database)
+        }
+
+        #expect(throws: HistoricalUsageTrendStoreError.invalidSchemaFingerprint(3)) {
+            _ = try HistoricalUsageTrendStore(path: path)
+        }
+        #expect(try databaseVersion(at: path) == 3)
+        #expect(try scalarText("SELECT input_tokens FROM historical_usage_observations;", at: path) == "23")
     }
 
     private func sample(
@@ -373,6 +484,25 @@ struct HistoricalUsageTrendStoreTests {
         )
     }
 
+    private func sixHourAggregate(
+        start: String,
+        input: Int,
+        provider: ProviderKind = .anthropic,
+        source: UsageMetricSource = .builtInLocalLog
+    ) throws -> HistoricalSixHourUsageAggregate {
+        let startDate = try date(start)
+        return try HistoricalSixHourUsageAggregate(
+            provider: provider,
+            source: source,
+            model: "model",
+            window: HistoricalSixHourUsageWindow(
+                start: startDate,
+                end: startDate.addingTimeInterval(HistoricalSixHourUsageWindow.duration)
+            ),
+            tokenUsage: TokenUsage(inputTokens: input, outputTokens: 1)
+        )
+    }
+
     private func observations(in bucket: HistoricalUsageTrendBucket) -> [HistoricalUsageTrendObservation] {
         guard case let .observed(observations) = bucket.value else {
             Issue.record("Expected an observed bucket")
@@ -402,6 +532,10 @@ struct HistoricalUsageTrendStoreTests {
         calendar: Calendar
     ) throws -> Date {
         try #require(calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour)))
+    }
+
+    private func date(_ iso8601: String) throws -> Date {
+        try #require(ISO8601DateFormatter().date(from: iso8601))
     }
 
     private func calendar(timeZone identifier: String) throws -> Calendar {

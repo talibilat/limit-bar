@@ -36,6 +36,7 @@
 		AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */; };
 		AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */; };
 		AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */; };
+		AA000000000000000000010A /* HistoricalUsagePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000011B /* HistoricalUsagePresentationTests.swift */; };
 		AA00000000000000000000F4 /* ForensicInvestigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E4 /* ForensicInvestigationView.swift */; };
 		AA00000000000000000000F5 /* RateLimitAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E5 /* RateLimitAnalysisView.swift */; };
 		AA00000000000000000002F0 /* ActivityReceiptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000002E0 /* ActivityReceiptView.swift */; };
@@ -80,6 +81,7 @@
 		AA00000000000000000000E3 /* DiagnosticExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExportView.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E4 /* ForensicInvestigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationView.swift; sourceTree = "<group>"; };
 		AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForensicInvestigationPresentationTests.swift; sourceTree = "<group>"; };
+		AA000000000000000000011B /* HistoricalUsagePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalUsagePresentationTests.swift; sourceTree = "<group>"; };
 		AA00000000000000000002E0 /* ActivityReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptView.swift; sourceTree = "<group>"; };
 		AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityReceiptPresentationTests.swift; sourceTree = "<group>"; };
 		AA00000000000000000003E0 /* RecoveryInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryInboxView.swift; sourceTree = "<group>"; };
@@ -204,6 +206,7 @@
 				AA0000000000000000000118 /* DiagnosticExportPresentationTests.swift */,
 				AA0000000000000000000119 /* QuotaFindingAlertCoordinatorTests.swift */,
 				AA000000000000000000011A /* ForensicInvestigationPresentationTests.swift */,
+				AA000000000000000000011B /* HistoricalUsagePresentationTests.swift */,
 				AA00000000000000000002E1 /* ActivityReceiptPresentationTests.swift */,
 				AA00000000000000000004E0 /* RecoveryInboxPresentationTests.swift */,
 			);
@@ -383,6 +386,7 @@
 				AA0000000000000000000107 /* DiagnosticExportPresentationTests.swift in Sources */,
 				AA0000000000000000000108 /* QuotaFindingAlertCoordinatorTests.swift in Sources */,
 				AA0000000000000000000109 /* ForensicInvestigationPresentationTests.swift in Sources */,
+				AA000000000000000000010A /* HistoricalUsagePresentationTests.swift in Sources */,
 				AA00000000000000000002F1 /* ActivityReceiptPresentationTests.swift in Sources */,
 				AA00000000000000000004F0 /* RecoveryInboxPresentationTests.swift in Sources */,
 			);

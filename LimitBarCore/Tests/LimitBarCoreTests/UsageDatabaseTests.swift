@@ -517,6 +517,107 @@ struct UsageDatabaseTests {
 
     }
 
+    @Test("built-in scans durably merge six-hour history and failed or cancelled scans preserve it")
+    func builtInSixHourHistoryIsDurableAndFailureSafe() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        let now = try date("2026-07-12T18:00:00Z")
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: fileURL,
+            historicalPathFactory: { historyPath }
+        )
+        try #"{"provider":"openAI","timestamp":"2026-07-10T01:00:00Z","model":"gpt-5","inputTokens":1,"outputTokens":1}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        _ = await database.snapshot(now: now, calendar: utcCalendar())
+
+        try [
+            #"{"provider":"openAI","timestamp":"2026-07-10T01:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":1}"#,
+            #"{"provider":"openAI","timestamp":"2026-07-10T07:00:00Z","model":"gpt-5","inputTokens":2,"outputTokens":2}"#
+        ].joined(separator: "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+        _ = await database.snapshot(now: now, calendar: utcCalendar())
+
+        try #"{"provider":"openAI","timestamp":"2026-07-10T13:00:00Z","model":"gpt-5","inputTokens":5,"outputTokens":1}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        _ = await database.snapshot(now: now, calendar: utcCalendar())
+        let merged = try await database.historicalSixHourUsage(
+            from: try date("2026-07-10T00:00:00Z"),
+            through: try date("2026-07-10T18:00:00Z")
+        )
+
+        #expect(merged.map(\.aggregate.tokenUsage.inputTokens) == [3, 2, 5])
+        try "not-json".write(to: fileURL, atomically: true, encoding: .utf8)
+        let failed = await database.snapshot(now: now, calendar: utcCalendar())
+        #expect(failed.localImport.failureMessage != nil)
+        let afterFailure = try await database.historicalSixHourUsage(from: .distantPast, through: .distantFuture)
+        #expect(afterFailure == merged)
+
+        let cancelled = await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await database.snapshot(now: now, calendar: utcCalendar())
+        }.value
+        #expect(cancelled.localImport.failureMessage == failed.localImport.failureMessage)
+        #expect(try await database.historicalSixHourUsage(from: .distantPast, through: .distantFuture) == merged)
+    }
+
+    @Test("six-hour history failure does not hide current built-in usage")
+    func sixHourHistoryFailurePreservesCurrentUsage() async throws {
+        let currentPath = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        try #"{"provider":"openAI","timestamp":"2026-07-12T01:00:00Z","model":"gpt-5","inputTokens":3,"outputTokens":1}"#.write(
+            to: fileURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: fileURL,
+            historicalPathFactory: { "/dev/null/history.sqlite" }
+        )
+
+        let snapshot = await database.snapshot(
+            now: try date("2026-07-12T18:00:00Z"),
+            calendar: utcCalendar()
+        )
+
+        #expect(snapshot.localImport.failureMessage == nil)
+        #expect(snapshot.localImport.validEventCount == 1)
+        #expect(snapshot.metrics.contains { $0.provider == .openAI && $0.tokenUsage.inputTokens == 3 })
+    }
+
+    @Test("removing a custom source deletes its six-hour aggregates")
+    func customRemovalDeletesSixHourHistory() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        try #"{"timestamp":"2026-07-10T01:00:00Z","model":"local","inputTokens":3,"outputTokens":1}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+        let source = CustomUsageSource(name: "Tool", filePath: fileURL.path)
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+
+        _ = await database.refreshCustomSources([source], now: try date("2026-07-12T18:00:00Z"), calendar: utcCalendar())
+        #expect(try await database.historicalSixHourUsage(from: .distantPast, through: .distantFuture).count == 1)
+
+        _ = await database.refreshCustomSources([], now: try date("2026-07-12T18:01:00Z"), calendar: utcCalendar())
+        #expect(try await database.historicalSixHourUsage(from: .distantPast, through: .distantFuture).isEmpty)
+    }
+
     @Test("custom source removal stays revoked when current database cleanup is blocked")
     func customRemovalFiltersFallbackDuringCleanupFailure() async throws {
         let currentPath = temporaryDatabasePath()

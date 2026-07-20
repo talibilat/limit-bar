@@ -10,7 +10,7 @@ Click it for four tabs:
 - **Rate Limit** shows percent used, remaining, and reset time for Claude Code and Codex.
 - **Analysis** shows concise forecasts, anomalies, movement explanations, and workload assessments; longer evidence opens separately.
 - **Usage** shows confirmed token counts and costs by provider and model for Today or Current Week.
-- **History** shows local 30-day and 12-week token trends, exact gaps, in-progress periods, and costs grouped by currency.
+- **History** shows up to 15 local daily token bars with date labels, exact gaps, in-progress periods, and costs grouped by currency.
 
 ![LimitBar Rate Limit tab showing Claude session and weekly windows](docs/ss3.png)
 
@@ -238,6 +238,8 @@ Legacy rows remain available to low-level storage reads and legacy replacement A
 Rows with a `refreshedAt` older than 90 days are deleted during snapshot loading.
 
 Successful refreshes also preserve privacy-safe historical aggregates in `historical-usage-trends.sqlite`.
+Timestamped built-in and custom usage events begin collecting hidden fixed UTC six-hour token aggregates for future analysis; the current History UI continues to show trustworthy local-calendar daily totals.
+Six-hour aggregates are collected only from accepted local Usage Events and Custom Usage Source events, never inferred from daily totals or provider-reported costs.
 Historical periods retain exact boundaries and timezone identity, distinguish unavailable gaps from observed zero usage, and preserve corrected values as explicit revisions rather than silently rewriting them.
 Provider API measurements are preferred for totals when local measurements cover the same provider, while local model attribution remains non-additive supporting detail.
 Calculated historical costs are frozen against the configured price effective at the usage window start and retain a pricing revision.

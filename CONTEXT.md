@@ -17,6 +17,14 @@ _Avoid_: Raw usage, reconstructed event
 A half-open period with exact start and end boundaries, a calendar basis, timezone identity, period kind, and aggregation version.
 _Avoid_: Date label, approximate window
 
+**Exact Six-Hour Window**:
+A hidden historical half-open UTC period anchored at 00:00, 06:00, 12:00, or 18:00 and populated only from accepted timestamped local usage events.
+_Avoid_: Inferred portion of a daily total, provider billing window
+
+**Six-Hour Usage Aggregate**:
+A privacy-safe token aggregate observed for one Exact Six-Hour Window, Provider or Custom Source, and model coverage.
+It is collected for future analysis and is not currently shown as a History bar.
+
 **Coverage Scope**:
 The provider population represented by a Usage Aggregate, such as a provider total or one model.
 _Avoid_: Source, account label

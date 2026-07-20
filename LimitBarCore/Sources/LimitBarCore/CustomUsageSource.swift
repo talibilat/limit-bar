@@ -84,6 +84,7 @@ public struct CustomUsageLoadResult: Equatable, Sendable {
     public let rejectedLineCount: Int
     public let hasFutureTimestampRejection: Bool
     public let sourceRevision: String?
+    public let sixHourAggregates: [HistoricalSixHourUsageAggregate]
 
     public init(
         metrics: [UsageMetric],
@@ -91,7 +92,8 @@ public struct CustomUsageLoadResult: Equatable, Sendable {
         diagnostics: [CustomUsageLoadDiagnostic],
         rejectedLineCount: Int,
         hasFutureTimestampRejection: Bool = false,
-        sourceRevision: String? = nil
+        sourceRevision: String? = nil,
+        sixHourAggregates: [HistoricalSixHourUsageAggregate] = []
     ) {
         self.metrics = metrics
         self.attributionBreakdowns = attributionBreakdowns
@@ -99,6 +101,7 @@ public struct CustomUsageLoadResult: Equatable, Sendable {
         self.rejectedLineCount = rejectedLineCount
         self.hasFutureTimestampRejection = hasFutureTimestampRejection
         self.sourceRevision = sourceRevision
+        self.sixHourAggregates = sixHourAggregates
     }
 }
 
@@ -167,6 +170,11 @@ public enum CustomUsageAggregator {
         var inputTokens: Int
         var outputTokens: Int
         var latestTimestamp: Date
+    }
+
+    private struct SixHourAggregateKey: Hashable {
+        let window: HistoricalSixHourUsageWindow
+        let model: String
     }
 
     private struct AttributionKey: Hashable {
@@ -250,6 +258,7 @@ public enum CustomUsageAggregator {
         defer { try? handle.close() }
 
         var aggregates: [AggregateKey: AggregateValue] = [:]
+        var sixHourAggregates: [SixHourAggregateKey: TokenUsage] = [:]
         var attributionAggregates: [AttributionKey: AttributionValue] = [:]
         var diagnostics: [CustomUsageLoadDiagnostic] = []
         var rejectedLineCount = 0
@@ -300,6 +309,17 @@ public enum CustomUsageAggregator {
                 return
             }
             validEventCount += 1
+            let sixHourWindow = try HistoricalSixHourUsageWindow.containing(event.timestamp)
+            let sixHourKey = SixHourAggregateKey(window: sixHourWindow, model: event.model)
+            if sixHourAggregates[sixHourKey] == nil,
+               aggregates.count + attributionAggregates.count + sixHourAggregates.count == maximumAggregateKeys {
+                throw CustomUsageLoadError.tooManyAggregates
+            }
+            let sixHourValue = sixHourAggregates[sixHourKey] ?? TokenUsage(inputTokens: 0, outputTokens: 0)
+            let sixHourInput = try checkedSum(sixHourValue.inputTokens, event.inputTokens)
+            let sixHourOutput = try checkedSum(sixHourValue.outputTokens, event.outputTokens)
+            _ = try checkedSum(sixHourInput, sixHourOutput)
+            sixHourAggregates[sixHourKey] = TokenUsage(inputTokens: sixHourInput, outputTokens: sixHourOutput)
             for window in [windows.today, windows.currentWeek] where event.timestamp >= window.start && event.timestamp < window.end {
                 let key = AggregateKey(timeWindow: window.timeWindow, model: event.model)
                 let attributionKey: AttributionKey? = if event.project != nil || event.agent != nil, event.eventID != nil {
@@ -309,7 +329,7 @@ public enum CustomUsageAggregator {
                 }
                 let addedKeyCount = (aggregates[key] == nil ? 1 : 0)
                     + (attributionKey.map { attributionAggregates[$0] == nil ? 1 : 0 } ?? 0)
-                if aggregates.count + attributionAggregates.count + addedKeyCount > maximumAggregateKeys {
+                if aggregates.count + attributionAggregates.count + sixHourAggregates.count + addedKeyCount > maximumAggregateKeys {
                     throw CustomUsageLoadError.tooManyAggregates
                 }
                 var value = aggregates[key] ?? AggregateValue(inputTokens: 0, outputTokens: 0, latestTimestamp: event.timestamp)
@@ -408,7 +428,16 @@ public enum CustomUsageAggregator {
             diagnostics: diagnostics,
             rejectedLineCount: rejectedLineCount,
             hasFutureTimestampRejection: hasFutureTimestampRejection,
-            sourceRevision: hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            sourceRevision: hasher.finalize().map { String(format: "%02x", $0) }.joined(),
+            sixHourAggregates: try sixHourAggregates.map { key, value in
+                try HistoricalSixHourUsageAggregate(
+                    provider: .custom,
+                    source: .custom(source.id),
+                    model: key.model,
+                    window: key.window,
+                    tokenUsage: value
+                )
+            }.sorted { ($0.window.start, $0.model) < ($1.window.start, $1.model) }
         )
     }
 }

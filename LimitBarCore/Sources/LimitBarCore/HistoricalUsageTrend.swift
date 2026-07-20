@@ -262,6 +262,109 @@ public enum HistoricalUsageRetention: Int, CaseIterable, Sendable {
     public var displayName: String { "\(rawValue) days" }
 }
 
+public struct HistoricalSixHourUsageWindow: Equatable, Hashable, Sendable {
+    public enum ValidationError: Error, Equatable {
+        case invalidBoundary
+        case invalidAggregationVersion
+    }
+
+    public static let duration: TimeInterval = 6 * 60 * 60
+
+    public let start: Date
+    public let end: Date
+    public let aggregationVersion: Int
+
+    public init(start: Date, end: Date, aggregationVersion: Int = 1) throws {
+        let startSeconds = start.timeIntervalSince1970
+        guard startSeconds.isFinite,
+              end.timeIntervalSince1970.isFinite,
+              startSeconds.remainder(dividingBy: Self.duration) == 0,
+              end.timeIntervalSince(start) == Self.duration else {
+            throw ValidationError.invalidBoundary
+        }
+        guard aggregationVersion > 0 else { throw ValidationError.invalidAggregationVersion }
+        self.start = start
+        self.end = end
+        self.aggregationVersion = aggregationVersion
+    }
+
+    public static func containing(_ timestamp: Date, aggregationVersion: Int = 1) throws -> Self {
+        let seconds = timestamp.timeIntervalSince1970
+        guard seconds.isFinite else { throw ValidationError.invalidBoundary }
+        let start = Date(timeIntervalSince1970: floor(seconds / duration) * duration)
+        return try Self(
+            start: start,
+            end: start.addingTimeInterval(duration),
+            aggregationVersion: aggregationVersion
+        )
+    }
+}
+
+public struct HistoricalSixHourUsageAggregate: Equatable, Sendable {
+    public enum ValidationError: Error, Equatable {
+        case emptyModel
+        case negativeTokenCount
+        case invalidSourceIdentity
+    }
+
+    public let provider: ProviderKind
+    public let source: UsageMetricSource
+    public let model: String
+    public let window: HistoricalSixHourUsageWindow
+    public let tokenUsage: TokenUsage
+
+    public init(
+        provider: ProviderKind,
+        source: UsageMetricSource,
+        model: String,
+        window: HistoricalSixHourUsageWindow,
+        tokenUsage: TokenUsage
+    ) throws {
+        guard !model.isEmpty else { throw ValidationError.emptyModel }
+        guard tokenUsage.inputTokens >= 0, tokenUsage.outputTokens >= 0 else {
+            throw ValidationError.negativeTokenCount
+        }
+        switch source {
+        case .builtInLocalLog:
+            guard provider != .custom else { throw ValidationError.invalidSourceIdentity }
+        case .custom:
+            guard provider == .custom else { throw ValidationError.invalidSourceIdentity }
+        case .providerAPI:
+            throw ValidationError.invalidSourceIdentity
+        }
+        self.provider = provider
+        self.source = source
+        self.model = model
+        self.window = window
+        self.tokenUsage = tokenUsage
+    }
+}
+
+public struct HistoricalSixHourUsageAggregateObservation: Equatable, Sendable {
+    public let id: UUID
+    public let revision: Int
+    public let supersedesID: UUID?
+    public let sourceRevision: String
+    public let recordedAt: Date
+    public let aggregate: HistoricalSixHourUsageAggregate
+
+    init(
+        id: UUID,
+        revision: Int,
+        supersedesID: UUID?,
+        sourceRevision: String,
+        recordedAt: Date,
+        aggregate: HistoricalSixHourUsageAggregate
+    ) {
+        self.id = id
+        self.revision = revision
+        self.supersedesID = supersedesID
+        self.sourceRevision = sourceRevision
+        self.recordedAt = recordedAt
+        self.aggregate = aggregate
+    }
+}
+
 public struct HistoricalUsageSnapshot: Equatable, Sendable {
     public let dailyBuckets: [HistoricalUsageTrendBucket]
     public let weeklyBuckets: [HistoricalUsageTrendBucket]

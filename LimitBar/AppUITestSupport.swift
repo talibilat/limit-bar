@@ -121,15 +121,20 @@ final class AppUITestAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
+    private var cachedCredential: ClaudeCodeOAuthCredential?
+
     func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
         if AppUITestConfiguration.screen == "claude-login-required" {
             return .absent
+        }
+        if let cachedCredential {
+            return .credential(cachedCredential)
         }
         return switch intent {
         case .passive:
             .failure(.interactionRequired)
         case .interactive:
-            .credential(ClaudeCodeOAuthCredential(
+            cache(ClaudeCodeOAuthCredential(
                 accessToken: "",
                 expiresAt: Date(timeIntervalSince1970: 2_000_000_000),
                 subscriptionType: "pro"
@@ -137,7 +142,14 @@ private actor AppUITestClaudeCredentials: ClaudeCredentialProviding {
         }
     }
 
-    func invalidate() {}
+    func invalidate() {
+        cachedCredential = nil
+    }
+
+    private func cache(_ credential: ClaudeCodeOAuthCredential) -> ClaudeCredentialResult {
+        cachedCredential = credential
+        return .credential(credential)
+    }
 }
 
 private struct AppUITestClaudeRateLimitsClient: ClaudeRateLimitsFetching {
@@ -193,6 +205,13 @@ private struct LimitBarUITestHostView: View {
             DiagnosticExportUITestWorkflowView(interceptsNetwork: true)
         case "quota-insight":
             QuotaInsightUITestView()
+        case "recovery-inbox":
+            Form {
+                RecoveryInboxSection(model: RecoveryInboxModel(fixtureItems: AppUITestRecoveryInbox.items))
+            }
+            .formStyle(.grouped)
+            .padding(20)
+            .frame(width: 660, height: 760)
         case "codex-explanation":
             CodexExplanationUITestView()
         case "claude-explanation":
@@ -216,10 +235,47 @@ private struct LimitBarUITestHostView: View {
         case "investigation-minimum-large-text":
             ForensicInvestigationView(snapshot: AppUITestInvestigation.fixture(.partial), reduceMotionOverride: true)
                 .environment(\.sizeCategory, .accessibilityExtraExtraExtraLarge)
+        case "investigation-four-lanes":
+            ForensicInvestigationView(
+                snapshot: AppUITestInvestigation.fixture(.available),
+                statusObservations: [AppUITestInvestigation.statusObservation],
+                localFailures: [ProviderLocalFailure(product: .codex, failureClass: .rateLimited, occurredAt: AppUITestInvestigation.start.addingTimeInterval(300))],
+                authentication: [.codex: .connected],
+                statusSubscriptionEnabled: true,
+                statusNow: AppUITestInvestigation.start.addingTimeInterval(1_800)
+            )
         default:
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private enum AppUITestRecoveryInbox {
+    static let items: [RecoveryInboxItem] = [
+        item(product: .claudeCode, state: .readyForReview, suffix: "001"),
+        item(product: .claudeCode, state: .changedWorkspace, suffix: "002"),
+        item(product: .codex, state: .readyForReview, suffix: "003"),
+        item(product: .codex, state: .changedWorkspace, suffix: "004"),
+    ]
+
+    private static func item(product: RecoveryProduct, state: RecoveryState, suffix: String) -> RecoveryInboxItem {
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        return RecoveryInboxItem(
+            id: "00000000-0000-4000-8000-000000000\(suffix)",
+            checkpoint: RecoveryCheckpoint(
+                product: product,
+                sessionReference: "123e4567-e89b-42d3-a456-426614174\(suffix)",
+                workspaceFingerprint: "hmac-sha256-v1:" + String(repeating: "a", count: 64),
+                clientVersion: "1.2.3",
+                failureClass: .quotaExhausted,
+                windowKind: .session,
+                resetBoundary: now.addingTimeInterval(3_600),
+                createdAt: now
+            ),
+            state: state,
+            updatedAt: now
+        )
     }
 }
 
@@ -306,6 +362,23 @@ private struct DiagnosticExportUITestWorkflowView: View {
 private enum AppUITestInvestigation {
     static let start = Date(timeIntervalSince1970: 1_900_000_000)
     static let reset = start.addingTimeInterval(7_200)
+    static let statusObservation = ProviderStatusObservation(
+        service: .openAI,
+        checkedAt: start.addingTimeInterval(1_800),
+        outcome: .incidentsPublished,
+        incidents: [NormalizedProviderIncident(
+            id: "ui-incident",
+            service: .openAI,
+            products: [.codex],
+            impact: .major,
+            status: .monitoring,
+            startedAt: start,
+            updatedAt: start.addingTimeInterval(1_200),
+            resolvedAt: nil,
+            componentStates: [.codex: .degradedPerformance],
+            latestUpdateState: .monitoring
+        )]
+    )
 
     static func fixture(_ state: InvestigationPublicationState) -> ForensicInvestigationSnapshot {
         if state == .loading || state == .error {

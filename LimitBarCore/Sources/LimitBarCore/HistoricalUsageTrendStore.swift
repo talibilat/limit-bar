@@ -7,10 +7,11 @@ public enum HistoricalUsageTrendStoreError: Error, Equatable {
     case executeFailed(String)
     case decodeFailed(String)
     case unsupportedSchemaVersion(Int)
+    case invalidSchemaFingerprint(Int)
 }
 
 public final class HistoricalUsageTrendStore {
-    public static let schemaVersion = 3
+    public static let schemaVersion = 4
     public static let observationColumnNames: Set<String> = [
         "observation_id", "supersedes_observation_id", "revision", "provider",
         "source_kind", "source_identifier", "coverage_kind", "coverage_model",
@@ -19,6 +20,12 @@ public final class HistoricalUsageTrendStore {
         "input_tokens", "output_tokens", "provider_cost_amount", "provider_cost_currency",
         "calculated_cost_amount", "calculated_cost_currency", "pricing_revision",
         "pricing_effective_at"
+    ]
+    public static let sixHourAggregateColumnNames: Set<String> = [
+        "aggregate_id", "supersedes_aggregate_id", "revision", "provider",
+        "source_kind", "source_identifier", "coverage_kind", "coverage_model",
+        "period_start", "period_end", "aggregation_version", "input_tokens",
+        "output_tokens", "source_revision", "recorded_at"
     ]
 
     private var database: OpaquePointer?
@@ -143,6 +150,73 @@ public final class HistoricalUsageTrendStore {
         try observations(for: period, provider: provider, includeSuperseded: true)
     }
 
+    @discardableResult
+    public func recordSixHourAggregates(
+        _ aggregates: [HistoricalSixHourUsageAggregate],
+        sourceRevision: String,
+        now: Date = Date()
+    ) throws -> [HistoricalSixHourUsageAggregateObservation] {
+        try transaction {
+            var recorded: [HistoricalSixHourUsageAggregateObservation] = []
+            for aggregate in aggregates {
+                let previous = try currentSixHourAggregate(matching: aggregate)
+                if let previous, previous.aggregate == aggregate {
+                    recorded.append(previous)
+                    continue
+                }
+                let observation = HistoricalSixHourUsageAggregateObservation(
+                    id: UUID(),
+                    revision: (previous?.revision ?? 0) + 1,
+                    supersedesID: previous?.id,
+                    sourceRevision: sourceRevision,
+                    recordedAt: now,
+                    aggregate: aggregate
+                )
+                try insert(observation)
+                recorded.append(observation)
+            }
+            _ = try pruneWithoutTransaction(now: now)
+            return recorded
+        }
+    }
+
+    public func sixHourAggregates(
+        from start: Date,
+        through end: Date,
+        source: UsageMetricSource? = nil
+    ) throws -> [HistoricalSixHourUsageAggregateObservation] {
+        var sql = Self.sixHourAggregateSelect + " WHERE a.period_start >= ? AND a.period_end <= ? AND NOT EXISTS (SELECT 1 FROM historical_six_hour_aggregates n WHERE n.supersedes_aggregate_id = a.aggregate_id)"
+        if source != nil { sql += " AND a.source_kind = ? AND IFNULL(a.source_identifier, '') = ?" }
+        sql += " ORDER BY a.period_start, a.provider, a.source_kind, a.source_identifier, a.coverage_model;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(start, at: 1, in: statement)
+        bind(end, at: 2, in: statement)
+        if let source {
+            let encoded = encode(source)
+            bind(encoded.kind, at: 3, in: statement)
+            bind(encoded.identifier ?? "", at: 4, in: statement)
+        }
+        return try decodeSixHourAggregates(statement)
+    }
+
+    public func sixHourRevisions(
+        matching aggregate: HistoricalSixHourUsageAggregate
+    ) throws -> [HistoricalSixHourUsageAggregateObservation] {
+        let source = encode(aggregate.source)
+        let sql = Self.sixHourAggregateSelect + " WHERE a.provider = ? AND a.source_kind = ? AND IFNULL(a.source_identifier, '') = ? AND a.coverage_model = ? AND a.period_start = ? AND a.period_end = ? AND a.aggregation_version = ? ORDER BY a.revision;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind(aggregate.provider.rawValue, at: 1, in: statement)
+        bind(source.kind, at: 2, in: statement)
+        bind(source.identifier ?? "", at: 3, in: statement)
+        bind(aggregate.model, at: 4, in: statement)
+        bind(aggregate.window.start, at: 5, in: statement)
+        bind(aggregate.window.end, at: 6, in: statement)
+        sqlite3_bind_int64(statement, 7, Int64(aggregate.window.aggregationVersion))
+        return try decodeSixHourAggregates(statement)
+    }
+
     public func retention() throws -> HistoricalUsageRetention {
         let statement = try prepare("SELECT value FROM historical_usage_settings WHERE key = 'retention_days';")
         defer { sqlite3_finalize(statement) }
@@ -174,7 +248,9 @@ public final class HistoricalUsageTrendStore {
         let deleted = try transaction {
             try execute("PRAGMA secure_delete = ON;")
             try execute("DELETE FROM historical_usage_observations;")
-            return Int(sqlite3_changes(database))
+            let observations = Int(sqlite3_changes(database))
+            try execute("DELETE FROM historical_six_hour_aggregates;")
+            return observations + Int(sqlite3_changes(database))
         }
         try execute("PRAGMA wal_checkpoint(TRUNCATE);")
         try execute("VACUUM;")
@@ -183,20 +259,21 @@ public final class HistoricalUsageTrendStore {
 
     @discardableResult
     public func deleteCustomSources(excluding sourceIDs: Set<UUID>) throws -> Int {
-        let sql: String
-        if sourceIDs.isEmpty {
-            sql = "DELETE FROM historical_usage_observations WHERE source_kind = 'custom';"
-        } else {
+        try transaction {
             let placeholders = Array(repeating: "?", count: sourceIDs.count).joined(separator: ", ")
-            sql = "DELETE FROM historical_usage_observations WHERE source_kind = 'custom' AND source_identifier NOT IN (\(placeholders));"
+            let predicate = sourceIDs.isEmpty ? "" : " AND source_identifier NOT IN (\(placeholders))"
+            var deleted = 0
+            for table in ["historical_usage_observations", "historical_six_hour_aggregates"] {
+                let statement = try prepare("DELETE FROM \(table) WHERE source_kind = 'custom'\(predicate);")
+                defer { sqlite3_finalize(statement) }
+                for (index, sourceID) in sourceIDs.sorted(by: { $0.uuidString < $1.uuidString }).enumerated() {
+                    bind(sourceID.uuidString, at: Int32(index + 1), in: statement)
+                }
+                try stepDone(statement)
+                deleted += Int(sqlite3_changes(database))
+            }
+            return deleted
         }
-        let statement = try prepare(sql)
-        defer { sqlite3_finalize(statement) }
-        for (index, sourceID) in sourceIDs.sorted(by: { $0.uuidString < $1.uuidString }).enumerated() {
-            bind(sourceID.uuidString, at: Int32(index + 1), in: statement)
-        }
-        try stepDone(statement)
-        return Int(sqlite3_changes(database))
     }
 
     func schemaColumnNames() throws -> Set<String> {
@@ -205,6 +282,10 @@ public final class HistoricalUsageTrendStore {
         var columns = Set<String>()
         while sqlite3_step(statement) == SQLITE_ROW { columns.insert(requiredString(statement, index: 1)) }
         return columns
+    }
+
+    func sixHourSchemaColumnNames() throws -> Set<String> {
+        try columnNames(in: "historical_six_hour_aggregates")
     }
 
     private func currentObservation(matching sample: HistoricalUsageTrendSample) throws -> HistoricalUsageTrendObservation? {
@@ -431,6 +512,96 @@ public final class HistoricalUsageTrendStore {
         return Cost(amount: amount, currencyCode: currencyCode, source: source)
     }
 
+    private func currentSixHourAggregate(
+        matching aggregate: HistoricalSixHourUsageAggregate
+    ) throws -> HistoricalSixHourUsageAggregateObservation? {
+        try sixHourRevisions(matching: aggregate).last
+    }
+
+    private func insert(_ observation: HistoricalSixHourUsageAggregateObservation) throws {
+        let sql = """
+        INSERT INTO historical_six_hour_aggregates (
+            aggregate_id, supersedes_aggregate_id, revision, provider, source_kind,
+            source_identifier, coverage_kind, coverage_model, period_start, period_end,
+            aggregation_version, input_tokens, output_tokens, source_revision, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'model', ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        let aggregate = observation.aggregate
+        let source = encode(aggregate.source)
+        bind(observation.id.uuidString, at: 1, in: statement)
+        bind(observation.supersedesID?.uuidString, at: 2, in: statement)
+        sqlite3_bind_int64(statement, 3, Int64(observation.revision))
+        bind(aggregate.provider.rawValue, at: 4, in: statement)
+        bind(source.kind, at: 5, in: statement)
+        bind(source.identifier, at: 6, in: statement)
+        bind(aggregate.model, at: 7, in: statement)
+        bind(aggregate.window.start, at: 8, in: statement)
+        bind(aggregate.window.end, at: 9, in: statement)
+        sqlite3_bind_int64(statement, 10, Int64(aggregate.window.aggregationVersion))
+        sqlite3_bind_int64(statement, 11, Int64(aggregate.tokenUsage.inputTokens))
+        sqlite3_bind_int64(statement, 12, Int64(aggregate.tokenUsage.outputTokens))
+        bind(observation.sourceRevision, at: 13, in: statement)
+        bind(observation.recordedAt, at: 14, in: statement)
+        try stepDone(statement)
+    }
+
+    private static let sixHourAggregateSelect = """
+    SELECT a.aggregate_id, a.supersedes_aggregate_id, a.revision, a.provider,
+           a.source_kind, a.source_identifier, a.coverage_kind, a.coverage_model,
+           a.period_start, a.period_end, a.aggregation_version, a.input_tokens,
+           a.output_tokens, a.source_revision, a.recorded_at
+    FROM historical_six_hour_aggregates a
+    """
+
+    private func decodeSixHourAggregates(
+        _ statement: OpaquePointer?
+    ) throws -> [HistoricalSixHourUsageAggregateObservation] {
+        var result: [HistoricalSixHourUsageAggregateObservation] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return result }
+            guard status == SQLITE_ROW,
+                  let id = UUID(uuidString: requiredString(statement, index: 0)),
+                  let provider = ProviderKind(rawValue: requiredString(statement, index: 3)),
+                  requiredString(statement, index: 6) == "model" else {
+                throw HistoricalUsageTrendStoreError.decodeFailed("Invalid six-hour aggregate identity")
+            }
+            do {
+                let aggregate = try HistoricalSixHourUsageAggregate(
+                    provider: provider,
+                    source: try decodeSource(
+                        kind: requiredString(statement, index: 4),
+                        identifier: stringColumn(statement, index: 5)
+                    ),
+                    model: requiredString(statement, index: 7),
+                    window: try HistoricalSixHourUsageWindow(
+                        start: dateColumn(statement, index: 8),
+                        end: dateColumn(statement, index: 9),
+                        aggregationVersion: Int(sqlite3_column_int64(statement, 10))
+                    ),
+                    tokenUsage: TokenUsage(
+                        inputTokens: Int(sqlite3_column_int64(statement, 11)),
+                        outputTokens: Int(sqlite3_column_int64(statement, 12))
+                    )
+                )
+                result.append(HistoricalSixHourUsageAggregateObservation(
+                    id: id,
+                    revision: Int(sqlite3_column_int64(statement, 2)),
+                    supersedesID: stringColumn(statement, index: 1).flatMap(UUID.init(uuidString:)),
+                    sourceRevision: requiredString(statement, index: 13),
+                    recordedAt: dateColumn(statement, index: 14),
+                    aggregate: aggregate
+                ))
+            } catch let error as HistoricalUsageTrendStoreError {
+                throw error
+            } catch {
+                throw HistoricalUsageTrendStoreError.decodeFailed("Invalid six-hour aggregate")
+            }
+        }
+    }
+
     private func pruneWithoutTransaction(now: Date) throws -> Int {
         let retention = try retention()
         let periods = try periods(from: .distantPast, through: now)
@@ -456,74 +627,226 @@ public final class HistoricalUsageTrendStore {
             try stepDone(statement)
             deleted += Int(sqlite3_changes(database))
         }
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = .gmt
+        let today = utc.startOfDay(for: now)
+        if let cutoff = utc.date(byAdding: .day, value: -retention.rawValue, to: today) {
+            let statement = try prepare("DELETE FROM historical_six_hour_aggregates WHERE period_end <= ?;")
+            defer { sqlite3_finalize(statement) }
+            bind(cutoff, at: 1, in: statement)
+            try stepDone(statement)
+            deleted += Int(sqlite3_changes(database))
+        }
         return deleted
     }
 
     private func configureSchema() throws {
         let version = try userVersion()
-        guard version <= Self.schemaVersion else {
+        switch version {
+        case 0:
+            guard try schemaObjects().isEmpty else {
+                throw HistoricalUsageTrendStoreError.invalidSchemaFingerprint(version)
+            }
+            try transaction {
+                try createLegacySchema()
+                try createSixHourSchema()
+                try execute("PRAGMA user_version = \(Self.schemaVersion);")
+            }
+        case 3:
+            guard try hasKnownLegacySchema() else {
+                throw HistoricalUsageTrendStoreError.invalidSchemaFingerprint(version)
+            }
+            try transaction {
+                try createSixHourSchema()
+                try execute("PRAGMA user_version = \(Self.schemaVersion);")
+            }
+        case Self.schemaVersion:
+            guard try hasKnownLegacySchema(),
+                  try sixHourSchemaColumnNames() == Self.sixHourAggregateColumnNames,
+                  try schemaObjects() == Self.currentSchemaObjects else {
+                throw HistoricalUsageTrendStoreError.invalidSchemaFingerprint(version)
+            }
+        default:
             throw HistoricalUsageTrendStoreError.unsupportedSchemaVersion(version)
         }
-        if version == Self.schemaVersion, try schemaColumnNames() == Self.observationColumnNames { return }
-
-        try transaction {
-            try execute("DROP TABLE IF EXISTS historical_usage_trends;")
-            try execute("DROP TABLE IF EXISTS historical_usage_observations;")
-            try execute("DROP TABLE IF EXISTS historical_usage_settings;")
-            try execute("""
-            CREATE TABLE historical_usage_observations (
-                observation_id TEXT PRIMARY KEY,
-                supersedes_observation_id TEXT REFERENCES historical_usage_observations(observation_id),
-                revision INTEGER NOT NULL CHECK (revision > 0),
-                provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'azureOpenAI', 'openAI', 'custom')),
-                source_kind TEXT NOT NULL CHECK (source_kind IN ('providerAPI', 'builtInLocalLog', 'custom')),
-                source_identifier TEXT,
-                coverage_kind TEXT NOT NULL CHECK (coverage_kind IN ('providerTotal', 'model')),
-                coverage_model TEXT,
-                period_kind TEXT NOT NULL CHECK (period_kind IN ('today', 'currentWeek')),
-                period_start INTEGER NOT NULL,
-                period_end INTEGER NOT NULL CHECK (period_end > period_start),
-                window_basis TEXT NOT NULL CHECK (window_basis IN ('localCalendar', 'utcBilling')),
-                aggregation_version INTEGER NOT NULL CHECK (aggregation_version > 0),
-                time_zone_identifier TEXT NOT NULL,
-                recorded_at INTEGER NOT NULL,
-                finality TEXT NOT NULL CHECK (finality IN ('provisional', 'final')),
-                input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
-                output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
-                provider_cost_amount TEXT,
-                provider_cost_currency TEXT,
-                calculated_cost_amount TEXT,
-                calculated_cost_currency TEXT,
-                pricing_revision TEXT,
-                pricing_effective_at INTEGER,
-                CHECK ((source_kind = 'custom') = (source_identifier IS NOT NULL)),
-                CHECK ((coverage_kind = 'model') = (coverage_model IS NOT NULL)),
-                CHECK ((provider_cost_amount IS NULL) = (provider_cost_currency IS NULL)),
-                CHECK ((calculated_cost_amount IS NULL) = (calculated_cost_currency IS NULL)),
-                CHECK ((calculated_cost_amount IS NULL) = (pricing_revision IS NULL)),
-                CHECK ((calculated_cost_amount IS NULL) = (pricing_effective_at IS NULL)),
-                CHECK (window_basis != 'utcBilling' OR time_zone_identifier = 'UTC')
-            );
-            CREATE UNIQUE INDEX historical_usage_revision
-                ON historical_usage_observations (
-                    provider, source_kind, IFNULL(source_identifier, ''), coverage_kind,
-                    IFNULL(coverage_model, ''), period_kind, period_start, period_end,
-                    window_basis, aggregation_version, time_zone_identifier, revision
-                );
-            CREATE UNIQUE INDEX historical_usage_one_correction
-                ON historical_usage_observations (supersedes_observation_id)
-                WHERE supersedes_observation_id IS NOT NULL;
-            CREATE INDEX historical_usage_period
-                ON historical_usage_observations (period_start, period_end, provider, period_kind);
-            CREATE TABLE historical_usage_settings (
-                key TEXT PRIMARY KEY CHECK (key = 'retention_days'),
-                value INTEGER NOT NULL CHECK (value IN (30, 90, 365, 730))
-            );
-            INSERT INTO historical_usage_settings (key, value) VALUES ('retention_days', 365);
-            """)
-            try execute("PRAGMA user_version = \(Self.schemaVersion);")
-        }
     }
+
+    private func createLegacySchema() throws {
+        try execute(Self.legacySchemaSQL)
+    }
+
+    private func createSixHourSchema() throws {
+        try execute(Self.sixHourSchemaSQL)
+    }
+
+    private func hasKnownLegacySchema() throws -> Bool {
+        guard try schemaColumnNames() == Self.observationColumnNames,
+              try columnNames(in: "historical_usage_settings") == ["key", "value"] else {
+            return false
+        }
+        let objects = try schemaObjects()
+        let expected = objects.contains("historical_six_hour_aggregates")
+            ? Self.currentSchemaObjects
+            : Self.legacySchemaObjects
+        let expectedSQL = objects.contains("historical_six_hour_aggregates")
+            ? Self.legacySchemaSQL + Self.sixHourSchemaSQL
+            : Self.legacySchemaSQL
+        guard objects == expected,
+              try schemaDefinitions() == Self.canonicalSchemaDefinitions(for: expectedSQL) else {
+            return false
+        }
+        let statement = try prepare("SELECT COUNT(*), MIN(value), MAX(value) FROM historical_usage_settings WHERE key = 'retention_days' AND value IN (30, 90, 365, 730);")
+        defer { sqlite3_finalize(statement) }
+        return sqlite3_step(statement) == SQLITE_ROW
+            && sqlite3_column_int(statement, 0) == 1
+            && sqlite3_column_int(statement, 1) == sqlite3_column_int(statement, 2)
+    }
+
+    private func columnNames(in table: String) throws -> Set<String> {
+        let statement = try prepare("PRAGMA table_info(\(table));")
+        defer { sqlite3_finalize(statement) }
+        var columns = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW { columns.insert(requiredString(statement, index: 1)) }
+        return columns
+    }
+
+    private func schemaObjects() throws -> Set<String> {
+        let statement = try prepare("SELECT name FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%';")
+        defer { sqlite3_finalize(statement) }
+        var names = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW { names.insert(requiredString(statement, index: 0)) }
+        return names
+    }
+
+    private func schemaDefinitions() throws -> [String: String] {
+        let statement = try prepare("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%';")
+        defer { sqlite3_finalize(statement) }
+        var definitions: [String: String] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            definitions[requiredString(statement, index: 0)] = Self.normalizeSchemaSQL(requiredString(statement, index: 1))
+        }
+        return definitions
+    }
+
+    private static func canonicalSchemaDefinitions(for sql: String) throws -> [String: String] {
+        var canonical: OpaquePointer?
+        guard sqlite3_open(":memory:", &canonical) == SQLITE_OK else {
+            sqlite3_close(canonical)
+            throw HistoricalUsageTrendStoreError.openFailed("Unable to build schema fingerprint")
+        }
+        defer { sqlite3_close(canonical) }
+        guard sqlite3_exec(canonical, sql, nil, nil, nil) == SQLITE_OK else {
+            throw HistoricalUsageTrendStoreError.executeFailed("Unable to build schema fingerprint")
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(canonical, "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%';", -1, &statement, nil) == SQLITE_OK else {
+            throw HistoricalUsageTrendStoreError.prepareFailed("Unable to build schema fingerprint")
+        }
+        defer { sqlite3_finalize(statement) }
+        var definitions: [String: String] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let name = sqlite3_column_text(statement, 0).map(String.init(cString:)) ?? ""
+            let definition = sqlite3_column_text(statement, 1).map(String.init(cString:)) ?? ""
+            definitions[name] = normalizeSchemaSQL(definition)
+        }
+        return definitions
+    }
+
+    private static func normalizeSchemaSQL(_ sql: String) -> String {
+        sql.filter { !$0.isWhitespace && $0 != ";" }
+    }
+
+    private static let legacySchemaObjects: Set<String> = [
+        "historical_usage_observations", "historical_usage_revision",
+        "historical_usage_one_correction", "historical_usage_period",
+        "historical_usage_settings"
+    ]
+    private static let currentSchemaObjects = legacySchemaObjects.union([
+        "historical_six_hour_aggregates", "historical_six_hour_revision",
+        "historical_six_hour_one_correction", "historical_six_hour_period"
+    ])
+
+    private static let legacySchemaSQL = """
+    CREATE TABLE historical_usage_observations (
+        observation_id TEXT PRIMARY KEY,
+        supersedes_observation_id TEXT REFERENCES historical_usage_observations(observation_id),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'azureOpenAI', 'openAI', 'custom')),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('providerAPI', 'builtInLocalLog', 'custom')),
+        source_identifier TEXT,
+        coverage_kind TEXT NOT NULL CHECK (coverage_kind IN ('providerTotal', 'model')),
+        coverage_model TEXT,
+        period_kind TEXT NOT NULL CHECK (period_kind IN ('today', 'currentWeek')),
+        period_start INTEGER NOT NULL,
+        period_end INTEGER NOT NULL CHECK (period_end > period_start),
+        window_basis TEXT NOT NULL CHECK (window_basis IN ('localCalendar', 'utcBilling')),
+        aggregation_version INTEGER NOT NULL CHECK (aggregation_version > 0),
+        time_zone_identifier TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        finality TEXT NOT NULL CHECK (finality IN ('provisional', 'final')),
+        input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+        output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+        provider_cost_amount TEXT,
+        provider_cost_currency TEXT,
+        calculated_cost_amount TEXT,
+        calculated_cost_currency TEXT,
+        pricing_revision TEXT,
+        pricing_effective_at INTEGER,
+        CHECK ((source_kind = 'custom') = (source_identifier IS NOT NULL)),
+        CHECK ((coverage_kind = 'model') = (coverage_model IS NOT NULL)),
+        CHECK ((provider_cost_amount IS NULL) = (provider_cost_currency IS NULL)),
+        CHECK ((calculated_cost_amount IS NULL) = (calculated_cost_currency IS NULL)),
+        CHECK ((calculated_cost_amount IS NULL) = (pricing_revision IS NULL)),
+        CHECK ((calculated_cost_amount IS NULL) = (pricing_effective_at IS NULL)),
+        CHECK (window_basis != 'utcBilling' OR time_zone_identifier = 'UTC')
+    );
+    CREATE UNIQUE INDEX historical_usage_revision ON historical_usage_observations (
+        provider, source_kind, IFNULL(source_identifier, ''), coverage_kind,
+        IFNULL(coverage_model, ''), period_kind, period_start, period_end,
+        window_basis, aggregation_version, time_zone_identifier, revision
+    );
+    CREATE UNIQUE INDEX historical_usage_one_correction
+        ON historical_usage_observations (supersedes_observation_id)
+        WHERE supersedes_observation_id IS NOT NULL;
+    CREATE INDEX historical_usage_period
+        ON historical_usage_observations (period_start, period_end, provider, period_kind);
+    CREATE TABLE historical_usage_settings (
+        key TEXT PRIMARY KEY CHECK (key = 'retention_days'),
+        value INTEGER NOT NULL CHECK (value IN (30, 90, 365, 730))
+    );
+    INSERT INTO historical_usage_settings (key, value) VALUES ('retention_days', 365);
+    """
+
+    private static let sixHourSchemaSQL = """
+    CREATE TABLE historical_six_hour_aggregates (
+        aggregate_id TEXT PRIMARY KEY,
+        supersedes_aggregate_id TEXT REFERENCES historical_six_hour_aggregates(aggregate_id),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'azureOpenAI', 'openAI', 'custom')),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('builtInLocalLog', 'custom')),
+        source_identifier TEXT,
+        coverage_kind TEXT NOT NULL CHECK (coverage_kind = 'model'),
+        coverage_model TEXT NOT NULL CHECK (length(coverage_model) > 0),
+        period_start INTEGER NOT NULL CHECK (period_start % 21600 = 0),
+        period_end INTEGER NOT NULL CHECK (period_end = period_start + 21600),
+        aggregation_version INTEGER NOT NULL CHECK (aggregation_version > 0),
+        input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+        output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+        source_revision TEXT NOT NULL CHECK (length(source_revision) > 0),
+        recorded_at INTEGER NOT NULL,
+        CHECK ((source_kind = 'custom') = (source_identifier IS NOT NULL)),
+        CHECK ((provider = 'custom') = (source_kind = 'custom'))
+    );
+    CREATE UNIQUE INDEX historical_six_hour_revision ON historical_six_hour_aggregates (
+        provider, source_kind, IFNULL(source_identifier, ''), coverage_kind,
+        coverage_model, period_start, period_end, aggregation_version, revision
+    );
+    CREATE UNIQUE INDEX historical_six_hour_one_correction
+        ON historical_six_hour_aggregates (supersedes_aggregate_id)
+        WHERE supersedes_aggregate_id IS NOT NULL;
+    CREATE INDEX historical_six_hour_period
+        ON historical_six_hour_aggregates (period_start, period_end, provider, source_kind);
+    """
 
     private func identity(of sample: HistoricalUsageTrendSample) -> String {
         let source = encode(sample.source)

@@ -137,28 +137,16 @@ struct MonitoringPopoverView: View {
 }
 
 private struct HistoricalUsageView: View {
-    private enum Grain: String, CaseIterable {
-        case daily = "30 Days"
-        case weekly = "12 Weeks"
-    }
-
     let snapshot: HistoricalUsageSnapshot
-    @State private var grain = Grain.daily
 
-    private var buckets: [HistoricalUsageTrendBucket] {
-        grain == .daily ? snapshot.dailyBuckets : snapshot.weeklyBuckets
-    }
-
-    private var points: [HistoricalUsagePoint] {
-        buckets.compactMap(HistoricalUsagePoint.init)
+    private var presentation: HistoricalUsageChartPresentation {
+        HistoricalUsageChartPresentation(dailyBuckets: snapshot.dailyBuckets)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("History range", selection: $grain) {
-                ForEach(Grain.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            Text("Last \(presentation.buckets.count) days")
+                .font(.headline)
 
             if !snapshot.health.isOpen {
                 Text(snapshot.health.message)
@@ -166,26 +154,54 @@ private struct HistoricalUsageView: View {
                     .foregroundStyle(.orange)
             }
 
-            if points.isEmpty {
+            if presentation.points.isEmpty {
                 Label("No observed usage in this range", systemImage: "chart.bar.xaxis")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
-                Chart(points) { point in
-                    BarMark(
-                        x: .value("Period", point.start),
-                        y: .value("Tokens", point.totalTokens)
-                    )
-                    .foregroundStyle(point.isProvisional ? Color.accentColor.opacity(0.45) : Color.accentColor)
+                Chart {
+                    ForEach(presentation.buckets, id: \.period) { bucket in
+                        PointMark(
+                            x: .value("Date", presentation.dateLabel(for: bucket.period)),
+                            y: .value("Tokens", 0)
+                        )
+                        .opacity(0)
+                    }
+                    ForEach(presentation.points) { point in
+                        BarMark(
+                            x: .value("Date", point.dateLabel),
+                            y: .value("Tokens", point.totalTokens),
+                            width: .ratio(0.9)
+                        )
+                        .foregroundStyle(point.isProvisional ? Color.accentColor.opacity(0.45) : Color.accentColor)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: presentation.dateLabels) { _ in
+                        AxisValueLabel()
+                            .font(.system(size: 8))
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel {
+                            if let tokens = value.as(Int.self) ?? value.as(Double.self).map(Int.init) {
+                                Text(HistoricalUsageChartPresentation.compactTokenCount(tokens))
+                            }
+                        }
+                    }
                 }
                 .chartYAxisLabel("Tokens")
+                .chartXScale(range: .plotDimension(startPadding: 2, endPadding: 2))
                 .frame(height: 190)
                 .accessibilityIdentifier("historical-usage-chart")
             }
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(Array(buckets.reversed().enumerated()), id: \.offset) { _, bucket in
+                    ForEach(Array(presentation.buckets.reversed().enumerated()), id: \.offset) { _, bucket in
                         HistoricalUsageBucketRow(bucket: bucket)
                     }
                 }
@@ -195,19 +211,92 @@ private struct HistoricalUsageView: View {
     }
 }
 
-private struct HistoricalUsagePoint: Identifiable {
+struct HistoricalUsagePoint: Identifiable {
     let id: HistoricalUsageTrendPeriod
     let start: Date
     let totalTokens: Int
     let isProvisional: Bool
+    let dateLabel: String
 
-    init?(bucket: HistoricalUsageTrendBucket) {
+    init?(bucket: HistoricalUsageTrendBucket, dateLabel: String) {
         guard case let .observed(observations) = bucket.value else { return nil }
         id = bucket.period
         start = bucket.period.window.start
         guard let preferredTotalTokens = bucket.preferredTotalTokens else { return nil }
         totalTokens = preferredTotalTokens
         isProvisional = observations.contains { $0.lifecycle == .provisional }
+        self.dateLabel = dateLabel
+    }
+}
+
+struct HistoricalUsageChartPresentation {
+    let buckets: [HistoricalUsageTrendBucket]
+    let points: [HistoricalUsagePoint]
+    let domain: ClosedRange<Date>?
+    let dateLabels: [String]
+
+    init(dailyBuckets: [HistoricalUsageTrendBucket]) {
+        let unique = dailyBuckets.reduce(into: [String: HistoricalUsageTrendBucket]()) { result, bucket in
+            let label = Self.dateLabel(for: bucket.period)
+            if let current = result[label] {
+                result[label] = Self.preferred(current, bucket)
+            } else {
+                result[label] = bucket
+            }
+        }
+        let selected = Array(unique.values.sorted { $0.period.window.start < $1.period.window.start }.suffix(15))
+        buckets = selected
+        let labels = selected.map { Self.dateLabel(for: $0.period) }
+        dateLabels = labels
+        let plotted = zip(selected, labels).compactMap { bucket, label in
+            HistoricalUsagePoint(bucket: bucket, dateLabel: label)
+        }
+        points = plotted
+        domain = selected.first.flatMap { first in
+            selected.last.map { last in first.period.window.start...last.period.window.end }
+        }
+    }
+
+    func dateLabel(for period: HistoricalUsageTrendPeriod) -> String {
+        Self.dateLabel(for: period)
+    }
+
+    private static func dateLabel(for period: HistoricalUsageTrendPeriod) -> String {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        formatter.timeZone = TimeZone(identifier: period.timeZoneIdentifier)
+        return formatter.string(from: period.window.start)
+    }
+
+    private static func preferred(
+        _ first: HistoricalUsageTrendBucket,
+        _ second: HistoricalUsageTrendBucket
+    ) -> HistoricalUsageTrendBucket {
+        let firstDate = newestObservationDate(in: first)
+        let secondDate = newestObservationDate(in: second)
+        if firstDate != secondDate { return secondDate > firstDate ? second : first }
+        return second.period.window.start > first.period.window.start ? second : first
+    }
+
+    private static func newestObservationDate(in bucket: HistoricalUsageTrendBucket) -> Date {
+        guard case let .observed(observations) = bucket.value else { return .distantPast }
+        return observations.map(\.recordedAt).max() ?? .distantPast
+    }
+
+    static func compactTokenCount(_ value: Int) -> String {
+        let units: [(threshold: Double, suffix: String)] = [
+            (1_000_000_000_000, "T"),
+            (1_000_000_000, "B"),
+            (1_000_000, "M")
+        ]
+        guard let unit = units.first(where: { Double(value) >= $0.threshold }) else {
+            return value.formatted()
+        }
+        let scaled = Double(value) / unit.threshold
+        let text = scaled.rounded() == scaled
+            ? String(format: "%.0f", scaled)
+            : String(format: "%.1f", scaled)
+        return text + unit.suffix
     }
 }
 
@@ -237,8 +326,9 @@ private struct HistoricalUsageBucketRow: View {
             case let .observed(observations):
                 VStack(alignment: .trailing, spacing: 2) {
                     if let totalTokens = bucket.preferredTotalTokens {
-                        Text("\(totalTokens.formatted()) tokens")
+                        Text("\(HistoricalUsageChartPresentation.compactTokenCount(totalTokens)) tokens")
                             .monospacedDigit()
+                            .help("\(totalTokens.formatted()) tokens")
                     } else {
                         Text("Token total unavailable")
                             .foregroundStyle(.orange)
@@ -456,9 +546,10 @@ private struct TokenPill: View {
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            Text(value.formatted())
+            Text(HistoricalUsageChartPresentation.compactTokenCount(value))
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
+                .help(value.formatted())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
