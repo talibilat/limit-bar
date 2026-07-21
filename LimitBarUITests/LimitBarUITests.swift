@@ -104,10 +104,22 @@ final class LimitBarUITests: XCTestCase {
     func testMissingClaudeLoginProvidesRecoveryInstructions() {
         launch(screen: "claude-login-required")
 
-        XCTAssertTrue(app.staticTexts["No active Claude Code login found. Run Claude Code and enter /login, then check again."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No active Claude Code login found. Select Refresh to sign in through Claude in your browser."].waitForExistence(timeout: 5))
         XCTAssertTrue(app.links["claude-login-help"].exists)
-        XCTAssertTrue(app.buttons["Check Again"].exists)
+        XCTAssertTrue(app.buttons["claude-refresh"].exists)
         XCTAssertFalse(app.buttons["claude-connect"].exists)
+    }
+
+    func testRefreshStartsClaudeBrowserLoginAndLoadsLimits() {
+        launch(screen: "claude-browser-login")
+
+        XCTAssertTrue(app.staticTexts["No active Claude Code login found. Select Refresh to sign in through Claude in your browser."].waitForExistence(timeout: 5))
+        let refresh = app.buttons["claude-refresh"]
+        refresh.click()
+        XCTAssertTrue(app.staticTexts["Signing In..."].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["claude-cancel-login"].exists)
+
+        XCTAssertTrue(app.staticTexts["claude-loaded-state"].waitForExistence(timeout: 5))
     }
 
     func testConfiguresPersistsAndRemovesCustomUsageSource() {

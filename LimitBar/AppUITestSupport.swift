@@ -205,6 +205,8 @@ private struct LimitBarUITestHostView: View {
             DiagnosticExportUITestWorkflowView(interceptsNetwork: true)
         case "quota-insight":
             QuotaInsightUITestView()
+        case "claude-browser-login":
+            ClaudeBrowserLoginUITestView()
         case "recovery-inbox":
             Form {
                 RecoveryInboxSection(model: RecoveryInboxModel(fixtureItems: AppUITestRecoveryInbox.items))
@@ -248,6 +250,59 @@ private struct LimitBarUITestHostView: View {
             MonitoringPopoverView(state: state)
                 .defaultAppStorage(AppUITestConfiguration.userDefaults!)
         }
+    }
+}
+
+private actor AppUITestClaudeLoginSession: ClaudeLoginLaunching, ClaudeCredentialProviding {
+    private var isLoggedIn = false
+
+    func login() async throws {
+        try await Task.sleep(for: .seconds(2))
+        isLoggedIn = true
+    }
+
+    func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
+        guard isLoggedIn else { return .absent }
+        return .credential(ClaudeCodeOAuthCredential(
+            accessToken: "",
+            expiresAt: Date(timeIntervalSince1970: 2_000_000_000),
+            subscriptionType: "pro"
+        ))
+    }
+
+    func invalidate() {
+        isLoggedIn = false
+    }
+}
+
+private struct ClaudeBrowserLoginUITestView: View {
+    private let model: ClaudeRateLimitsModel
+    private let loginController: ClaudeLoginController
+
+    @MainActor
+    init() {
+        let session = AppUITestClaudeLoginSession()
+        model = ClaudeRateLimitsModel(
+            credentials: session,
+            client: AppUITestClaudeRateLimitsClient(),
+            state: .notConnected
+        )
+        loginController = ClaudeLoginController(launcher: session)
+    }
+
+    var body: some View {
+        ClaudeRateLimitsView(
+            model: model,
+            insights: [:],
+            anomalies: [:],
+            insightsStorageAvailable: true,
+            explanationCatalog: .empty,
+            showsAnalysis: false,
+            loginController: loginController,
+            onActionCompleted: {}
+        )
+        .padding(20)
+        .frame(width: 620, height: 420)
     }
 }
 

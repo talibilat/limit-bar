@@ -132,6 +132,50 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
         XCTAssertEqual(ClaudeLoginHelp.url.host, "code.claude.com")
     }
 
+    @MainActor
+    func testRefreshStartsBrowserLoginAndLoadsClaudeLimitsWhenNotConnected() async {
+        let session = ClaudeLoginSessionFixture()
+        let snapshot = ClaudeRateLimitSnapshot(
+            limits: [ClaudeRateLimit(kind: "session", group: .session, percentUsed: 25, severity: .normal, resetsAt: nil, scopeDisplayName: nil, isActive: true)],
+            fetchedAt: Date(timeIntervalSince1970: 1)
+        )
+        let model = ClaudeRateLimitsModel(
+            credentials: session,
+            client: ClaudeLoginClientFixture(snapshot: snapshot),
+            state: .notConnected
+        )
+        let controller = ClaudeLoginController(launcher: session)
+
+        await controller.refresh(model: model)
+
+        let loginCount = await session.loginCount
+        let intents = await session.intents
+        XCTAssertEqual(loginCount, 1)
+        XCTAssertEqual(intents, [.passive])
+        XCTAssertEqual(model.state, .loaded(snapshot, subscription: "pro"))
+        XCTAssertNil(controller.message)
+    }
+
+    func testCancelingBrowserLoginTerminatesTheClaudeCommand() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let executable = directory.appendingPathComponent("claude")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "#!/bin/sh\nexec sleep 30\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let launcher = ClaudeBrowserLoginLauncher(executableCandidates: [executable])
+        let task = Task { try await launcher.login() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        task.cancel()
+
+        do {
+            try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+        }
+    }
+
     func testRefreshExecutionCarriesServiceWindowsAcrossBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .gmt
@@ -383,6 +427,33 @@ final class ProviderRefreshHistoryPresentationTests: XCTestCase {
             )),
             attributionEvidenceStore: attributionStore
         )
+    }
+}
+
+private actor ClaudeLoginSessionFixture: ClaudeLoginLaunching, ClaudeCredentialProviding {
+    private(set) var loginCount = 0
+    private(set) var intents: [ClaudeCredentialIntent] = []
+    private var isLoggedIn = false
+
+    func login() {
+        loginCount += 1
+        isLoggedIn = true
+    }
+
+    func credential(intent: ClaudeCredentialIntent) -> ClaudeCredentialResult {
+        intents.append(intent)
+        guard isLoggedIn else { return .absent }
+        return .credential(ClaudeCodeOAuthCredential(accessToken: "fixture", expiresAt: nil, subscriptionType: "pro"))
+    }
+
+    func invalidate() {}
+}
+
+private struct ClaudeLoginClientFixture: ClaudeRateLimitsFetching {
+    let snapshot: ClaudeRateLimitSnapshot
+
+    func fetchRateLimits(accessToken: String) -> Result<ClaudeRateLimitSnapshot, ClaudeRateLimitFailure> {
+        .success(snapshot)
     }
 }
 

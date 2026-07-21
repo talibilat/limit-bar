@@ -49,7 +49,8 @@ open LimitBar.xcodeproj
 1. In the Xcode toolbar, choose the **LimitBar** scheme and destination **My Mac**.
 2. Press **Command-R** or click **Run**.
 3. Click the gauge icon that appears in the menu bar.
-4. Use **Connect** if macOS says LimitBar must be authorized to read the Claude Code Keychain item.
+4. If no Claude Code login is available, press **Refresh** to open Claude's browser login flow directly from LimitBar.
+5. Use **Connect** if macOS separately says LimitBar must be authorized to read the Claude Code Keychain item.
 
 To stop the app while debugging, press **Command-.** in Xcode or quit LimitBar from the menu bar icon.
 
@@ -205,8 +206,12 @@ See [`docs/CLAUDE_CODE_OTLP_EVIDENCE.md`](docs/CLAUDE_CODE_OTLP_EVIDENCE.md) for
 
 ### Claude Authorization
 
-Opening the Claude rate-limit view and pressing **Check Again** or **Refresh** performs a passive Keychain read.
+Opening the Claude rate-limit view performs a passive Keychain read.
 Passive reads tell Keychain not to show authentication UI.
+When no active Claude Code login exists, pressing **Refresh** launches the installed Claude Code command's supported `claude auth login --claudeai` browser flow without opening a terminal window.
+LimitBar validates the resolved Claude executable before launch, shows sign-in progress, permits cancellation, and performs a passive credential refresh after Claude Code reports successful login.
+Claude Code continues to own the OAuth flow and Keychain credential; LimitBar does not receive browser credentials or implement a separate OAuth callback.
+When a Claude Code login is already available, pressing **Refresh** retains its existing passive credential and usage-refresh behavior.
 If authorization is required, LimitBar shows **Connect** instead of causing a background prompt.
 Pressing **Connect** performs the interactive read that allows macOS to show its authorization UI, then fetches Claude limits if a credential is returned.
 
