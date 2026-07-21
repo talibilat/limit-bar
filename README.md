@@ -2,7 +2,7 @@
 
 A free macOS menu bar app for AI coding usage from Claude Code, Codex, Azure OpenAI, Anthropic, OpenAI, and local tools you configure.
 LimitBar stores its settings and normalized metrics locally and requires no LimitBar account, cloud sync, or telemetry.
-Opening the Claude rate-limit view with an accessible login and triggering explicit provider refreshes make network requests to the relevant provider APIs.
+Opening the Claude rate-limit view with an accessible login and triggering explicit provider refreshes make network requests to the relevant provider APIs
 
 The menu bar gauge turns green, yellow, or red as the busiest confirmed rate limit fills up.
 Click it for four tabs:
