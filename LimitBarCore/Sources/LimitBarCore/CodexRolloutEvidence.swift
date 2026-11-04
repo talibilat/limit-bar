@@ -485,6 +485,18 @@ public enum CodexSessionEvidenceReader {
             let currentSnapshots = result.quotaSnapshots.filter { $0.reportedAt >= cutoff && $0.reportedAt <= now.addingTimeInterval(300) }
             snapshots.append(contentsOf: currentSnapshots)
             observations.append(contentsOf: currentSnapshots.flatMap(MeasuredQuotaObservationAdapter.codex))
+            if result.barriers.contains(.unsupportedVersionOrMixedAuthorship) {
+                // Newer Codex versions fail the strict evidence adapter, but their
+                // rate_limits lines still parse. Keep the display snapshot only.
+                // These lines add no explanation evidence or quota observations.
+                let marker = Data("\"rate_limits\"".utf8)
+                for line in data.split(separator: 0x0A) where line.range(of: marker) != nil {
+                    guard let snapshot = try? CodexRateLimitMapper.parseLine(Data(line)),
+                          snapshot.reportedAt >= cutoff,
+                          snapshot.reportedAt <= now.addingTimeInterval(300) else { continue }
+                    snapshots.append(snapshot)
+                }
+            }
             barriers.append(contentsOf: result.barriers)
             if let start = result.coverageStart, let end = result.coverageEnd {
                 coverageContributingFiles += 1

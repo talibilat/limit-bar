@@ -4,6 +4,7 @@ import AppKit
 
 struct LimitBarSettingsView: View {
     var showsProviderAuthentication = true
+    private let showsAdvancedSections = false
     var state = LimitBarState.shared
     private let pricingStore = PricingSettingsStore()
     private let localRefreshSettingsStore = LocalRefreshSettingsStore()
@@ -53,224 +54,24 @@ struct LimitBarSettingsView: View {
 
     var body: some View {
         Form {
-            AlertSettingsView(store: state.alertSettingsStore, coordinator: state.alertCoordinator)
-
-            if showsProviderAuthentication {
-                Section("Provider Authentication") {
-                    Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
+            Section("Codex") {
+                if let snapshot = state.local.codexSnapshot {
+                    LabeledContent("Last reading", value: snapshot.reportedAt.formatted(date: .abbreviated, time: .shortened))
+                } else {
+                    Text("No recent Codex session found. Log in again, then use Codex once.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ProviderSettingsView(settings: $providerSettings)
                 }
+                Text("Limits come from local Codex session files in ~/.codex/sessions. LimitBar does not store a Codex login.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Log in to Codex Again") {
+                    CodexLoginLauncher.openLogin()
+                }
+                .accessibilityIdentifier("codex-relogin")
             }
 
-            Section("Diagnostics") {
-                Text("Diagnostics contain structured status only, never credentials or raw provider responses.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(providerSettings, id: \.provider) { setting in
-                    LabeledContent(setting.provider.displayName) {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(setting.state.displayText)
-                            if let reason = setting.failureReason {
-                                Text(reason.displayText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                if let storedMetrics {
-                    LabeledContent("Usage database", value: storedMetrics.health.message)
-                    if !storedMetrics.health.isOpen {
-                        Text("The existing database has been left unchanged. Retry with this or a newer LimitBar version before creating a clean database.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Button("Retry") {
-                                    retryDatabase()
-                                }
-                                Button("Open Recovery Guide") {
-                                    openRecoveryGuide()
-                                }
-                            }
-                            HStack {
-                                Button("Reveal Database Folder") {
-                                    revealDatabaseFolder()
-                                }
-                                Button("Create Clean Database", role: .destructive) {
-                                    confirmsCleanDatabase = true
-                                }
-                            }
-                        }
-                    }
-                    if let databaseRecoveryMessage {
-                        Text(databaseRecoveryMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    LabeledContent("Local events imported", value: "\(storedMetrics.localImport.validEventCount)")
-                    LabeledContent("Local malformed events", value: "\(storedMetrics.localImport.malformedEventCount)")
-                    if storedMetrics.localImport.failureMessage != nil {
-                        LabeledContent("Local import status", value: LocalImportDiagnosticState.failed.displayText)
-                    }
-                    ForEach(storedMetrics.localImport.malformedEvents, id: \.lineNumber) { event in
-                        Text("Line \(event.lineNumber): \(event.reason)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    ProgressView("Loading diagnostics")
-                }
-            }
-
-            DiagnosticExportSection(state: state)
-
-            OrganizationPlannerSettingsLink()
-
-            ActivityReceiptSettingsSection(state: state)
-
-            Section("API Spend Reconciliation") {
-                APISpendReconciliationView()
-            }
-
-            RecoveryInboxSection(model: state.recoveryInbox)
-
-            Section("Quota Observations") {
-                Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per Quota window and Exact boundary. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Delete Quota Observations", role: .destructive) {
-                    showsDeleteQuotaConfirmation = true
-                }
-                if let quotaDeletionMessage {
-                    Text(quotaDeletionMessage)
-                        .font(.caption)
-                        .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
-            Section("Codex Explanations") {
-                Text("Codex explanation findings are retained locally in bounded normalized form so the latest compatible explanation can survive relaunch. They contain no raw JSONL lines, prompts, code, paths, model labels, project labels, or local session digests.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Deleting these findings does not alter current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Delete Codex Explanations", role: .destructive) {
-                    showsDeleteCodexExplanationsConfirmation = true
-                }
-                .accessibilityIdentifier("delete-codex-explanations")
-                if let codexExplanationDeletionMessage {
-                    Text(codexExplanationDeletionMessage)
-                        .font(.caption)
-                        .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
-            Section("Claude Code Explanations") {
-                Text("Claude Code explanation findings retain only normalized measured movement, provenance, method metadata, and privacy-safe Observed Local Breakdown totals. Raw OTLP payloads, account labels, prompts, code, responses, terminal output, credentials, and paths are never retained.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Deleting these findings does not alter quota observations, current provider reports, settings, credentials, alert rules, or notification delivery history.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Delete Claude Code Explanations", role: .destructive) {
-                    showsDeleteClaudeExplanationsConfirmation = true
-                }
-                .accessibilityIdentifier("delete-claude-explanations")
-                if let claudeExplanationDeletionMessage {
-                    Text(claudeExplanationDeletionMessage)
-                        .font(.caption)
-                        .foregroundStyle(claudeExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
-            Section("Project And Agent Attribution") {
-                Text("Measured project and agent breakdowns are retained locally in bounded normalized form. Parent usage totals and source files remain separate.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Deleting attribution does not change current parent usage, settings, credentials, alert rules, or notification delivery history. Unchanged sources remain suppressed after refresh and relaunch.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Delete Project And Agent Attribution", role: .destructive) {
-                    showsDeleteAttributionConfirmation = true
-                }
-                .accessibilityIdentifier("delete-project-agent-attribution")
-                if let attributionDeletionMessage {
-                    Text(attributionDeletionMessage)
-                        .font(.caption)
-                        .foregroundStyle(attributionDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                        .accessibilityIdentifier("project-agent-attribution-deletion-message")
-                }
-            }
-
-            Section("Provider Refresh History") {
-                Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(ProviderRefreshProduct.allCases, id: \.self) { product in
-                    let summary = refreshHistory[product]
-                    LabeledContent("\(product.displayName) latest", value: ProviderRefreshHistoryStatusText.latest(summary?.latest))
-                    LabeledContent("\(product.displayName) last full success", value: ProviderRefreshHistoryStatusText.lastFullSuccess(summary?.lastFullSuccess))
-                }
-                Button("Clear Provider Refresh History", role: .destructive) {
-                    showsClearRefreshHistoryConfirmation = true
-                }
-                .accessibilityIdentifier("clear-provider-refresh-history")
-                if let refreshHistoryMessage {
-                    Text(refreshHistoryMessage)
-                        .font(.caption)
-                        .foregroundStyle(refreshHistoryMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
-            Section("Local Usage Events") {
-                Text("Confirmed usage events for Anthropic, Azure OpenAI, and OpenAI are imported from this local JSONL file.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(localEventsPath)
-                    .font(.caption)
-                    .textSelection(.enabled)
-                Button("Reveal JSONL in Finder") {
-                    revealLocalEventsPath()
-                }
-                if let localEventsRevealMessage {
-                    Text(localEventsRevealMessage)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            Section("Official Provider Status") {
-                Text("Checks use only the public Anthropic and OpenAI status endpoints. No credentials, cookies, account labels, local failures, quota evidence, client identifiers, or other local context are sent.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("Check every six hours", isOn: $statusSubscriptionEnabled)
-                    .accessibilityIdentifier("provider-status-subscription")
-                    .onChange(of: statusSubscriptionEnabled) { _, enabled in
-                        state.setProviderStatusSubscription(enabled: enabled)
-                    }
-                Text("Disabled by default. This low-frequency subscription is separate from Local Refresh and explicit provider refreshes. Status observations are retained locally for at most 14 days and 96 checks; arbitrary incident prose is never retained.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Delete Provider Status History", role: .destructive) {
-                    providerStatusMessage = state.deleteProviderStatusHistory()
-                        ? "Provider status history deleted. Quota, failures, authentication, settings, and credentials were not changed."
-                        : "Could not delete provider status history."
-                }
-                .accessibilityIdentifier("delete-provider-status-history")
-                if let providerStatusMessage {
-                    Text(providerStatusMessage)
-                        .font(.caption)
-                        .foregroundStyle(providerStatusMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
+            AlertSettingsView(store: state.alertSettingsStore, coordinator: state.alertCoordinator)
             Section("Local Refresh") {
                 Text("Choose how often LimitBar imports Local Usage Events and Custom Usage Sources, reads its SQLite snapshot, and scans local Codex sessions.")
                     .font(.caption)
@@ -291,68 +92,287 @@ struct LimitBarSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Historical Usage") {
-                Text("Normalized daily, weekly, and hidden six-hour local-event aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("Retention", selection: $historyRetention) {
-                    ForEach(HistoricalUsageRetention.allCases, id: \.rawValue) { retention in
-                        Text(retention.displayName).tag(retention)
+            if showsAdvancedSections {
+
+                if showsProviderAuthentication {
+                    Section("Provider Authentication") {
+                        Text("Secrets are stored only in macOS Keychain. Saved values are never displayed again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ProviderSettingsView(settings: $providerSettings)
                     }
                 }
-                .onChange(of: historyRetention) { _, retention in
-                    Task {
-                        if await UsageDatabase.shared.setHistoricalRetention(retention) {
-                            historyMessage = "Retention updated."
-                            NotificationCenter.default.post(name: .historicalUsageDidChange, object: nil)
-                        } else {
-                            historyMessage = "Could not update historical retention."
+
+                Section("Diagnostics") {
+                    Text("Diagnostics contain structured status only, never credentials or raw provider responses.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(providerSettings, id: \.provider) { setting in
+                        LabeledContent(setting.provider.displayName) {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(setting.state.displayText)
+                                if let reason = setting.failureReason {
+                                    Text(reason.displayText)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
-                }
-                Button("Delete Historical Usage", role: .destructive) {
-                    showsDeleteHistoryConfirmation = true
-                }
-                .accessibilityIdentifier("delete-historical-usage")
-                if let historyMessage {
-                    Text(historyMessage)
-                        .font(.caption)
-                        .foregroundStyle(historyMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
-                }
-            }
-
-            CustomUsageSourcesSection()
-
-            Section("Pricing") {
-                Text("Manual prices are used only when a provider does not report spend.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                LabeledContent("Bundled table", value: PricingTable.bundledDefaultsVersion)
-
-                Picker("Provider", selection: $provider) {
-                    ForEach(ProviderKind.orderedCases, id: \.self) { provider in
-                        Text(provider.displayName).tag(provider)
+                    if let storedMetrics {
+                        LabeledContent("Usage database", value: storedMetrics.health.message)
+                        if !storedMetrics.health.isOpen {
+                            Text("The existing database has been left unchanged. Retry with this or a newer LimitBar version before creating a clean database.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            VStack(alignment: .leading) {
+                                HStack {
+                                    Button("Retry") {
+                                        retryDatabase()
+                                    }
+                                    Button("Open Recovery Guide") {
+                                        openRecoveryGuide()
+                                    }
+                                }
+                                HStack {
+                                    Button("Reveal Database Folder") {
+                                        revealDatabaseFolder()
+                                    }
+                                    Button("Create Clean Database", role: .destructive) {
+                                        confirmsCleanDatabase = true
+                                    }
+                                }
+                            }
+                        }
+                        if let databaseRecoveryMessage {
+                            Text(databaseRecoveryMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        LabeledContent("Local events imported", value: "\(storedMetrics.localImport.validEventCount)")
+                        LabeledContent("Local malformed events", value: "\(storedMetrics.localImport.malformedEventCount)")
+                        if storedMetrics.localImport.failureMessage != nil {
+                            LabeledContent("Local import status", value: LocalImportDiagnosticState.failed.displayText)
+                        }
+                        ForEach(storedMetrics.localImport.malformedEvents, id: \.lineNumber) { event in
+                            Text("Line \(event.lineNumber): \(event.reason)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ProgressView("Loading diagnostics")
                     }
                 }
 
-                TextField("Model", text: $modelLabel)
-                TextField("Input $/1M", text: $inputPrice)
-                TextField("Output $/1M", text: $outputPrice)
-                TextField("Currency", text: $currencyCode)
-                DatePicker("Effective", selection: $effectiveAt, displayedComponents: .date)
+                DiagnosticExportSection(state: state)
 
-                Button("Save Pricing") {
-                    savePricing()
+                OrganizationPlannerSettingsLink()
+
+                ActivityReceiptSettingsSection(state: state)
+
+                Section("API Spend Reconciliation") {
+                    APISpendReconciliationView()
                 }
-                .disabled(!canSavePricing)
 
-                if pricingEntries.isEmpty {
-                    Text("No pricing configured. Calculated costs stay hidden until prices are saved.")
+                RecoveryInboxSection(model: state.recoveryInbox)
+
+                Section("Quota Observations") {
+                    Text("Measured Claude Code and Codex percentages are retained locally for up to 30 days and 500 observations per Quota window and Exact boundary. They contain no prompts, code, tokens, projects, agents, models, or account labels.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    ForEach(Array(pricingEntries.enumerated()), id: \.offset) { _, entry in
-                        Text("\(entry.provider.displayName) · \(entry.modelLabel) · In \(entry.inputPricePerMillionTokens.description) / Out \(entry.outputPricePerMillionTokens.description) \(entry.currencyCode)")
+                    Text("Deleting retained observations does not alter current provider or Codex session reports. A report that remains available can be measured again on a later refresh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete Quota Observations", role: .destructive) {
+                        showsDeleteQuotaConfirmation = true
+                    }
+                    if let quotaDeletionMessage {
+                        Text(quotaDeletionMessage)
                             .font(.caption)
+                            .foregroundStyle(quotaDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                Section("Codex Explanations") {
+                    Text("Codex explanation findings are retained locally in bounded normalized form so the latest compatible explanation can survive relaunch. They contain no raw JSONL lines, prompts, code, paths, model labels, project labels, or local session digests.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Deleting these findings does not alter current usage, quota observations, settings, credentials, alert rules, or notification delivery history.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete Codex Explanations", role: .destructive) {
+                        showsDeleteCodexExplanationsConfirmation = true
+                    }
+                    .accessibilityIdentifier("delete-codex-explanations")
+                    if let codexExplanationDeletionMessage {
+                        Text(codexExplanationDeletionMessage)
+                            .font(.caption)
+                            .foregroundStyle(codexExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                Section("Claude Code Explanations") {
+                    Text("Claude Code explanation findings retain only normalized measured movement, provenance, method metadata, and privacy-safe Observed Local Breakdown totals. Raw OTLP payloads, account labels, prompts, code, responses, terminal output, credentials, and paths are never retained.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Deleting these findings does not alter quota observations, current provider reports, settings, credentials, alert rules, or notification delivery history.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete Claude Code Explanations", role: .destructive) {
+                        showsDeleteClaudeExplanationsConfirmation = true
+                    }
+                    .accessibilityIdentifier("delete-claude-explanations")
+                    if let claudeExplanationDeletionMessage {
+                        Text(claudeExplanationDeletionMessage)
+                            .font(.caption)
+                            .foregroundStyle(claudeExplanationDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                Section("Project And Agent Attribution") {
+                    Text("Measured project and agent breakdowns are retained locally in bounded normalized form. Parent usage totals and source files remain separate.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Deleting attribution does not change current parent usage, settings, credentials, alert rules, or notification delivery history. Unchanged sources remain suppressed after refresh and relaunch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete Project And Agent Attribution", role: .destructive) {
+                        showsDeleteAttributionConfirmation = true
+                    }
+                    .accessibilityIdentifier("delete-project-agent-attribution")
+                    if let attributionDeletionMessage {
+                        Text(attributionDeletionMessage)
+                            .font(.caption)
+                            .foregroundStyle(attributionDeletionMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                            .accessibilityIdentifier("project-agent-attribution-deletion-message")
+                    }
+                }
+
+                Section("Provider Refresh History") {
+                    Text("Only explicit Anthropic API and OpenAI API usage and cost refreshes are retained. Failed or cancelled refreshes leave prior measurements unchanged, so those values may be stale.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(ProviderRefreshProduct.allCases, id: \.self) { product in
+                        let summary = refreshHistory[product]
+                        LabeledContent("\(product.displayName) latest", value: ProviderRefreshHistoryStatusText.latest(summary?.latest))
+                        LabeledContent("\(product.displayName) last full success", value: ProviderRefreshHistoryStatusText.lastFullSuccess(summary?.lastFullSuccess))
+                    }
+                    Button("Clear Provider Refresh History", role: .destructive) {
+                        showsClearRefreshHistoryConfirmation = true
+                    }
+                    .accessibilityIdentifier("clear-provider-refresh-history")
+                    if let refreshHistoryMessage {
+                        Text(refreshHistoryMessage)
+                            .font(.caption)
+                            .foregroundStyle(refreshHistoryMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                Section("Local Usage Events") {
+                    Text("Confirmed usage events for Anthropic, Azure OpenAI, and OpenAI are imported from this local JSONL file.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(localEventsPath)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                    Button("Reveal JSONL in Finder") {
+                        revealLocalEventsPath()
+                    }
+                    if let localEventsRevealMessage {
+                        Text(localEventsRevealMessage)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Section("Official Provider Status") {
+                    Text("Checks use only the public Anthropic and OpenAI status endpoints. No credentials, cookies, account labels, local failures, quota evidence, client identifiers, or other local context are sent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle("Check every six hours", isOn: $statusSubscriptionEnabled)
+                        .accessibilityIdentifier("provider-status-subscription")
+                        .onChange(of: statusSubscriptionEnabled) { _, enabled in
+                            state.setProviderStatusSubscription(enabled: enabled)
+                        }
+                    Text("Disabled by default. This low-frequency subscription is separate from Local Refresh and explicit provider refreshes. Status observations are retained locally for at most 14 days and 96 checks; arbitrary incident prose is never retained.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete Provider Status History", role: .destructive) {
+                        providerStatusMessage = state.deleteProviderStatusHistory()
+                            ? "Provider status history deleted. Quota, failures, authentication, settings, and credentials were not changed."
+                            : "Could not delete provider status history."
+                    }
+                    .accessibilityIdentifier("delete-provider-status-history")
+                    if let providerStatusMessage {
+                        Text(providerStatusMessage)
+                            .font(.caption)
+                            .foregroundStyle(providerStatusMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                Section("Historical Usage") {
+                    Text("Normalized daily, weekly, and hidden six-hour local-event aggregates stay on this Mac. Raw prompts, responses, code, and provider payloads are never retained for charts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("Retention", selection: $historyRetention) {
+                        ForEach(HistoricalUsageRetention.allCases, id: \.rawValue) { retention in
+                            Text(retention.displayName).tag(retention)
+                        }
+                    }
+                    .onChange(of: historyRetention) { _, retention in
+                        Task {
+                            if await UsageDatabase.shared.setHistoricalRetention(retention) {
+                                historyMessage = "Retention updated."
+                                NotificationCenter.default.post(name: .historicalUsageDidChange, object: nil)
+                            } else {
+                                historyMessage = "Could not update historical retention."
+                            }
+                        }
+                    }
+                    Button("Delete Historical Usage", role: .destructive) {
+                        showsDeleteHistoryConfirmation = true
+                    }
+                    .accessibilityIdentifier("delete-historical-usage")
+                    if let historyMessage {
+                        Text(historyMessage)
+                            .font(.caption)
+                            .foregroundStyle(historyMessage.hasPrefix("Could not") ? Color.orange : Color.secondary)
+                    }
+                }
+
+                CustomUsageSourcesSection()
+
+                Section("Pricing") {
+                    Text("Manual prices are used only when a provider does not report spend.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    LabeledContent("Bundled table", value: PricingTable.bundledDefaultsVersion)
+
+                    Picker("Provider", selection: $provider) {
+                        ForEach(ProviderKind.orderedCases, id: \.self) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+
+                    TextField("Model", text: $modelLabel)
+                    TextField("Input $/1M", text: $inputPrice)
+                    TextField("Output $/1M", text: $outputPrice)
+                    TextField("Currency", text: $currencyCode)
+                    DatePicker("Effective", selection: $effectiveAt, displayedComponents: .date)
+
+                    Button("Save Pricing") {
+                        savePricing()
+                    }
+                    .disabled(!canSavePricing)
+
+                    if pricingEntries.isEmpty {
+                        Text("No pricing configured. Calculated costs stay hidden until prices are saved.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(pricingEntries.enumerated()), id: \.offset) { _, entry in
+                            Text("\(entry.provider.displayName) · \(entry.modelLabel) · In \(entry.inputPricePerMillionTokens.description) / Out \(entry.outputPricePerMillionTokens.description) \(entry.currencyCode)")
+                                .font(.caption)
+                        }
                     }
                 }
             }
@@ -699,4 +719,25 @@ struct CustomUsageSourcesSection: View {
 
 #Preview {
     LimitBarSettingsView(state: .shared)
+}
+
+enum CodexLoginLauncher {
+    @MainActor
+    static func openLogin() {
+        let script = FileManager.default.temporaryDirectory.appendingPathComponent("limitbar-codex-login.command")
+        let contents = """
+        #!/bin/zsh
+        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+        codex login
+        echo
+        echo "Done. You can close this window."
+        """
+        do {
+            try contents.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+        } catch {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+        }
+    }
 }

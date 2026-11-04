@@ -1,9 +1,11 @@
 import SwiftUI
+import AppKit
 import LimitBarCore
 import Charts
 
 struct MonitoringPopoverView: View {
     let state: LimitBarState
+    @Environment(\.openSettings) private var openSettings
     private enum PopoverTab: String, CaseIterable {
         case rateLimit
         case analysis
@@ -72,8 +74,9 @@ struct MonitoringPopoverView: View {
 
                 Spacer()
 
-                SettingsLink {
-                    Text("Settings")
+                Button("Settings") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openSettings()
                 }
                 .accessibilityIdentifier("settings-action")
             }
