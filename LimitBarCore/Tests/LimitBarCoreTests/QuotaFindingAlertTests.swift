@@ -71,7 +71,7 @@ struct QuotaFindingAlertTests {
         #expect(!inputs.isEmpty)
         #expect(evidenceRange.lowerBound < evidenceRange.upperBound)
         #expect(classification == .calculated)
-        #expect(evaluation.notification.title == "Quota forecast")
+        #expect(evaluation.notification.title == "Codex quota limit forecast")
         #expect(evaluation.notification.body == "Calculated Codex forecast indicates quota may exhaust before reset. Open LimitBar for details.")
         for prohibited in ["account", "project", "session", "model", "token", "123", "92", "90%"] {
             #expect(!evaluation.notification.body.lowercased().contains(prohibited))
@@ -111,7 +111,7 @@ struct QuotaFindingAlertTests {
         #expect(classification == .calculated)
         #expect(limitations == [.noCausalAttribution, .syntheticFixtureValidationOnly])
         #expect(evaluation.findingTraces == candidate.traces)
-        #expect(evaluation.notification.title == "Quota anomaly")
+        #expect(evaluation.notification.title == "Codex quota limit anomaly")
         #expect(evaluation.notification.body == "Calculated Codex analysis found unusual quota consumption. Open LimitBar for details.")
         for prohibited in ["account", "project", "session", "model", "token", "456", "75", "70%"] {
             #expect(!evaluation.notification.body.lowercased().contains(prohibited))
@@ -140,7 +140,7 @@ struct QuotaFindingAlertTests {
         )
 
         #expect(evaluations.count == 1)
-        #expect(evaluations.first?.notification.title == "Quota forecast and anomaly")
+        #expect(evaluations.first?.notification.title == "Codex 5-hour limit forecast and anomaly")
         #expect(evaluations.first?.notification.body == "Calculated Codex analysis found a possible exhaustion before reset and unusual quota consumption. Open LimitBar for details.")
         #expect(evaluations.first?.findingTraces.count == 2)
     }

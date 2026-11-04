@@ -6,6 +6,23 @@ import Testing
 struct AlertCoreTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test("quota notifications identify the provider and window")
+    func namedQuotaNotifications() throws {
+        for (product, identifier, name) in [
+            (ProviderProduct.claudeCode, "session:session", "Claude Code 5-hour limit"),
+            (.claudeCode, "weekly:weekly_all", "Claude Code weekly limit"),
+            (.codex, "codex:primary:300", "Codex 5-hour limit"),
+            (.codex, "codex:secondary:10080", "Codex weekly limit")
+        ] {
+            let identity = try QuotaWindowIdentity(product: product, identifier: identifier, resetBoundary: now.addingTimeInterval(3600))
+            let preferences = try AlertPreferences(quotaRules: [QuotaAlertRule(product: product, thresholds: PercentageThresholds([70]))], costBudgetRules: [])
+            let observation = QuotaObservation(identity: identity, percentageUsed: 75, observedAt: now, expiresAt: now.addingTimeInterval(60))
+            let notification = try #require(AlertEvaluator.evaluate(preferences: preferences, quota: [observation], costs: [], satisfied: [], now: now).first?.notification)
+            #expect(notification.title == name)
+            #expect(notification.body.contains("70%"))
+        }
+    }
+
     @Test("thresholds and preferences validate while rule IDs survive coding")
     func validatedCodablePreferences() throws {
         #expect(PercentageThresholds.suggested.values == [70, 90])

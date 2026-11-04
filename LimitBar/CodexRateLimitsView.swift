@@ -117,3 +117,91 @@ private struct CreditsUsageRowView: View {
         .padding(20)
         .frame(width: 440, height: 300)
 }
+
+@MainActor
+@Observable
+final class LiveLimitsModel {
+    static let shared = LiveLimitsModel()
+    private(set) var states: [LiveProvider: LiveLimitsState] = [:]
+    private(set) var isRefreshing = false
+
+    func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        for provider in LiveProvider.allCases where states[provider] == nil {
+            states[provider] = .loading
+        }
+        await withTaskGroup(of: (LiveProvider, LiveLimitsState).self) { group in
+            for provider in LiveProvider.allCases {
+                group.addTask { (provider, await LiveProviderLimits.fetch(provider)) }
+            }
+            for await (provider, state) in group {
+                states[provider] = state
+            }
+        }
+    }
+
+    func runWhileVisible() async {
+        while !Task.isCancelled {
+            await refresh()
+            try? await Task.sleep(for: .seconds(60))
+        }
+    }
+}
+
+struct LiveLimitsSectionView: View {
+    let provider: LiveProvider
+    let state: LiveLimitsState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(provider.displayName)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if case let .loaded(_, plan, fetchedAt) = state {
+                    Text([plan.map { "Plan: \($0)" }, "Fetched \(fetchedAt.formatted(date: .omitted, time: .shortened))"].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            switch state {
+            case .loading:
+                ProgressView().controlSize(.small)
+            case .unavailable(let message):
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if provider == .codex {
+                    Button("Log in to Codex Again") { CodexLoginLauncher.openLogin() }
+                        .controlSize(.small)
+                }
+            case .loaded(let groups, _, _):
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let title = group.title {
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(group.windows) { window in
+                            PercentRateLimitRowView(
+                                label: window.label,
+                                percentUsed: window.usedPercent,
+                                severity: .unknown,
+                                resetsAt: window.resetsAt,
+                                isActive: false,
+                                insight: nil,
+                                anomaly: nil,
+                                insightsStorageAvailable: false,
+                                showsAnalysis: false
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

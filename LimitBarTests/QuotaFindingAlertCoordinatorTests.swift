@@ -54,7 +54,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
             now: now
         )
 
-        XCTAssertEqual(fixture.center.added.map(\.title), ["Quota forecast"])
+        XCTAssertEqual(fixture.center.added.map(\.title), ["Codex 5-hour limit forecast"])
         XCTAssertEqual(try fixture.deliveryStore.satisfactions(for: fixture.rule.id, window: .quota(fixture.identity)).map(\.threshold), [70])
     }
 
@@ -125,7 +125,7 @@ final class QuotaFindingAlertCoordinatorTests: XCTestCase {
             now: now
         )
 
-        XCTAssertEqual(fixture.center.added.map(\.title), ["Quota anomaly"])
+        XCTAssertEqual(fixture.center.added.map(\.title), ["Codex 5-hour limit anomaly"])
         XCTAssertEqual(
             try fixture.deliveryStore.satisfactions(for: fixture.rule.id, window: .quota(fixture.identity)).map(\.threshold),
             [70]

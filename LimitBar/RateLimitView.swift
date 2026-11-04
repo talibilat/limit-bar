@@ -4,6 +4,7 @@ import LimitBarCore
 struct RateLimitView: View {
     let state: LimitBarState
     let pricingTable: PricingTable
+    @State private var liveLimits = LiveLimitsModel.shared
 
     var body: some View {
         ScrollView {
@@ -26,30 +27,13 @@ struct RateLimitView: View {
                     )
                 }
 
-                if let codexSnapshot = state.local.codexSnapshot {
-                    sectionHeader("Codex")
-                    CodexRateLimitsView(
-                        snapshot: codexSnapshot,
-                        metrics: state.local.metrics,
-                        pricingTable: pricingTable,
-                        insights: state.quotaInsights,
-                        anomalies: state.quotaAnomalies,
-                        insightsStorageAvailable: state.quotaInsightsStorageAvailable,
-                        explanation: state.local.codexExplanation,
-                        showsAnalysis: false
-                    )
-                }
-
-                if !state.claudeModel.isPresent && state.local.codexSnapshot == nil {
-                    Text("No Claude Code or Codex usage found on this machine yet.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 24)
+                ForEach(LiveProvider.allCases, id: \.self) { provider in
+                    LiveLimitsSectionView(provider: provider, state: liveLimits.states[provider] ?? .loading)
                 }
             }
         }
         .scrollIndicators(.hidden)
+        .task { await liveLimits.runWhileVisible() }
     }
 
     private func sectionHeader(_ title: String) -> some View {

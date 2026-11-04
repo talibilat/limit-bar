@@ -57,6 +57,7 @@ struct AlertSettingsView: View {
     @State private var quotaDrafts: [QuotaDraft]
     @State private var budgetDrafts: [BudgetDraft]
     @State private var validationMessage: String?
+    @State private var savedMessage: String?
     @State private var showResetConfirmation = false
     @State private var showClearConfirmation = false
     @State private var showCompleteResetConfirmation = false
@@ -70,132 +71,230 @@ struct AlertSettingsView: View {
     }
 
     var body: some View {
-        Section("Alerts") {
-            Text("LimitBar evaluates snapshots already collected on this Mac. Alerts do not add provider polling, read extra Keychain data, or include account, project, deployment, model, token, or spend values in notification text.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            LabeledContent("Notifications", value: coordinator.authorizationStatus.rawValue)
-            Button("Enable Notifications") {
-                Task { await coordinator.enableNotifications() }
+        SettingsPage(
+            title: "Alerts",
+            subtitle: "Get notified as you near a limit or a budget. Alerts use data already on this Mac and never show account, model or spend values.",
+            trailing: {
+                Button("Save Changes") { save() }
+                    .buttonStyle(SettingsButtonStyle(.primary))
+                    .accessibilityIdentifier("alerts-save")
             }
-            .disabled(coordinator.authorizationStatus == .authorized || coordinator.authorizationStatus == .provisional)
+        ) {
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+            }
+            if let savedMessage {
+                Text(savedMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            if !notificationsEnabled {
+                HStack(spacing: 12) {
+                    Image(systemName: "bell.badge")
+                        .foregroundStyle(SettingsTone.warning.foreground)
+                    SettingsRowText(title: "macOS notifications are off", detail: "Status: \(coordinator.authorizationStatus.rawValue)")
+                    Button("Enable Notifications") {
+                        Task { await coordinator.enableNotifications() }
+                    }
+                    .buttonStyle(SettingsButtonStyle(.normal))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(SettingsPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(SettingsPalette.border))
+            }
 
             if let lastErrorMessage = coordinator.lastErrorMessage {
                 Text(lastErrorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(.system(size: 12))
+                    .foregroundStyle(SettingsTone.warning.foreground)
             }
 
-            DisclosureGroup("Quota alerts") {
-                Text("Claude Code rules use Claude Code subscription quota snapshots. Codex rules use local Codex session quota snapshots.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(APIProviderQuotaPathAvailability.fixedUnavailableSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach($quotaDrafts) { $draft in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(draft.product.displayName, isOn: $draft.isEnabled)
-                        TextField("Thresholds, for example 70, 90", text: $draft.thresholds)
+            SettingsGroup("Quota alerts", caption: "Alert when a plan limit reaches these percentages") {
+                ForEach(Array($quotaDrafts.enumerated()), id: \.element.id) { offset, $draft in
+                    if offset > 0 { Divider() }
+                    SettingsRow {
+                        Toggle("\(draft.product.displayName) quota alerts", isOn: $draft.isEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        SettingsRowText(
+                            title: draft.product.displayName,
+                            detail: draft.product == .claudeCode ? "Subscription quota" : "Codex plan quota"
+                        )
+                        Text("At")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        TextField("70, 90", text: $draft.thresholds)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+                            .accessibilityLabel("\(draft.product.displayName) thresholds")
+                        Text("%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
                 }
             }
 
-            DisclosureGroup("Cost budgets") {
-                Text("Provider reported uses spend returned by the selected provider API. Calculated estimate uses token usage and your Pricing settings. Custom usage sources are not eligible for budget alerts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
+            SettingsGroup("Cost budgets", caption: "API accounts only") {
                 ForEach($budgetDrafts) { $draft in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Toggle("Enabled", isOn: $draft.isEnabled)
-                            Spacer()
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            Toggle("Budget enabled", isOn: $draft.isEnabled)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                            Text(budgetTitle(draft))
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             Button("Remove") { removeBudget(id: draft.id) }
+                                .buttonStyle(SettingsButtonStyle(.danger))
                         }
-                        Picker("Provider product", selection: $draft.product) {
-                            Text("Anthropic API").tag(ProviderProduct.anthropicAPI)
-                            Text("OpenAI API").tag(ProviderProduct.openAIAPI)
-                            Text("Azure OpenAI").tag(ProviderProduct.azureOpenAI)
-                        }
-                        Picker("Cost source", selection: $draft.source) {
-                            Text("Provider reported").tag(CostSource.providerReported.rawValue)
-                            Text("Calculated estimate").tag(CostSource.calculatedEstimate.rawValue)
-                        }
-                        Picker("Billing period", selection: $draft.period) {
-                            ForEach(BudgetPeriod.options(for: CostSource(rawValue: draft.source) ?? .providerReported), id: \.self) { period in
-                                Text(period.label).tag(period)
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                            GridRow {
+                                SettingsField("Account") {
+                                    Picker("Account", selection: $draft.product) {
+                                        Text("Anthropic API").tag(ProviderProduct.anthropicAPI)
+                                        Text("OpenAI API").tag(ProviderProduct.openAIAPI)
+                                        Text("Azure OpenAI").tag(ProviderProduct.azureOpenAI)
+                                    }
+                                    .labelsHidden()
+                                }
+                                SettingsField("Cost source") {
+                                    Picker("Cost source", selection: $draft.source) {
+                                        Text("Provider reported").tag(CostSource.providerReported.rawValue)
+                                        Text("Calculated estimate").tag(CostSource.calculatedEstimate.rawValue)
+                                    }
+                                    .labelsHidden()
+                                }
+                                SettingsField("Period") {
+                                    Picker("Period", selection: $draft.period) {
+                                        ForEach(BudgetPeriod.options(for: CostSource(rawValue: draft.source) ?? .providerReported), id: \.self) { period in
+                                            Text(period.label).tag(period)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                }
+                            }
+                            GridRow {
+                                SettingsField("Currency") {
+                                    TextField("USD", text: $draft.currencyCode)
+                                        .labelsHidden()
+                                }
+                                SettingsField("Cap") {
+                                    TextField("10", text: $draft.cap)
+                                        .labelsHidden()
+                                }
+                                SettingsField("Alert at (%)") {
+                                    TextField("70, 90", text: $draft.thresholds)
+                                        .labelsHidden()
+                                }
                             }
                         }
+                        .textFieldStyle(.roundedBorder)
                         .onChange(of: draft.source) { _, source in
                             draft.period = source == CostSource.providerReported.rawValue ? .weekUTC : .todayLocal
                         }
-                        HStack {
-                            TextField("Currency (USD)", text: $draft.currencyCode)
-                            TextField("Positive cap", text: $draft.cap)
-                        }
-                        TextField("Thresholds, for example 70, 90", text: $draft.thresholds)
                     }
-                    .padding(.vertical, 8)
+                    .padding(16)
+                    Divider()
                 }
 
-                Button("Add Cost Budget") {
-                    budgetDrafts.append(BudgetDraft(
-                        id: UUID(),
-                        product: .anthropicAPI,
-                        source: CostSource.providerReported.rawValue,
-                        period: .weekUTC,
-                        currencyCode: "USD",
-                        cap: "10",
-                        thresholds: "70, 90",
-                        isEnabled: true
-                    ))
+                HStack(spacing: 12) {
+                    Button {
+                        budgetDrafts.append(BudgetDraft(
+                            id: UUID(),
+                            product: .anthropicAPI,
+                            source: CostSource.providerReported.rawValue,
+                            period: .weekUTC,
+                            currencyCode: "USD",
+                            cap: "10",
+                            thresholds: "70, 90",
+                            isEnabled: true
+                        ))
+                    } label: {
+                        Label("Add Budget", systemImage: "plus")
+                    }
+                    .buttonStyle(SettingsButtonStyle(.normal))
+                    Text("Provider reported uses spend from the API. Calculated estimate uses your prices in Sources & Pricing.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
 
-            if let validationMessage {
-                Text(validationMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack {
-                Button("Save Alert Settings") { save() }
-                Button("Reset Settings", role: .destructive) { showResetConfirmation = true }
-                Button("Clear Notification History", role: .destructive) { showClearConfirmation = true }
-                Button("Reset All Alert Data", role: .destructive) { showCompleteResetConfirmation = true }
+            SettingsGroup("Reset") {
+                resetRow(title: "Reset alert rules", detail: "Turns off all quota alerts and removes budgets", button: "Reset Rules…") {
+                    showResetConfirmation = true
+                }
+                Divider()
+                resetRow(title: "Clear notification history", detail: "Active thresholds may alert again on the next reading", button: "Clear History…") {
+                    showClearConfirmation = true
+                }
+                Divider()
+                resetRow(title: "Reset everything", detail: "Rules, delivery history and delivered notifications", button: "Reset All…") {
+                    showCompleteResetConfirmation = true
+                }
             }
         }
         .task { await coordinator.refreshAuthorizationStatus() }
         .onReceive(NotificationCenter.default.publisher(for: .alertSettingsDidChange)) { _ in
             reload()
         }
-        .confirmationDialog("Reset all alert settings?", isPresented: $showResetConfirmation) {
+        .confirmationDialog("Reset all alert settings?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
             Button("Reset Alert Settings", role: .destructive) {
                 store.reset()
                 validationMessage = nil
+                savedMessage = nil
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Quota alerts are turned off and every cost budget is removed.")
         }
-        .confirmationDialog("Clear notification history?", isPresented: $showClearConfirmation) {
+        .confirmationDialog("Clear notification history?", isPresented: $showClearConfirmation, titleVisibility: .visible) {
             Button("Clear History", role: .destructive) {
                 Task { await coordinator.clearHistory() }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Delivered and pending LimitBar notifications will be removed. Active thresholds may alert again on the next snapshot.")
         }
-        .confirmationDialog("Reset all alert data?", isPresented: $showCompleteResetConfirmation) {
+        .confirmationDialog("Reset all alert data?", isPresented: $showCompleteResetConfirmation, titleVisibility: .visible) {
             Button("Reset Settings and History", role: .destructive) {
                 store.reset()
                 Task { await coordinator.clearHistory() }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Configured rules, delivery history, and pending or delivered LimitBar notifications will be removed.")
         }
     }
 
+    private var notificationsEnabled: Bool {
+        coordinator.authorizationStatus == .authorized || coordinator.authorizationStatus == .provisional
+    }
+
+    private func budgetTitle(_ draft: BudgetDraft) -> String {
+        let cap = draft.cap.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currency = draft.currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let period = draft.period == .todayLocal ? "per day" : "per week"
+        return "\(draft.product.displayName) · \(cap.isEmpty ? "–" : cap) \(currency) \(period)"
+    }
+
+    private func resetRow(title: String, detail: String, button: String, action: @escaping () -> Void) -> some View {
+        SettingsRow(verticalPadding: 12) {
+            SettingsRowText(title: title, detail: detail, emphasized: false)
+            Button(button, action: action)
+                .buttonStyle(SettingsButtonStyle(.danger))
+        }
+    }
+
     private func save() {
+        savedMessage = nil
         do {
             let quotaRules = try quotaDrafts.map { draft in
                 QuotaAlertRule(
@@ -223,7 +322,9 @@ struct AlertSettingsView: View {
                 )
             }
             let preferences = try AlertPreferences(quotaRules: quotaRules, costBudgetRules: costRules)
-            validationMessage = store.replaceRules(with: preferences) ? nil : "Alert settings could not be saved."
+            let saved = store.replaceRules(with: preferences)
+            validationMessage = saved ? nil : "Alert settings could not be saved."
+            savedMessage = saved ? "Alert settings saved." : nil
         } catch AlertValidationError.invalidThreshold {
             validationMessage = "Thresholds must be unique whole numbers from 1 through 100."
         } catch AlertValidationError.invalidCurrencyCode {
