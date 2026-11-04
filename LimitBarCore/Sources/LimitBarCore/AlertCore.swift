@@ -192,6 +192,29 @@ public struct QuotaWindowIdentity: Codable, Equatable, Hashable, Sendable {
         )
     }
 
+    public var alertLimitName: String {
+        let parts = identifier.split(separator: ":")
+        if product == .claudeCode {
+            if parts.first == "session" { return "5-hour limit" }
+            if parts.first == "weekly" {
+                switch parts.last {
+                case "weekly_sonnet": return "weekly Sonnet limit"
+                case "weekly_opus": return "weekly Opus limit"
+                default: return "weekly limit"
+                }
+            }
+        }
+        if product == .codex, let minutes = parts.last.flatMap({ Int($0) }) {
+            switch minutes {
+            case 300: return "5-hour limit"
+            case 10_080: return "weekly limit"
+            case 43_200: return "monthly limit"
+            default: return "\(minutes)-minute limit"
+            }
+        }
+        return "quota limit"
+    }
+
     public static func claudeCode(_ limit: ClaudeRateLimit) -> QuotaWindowIdentity? {
         guard let reset = limit.resetsAt else { return nil }
         return try? QuotaWindowIdentity(
@@ -764,8 +787,8 @@ public enum AlertEvaluator {
                     evaluations.append(AlertEvaluation(
                         occurrence: AlertOccurrence(ruleID: rule.id, window: window, thresholds: thresholds),
                         notification: AlertNotification(
-                            title: "Usage alert",
-                            body: "\(rule.product.displayName) quota usage reached \(highest)%.",
+                            title: "\(rule.product.displayName) \(observation.identity.alertLimitName)",
+                            body: "\(highest)% of your \(observation.identity.alertLimitName) has been used.",
                             threshold: highest
                         ),
                         findingTraces: []
@@ -874,19 +897,19 @@ public enum AlertEvaluator {
         return switch finding.category {
         case .forecast:
             AlertNotification(
-                title: "Quota forecast",
+                title: "\(product.displayName) \(finding.identity.alertLimitName) forecast",
                 body: "\(classification) \(product.displayName) forecast indicates quota may exhaust before reset. Open LimitBar for details.",
                 threshold: threshold
             )
         case .anomaly:
             AlertNotification(
-                title: "Quota anomaly",
+                title: "\(product.displayName) \(finding.identity.alertLimitName) anomaly",
                 body: "\(classification) \(product.displayName) analysis found unusual quota consumption. Open LimitBar for details.",
                 threshold: threshold
             )
         case .forecastAndAnomaly:
             AlertNotification(
-                title: "Quota forecast and anomaly",
+                title: "\(product.displayName) \(finding.identity.alertLimitName) forecast and anomaly",
                 body: "\(classification) \(product.displayName) analysis found a possible exhaustion before reset and unusual quota consumption. Open LimitBar for details.",
                 threshold: threshold
             )

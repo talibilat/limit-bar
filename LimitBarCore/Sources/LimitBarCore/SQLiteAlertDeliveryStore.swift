@@ -64,11 +64,11 @@ public final class SQLiteAlertDeliveryStore {
               now.timeIntervalSince1970.isFinite,
               leaseDuration.isFinite,
               leaseDuration > 0 else { return nil }
-        let windowKey = try encode(occurrence.window)
         let token = UUID()
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             try deleteExpiredReservations(now: now)
+            let windowKey = try encode(occurrence.window)
             let available = try occurrence.thresholds.filter { threshold in
                 try !contains(ruleID: occurrence.ruleID, windowKey: windowKey, threshold: threshold)
             }
@@ -259,7 +259,25 @@ public final class SQLiteAlertDeliveryStore {
     }
 
     private func encode(_ window: AlertWindowIdentity) throws -> String {
-        window.canonicalIdentifier
+        // Claude derives reset times from a countdown, which drifts slightly between reads.
+        if case let .quota(identity) = window, identity.product == .claudeCode {
+            let prefix = "q|\(identity.product.rawValue)|\(identity.identifier.utf8.count):\(identity.identifier)|"
+            let statement = try prepare("""
+            SELECT window_key FROM alert_deliveries
+            WHERE substr(window_key, 1, length(?)) = ? AND abs(boundary - ?) <= 5
+            ORDER BY boundary, window_key LIMIT 1;
+            """)
+            defer { sqlite3_finalize(statement) }
+            bind(prefix, at: 1, in: statement)
+            bind(prefix, at: 2, in: statement)
+            sqlite3_bind_double(statement, 3, window.boundary.timeIntervalSince1970)
+            let result = sqlite3_step(statement)
+            if result == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) {
+                return String(cString: text)
+            }
+            guard result == SQLITE_DONE else { throw executeError() }
+        }
+        return window.canonicalIdentifier
     }
 
     private func execute(_ sql: String) throws {

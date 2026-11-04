@@ -90,6 +90,31 @@ struct SQLiteAlertDeliveryStoreTests {
         #expect(try SQLiteUsageMetricStore(path: path).allMetrics().isEmpty)
     }
 
+    @Test("Claude countdown drift does not repeat alerts across reopen or hide other limits")
+    func countdownDrift() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let ruleID = UUID()
+        func occurrence(_ seconds: Double, kind: String = "session:session", threshold: Int = 70) throws -> AlertOccurrence {
+            AlertOccurrence(ruleID: ruleID, window: .quota(try QuotaWindowIdentity(
+                product: .claudeCode, identifier: kind, resetBoundary: now.addingTimeInterval(seconds)
+            )), thresholds: [threshold])
+        }
+        do {
+            let store = try SQLiteAlertDeliveryStore(path: path)
+            let reservation = try #require(try store.reserve(occurrence(3600.2), now: now))
+            #expect(try store.reserve(occurrence(3599.8), now: now) == nil)
+            try store.markDelivered(reservation, at: now)
+        }
+        let store = try SQLiteAlertDeliveryStore(path: path)
+        let drifted = try occurrence(3599.1)
+        #expect(try store.satisfactions(for: ruleID, window: drifted.window).map(\.threshold) == [70])
+        #expect(try store.reserve(drifted, now: now) == nil)
+        #expect(try store.reserve(occurrence(3599.1, threshold: 90), now: now) != nil)
+        #expect(try store.reserve(occurrence(3599.1, kind: "weekly:weekly_all"), now: now) != nil)
+        #expect(try store.reserve(occurrence(21600), now: now) != nil)
+    }
+
     private func quotaOccurrence(thresholds: [Int], identifier: String = "primary") throws -> AlertOccurrence {
         let identity = try QuotaWindowIdentity(product: .codex, identifier: identifier, resetBoundary: now.addingTimeInterval(60))
         let ruleID = try #require(UUID(uuidString: "8AB1442A-F507-483A-9D92-756898B8190D"))
