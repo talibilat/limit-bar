@@ -37,7 +37,7 @@ struct ClaudeBrowserLoginLauncher: ClaudeLoginLaunching {
         return ClaudeLoginCommand(executableURL: canonicalURL, executableIdentity: identity)
     }
 
-    private static func productionExecutableCandidates() -> [URL] {
+    static func productionExecutableCandidates() -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let nvmRoot = ProcessInfo.processInfo.environment["NVM_DIR"].map(URL.init(fileURLWithPath:))
             ?? home.appendingPathComponent(".nvm")
@@ -158,7 +158,11 @@ final class ClaudeLoginController {
             await model.refresh()
             return
         }
+        await signIn(model: model)
+    }
 
+    func signIn(model: ClaudeRateLimitsModel) async {
+        guard !isLoggingIn else { return }
         isLoggingIn = true
         message = nil
         defer { isLoggingIn = false }

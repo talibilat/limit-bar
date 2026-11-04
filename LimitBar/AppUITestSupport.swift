@@ -177,14 +177,13 @@ private struct LimitBarUITestHostView: View {
     var body: some View {
         switch AppUITestConfiguration.screen {
         case "settings":
-            Form {
+            ScrollView {
                 CustomUsageSourcesSection(
                     store: CustomUsageSourceStore(defaults: AppUITestConfiguration.userDefaults!),
                     chooseFile: { AppUITestConfiguration.customSourceFixturePath }
                 )
+                .padding(20)
             }
-            .formStyle(.grouped)
-            .padding(20)
             .frame(width: 620, height: 720)
         case "diagnostic-export", "diagnostic-export-cancel-destination":
             Form {

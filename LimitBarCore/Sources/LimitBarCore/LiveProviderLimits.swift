@@ -100,7 +100,7 @@ public enum LiveProviderLimits {
         return parsed
     }
 
-    private static func locateCodex() -> URL? {
+    public static func locateCodex() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = ["\(home)/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.bun/bin/codex", "\(home)/.npm-global/bin/codex"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }

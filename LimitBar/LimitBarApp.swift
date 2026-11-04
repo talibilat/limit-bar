@@ -84,6 +84,7 @@ final class LimitBarState {
     let alertSettingsStore: AlertSettingsStore
     let alertCoordinator: AlertCoordinator
     let recoveryInbox = RecoveryInboxModel()
+    let windowStarter = LimitWindowStarter()
     private(set) var quotaAnalysis = QuotaFindingAnalysisSnapshot.empty
     var quotaInsights: [QuotaWindowIdentity: QuotaInsightState] { quotaAnalysis.forecasts }
     var quotaAnomalies: [QuotaWindowIdentity: QuotaAnomalyState] { quotaAnalysis.anomalies }
@@ -198,6 +199,20 @@ final class LimitBarState {
         guard usesLiveRefresh else { return }
         recoveryInbox.refresh()
         startProviderStatusSubscriptionIfNeeded()
+        windowStarter.start(
+            readResets: { [weak self] product in await self?.limitWindowResets(for: product) },
+            send: { product in
+                let executable: URL? = switch product {
+                case .claudeCode:
+                    ClaudeBrowserLoginLauncher.productionExecutableCandidates()
+                        .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+                case .codex:
+                    LiveProviderLimits.locateCodex()
+                }
+                guard let executable else { return false }
+                return await LimitWindowMessenger.send(product, executable: executable)
+            }
+        )
         guard observationTask == nil else { return }
         beginInvestigationRefreshRequest()
         observationTask = Task { [weak self, coordinator] in
@@ -297,6 +312,31 @@ final class LimitBarState {
         }
         result[.codex] = .unavailable
         return result
+    }
+
+    private func limitWindowResets(for product: WindowStarterProduct) async -> LimitWindowResets? {
+        switch product {
+        case .claudeCode:
+            await claudeModel.refresh()
+            guard case let .loaded(snapshot, _) = claudeModel.state else { return nil }
+            claudeActionCompleted()
+            let accountWide = snapshot.limits.filter { $0.scopeDisplayName == nil }
+            let session = accountWide.first { $0.group == .session }
+            return LimitWindowResets(
+                hasSessionWindow: session != nil,
+                sessionResetsAt: session?.resetsAt,
+                weeklyResetsAt: accountWide.first { $0.group == .weekly }?.resetsAt
+            )
+        case .codex:
+            guard case let .loaded(groups, _, _) = await LiveProviderLimits.fetch(.codex) else { return nil }
+            let windows = groups.flatMap(\.windows)
+            let session = windows.first { $0.id == "primary" && $0.label.hasPrefix("Session") }
+            return LimitWindowResets(
+                hasSessionWindow: session != nil,
+                sessionResetsAt: session?.resetsAt,
+                weeklyResetsAt: windows.first { $0.label == "Weekly" }?.resetsAt
+            )
+        }
     }
 
     func clearHistoricalUsage() {
