@@ -149,7 +149,8 @@ struct CollectorWriterTests {
         }
 
         let active = try Data(contentsOf: output).split(separator: 0x0A).map { try CollectorSchemaV2.decode(Data($0)) }
-        #expect(active.map(\.eventID) == [try uuid(2), try uuid(3)])
+        let expectedIDs = [try uuid(2), try uuid(3)]
+        #expect(active.map(\.eventID) == expectedIDs)
         #expect(active.first?.project?.id == "project-one")
     }
 
