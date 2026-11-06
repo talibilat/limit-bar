@@ -269,6 +269,44 @@ public actor UsageDatabase {
         }
     }
 
+    /// Records finished past days from a source that can report each day's usage after the fact.
+    /// Today is left to the regular window metrics so each period has a single writer.
+    @discardableResult
+    public func recordHistoricalBackfill(
+        _ days: [CodexDailyUsage],
+        customSourceID: UUID,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> Bool {
+        do {
+            let store = try openHistoricalStore()
+            let todayStart = calendar.startOfDay(for: now)
+            let source = UsageMetricSource.custom(customSourceID)
+            var samples: [HistoricalUsageTrendSample] = []
+            for day in days where day.dayStart < todayStart {
+                let interval = TimeWindow.today.interval(containing: day.dayStart, calendar: calendar)
+                let window = try ExactUsageWindow(timeWindow: .today, start: interval.start, end: interval.end, basis: .localCalendar)
+                let period = try HistoricalUsageTrendPeriod(window: window, timeZoneIdentifier: calendar.timeZone.identifier)
+                samples.append(try HistoricalUsageTrendSample(
+                    provider: .custom,
+                    source: source,
+                    coverage: .model(day.model),
+                    period: period,
+                    tokenUsage: TokenUsage(inputTokens: day.inputTokens, outputTokens: day.outputTokens)
+                ))
+            }
+            guard !samples.isEmpty else { return true }
+            samples.append(contentsOf: try providerTotalSamples(from: samples))
+            let scopes = Set(samples.map {
+                HistoricalUsageObservedScope(provider: $0.provider, source: $0.source, period: $0.period)
+            })
+            _ = try store.record(samples, observedScopes: scopes, now: now)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     public func historicalRetention() -> HistoricalUsageRetention {
         (try? openHistoricalStore().retention()) ?? lastValidHistory?.retention ?? .default
     }

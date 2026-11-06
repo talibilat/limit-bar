@@ -727,6 +727,7 @@ private struct ApplicationLocalUsageRefresher: LocalUsageRefreshing {
         for diagnostic in diagnostics where diagnostic.failureMessage == nil {
             observedSources.insert(.custom(diagnostic.sourceID))
         }
+        await CodexUsageSource.backfillHistory(now: now, calendar: calendar)
         let history = await UsageDatabase.shared.historicalUsage(
             metrics: snapshot.metrics,
             now: now,
@@ -802,5 +803,11 @@ enum CodexUsageSource {
         guard FileManager.default.fileExists(atPath: sessions.path),
               await exporter.export(sessionsDirectory: sessions, to: locations.codexUsageEventsFile) else { return nil }
         return CustomUsageSource(id: id, name: "Codex", filePath: locations.codexUsageEventsFile.path)
+    }
+
+    /// Fills History with finished past days taken from the Codex session timestamps.
+    static func backfillHistory(now: Date, calendar: Calendar) async {
+        let days = await exporter.dailyUsage(calendar: calendar)
+        await UsageDatabase.shared.recordHistoricalBackfill(days, customSourceID: id, now: now, calendar: calendar)
     }
 }
