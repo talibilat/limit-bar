@@ -118,7 +118,8 @@ final class LimitBarState {
 
     private init() {
         let sessionsDirectory = LimitBarFileLocations.codexSessionsDirectory(
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            environment: ProcessInfo.processInfo.environment
         )
         let refreshCadence = LocalRefreshSettingsStore().cadence
         providerSettings = ProviderSettingsStore().settings
@@ -711,7 +712,12 @@ final class LimitBarState {
 
 private struct ApplicationLocalUsageRefresher: LocalUsageRefreshing {
     func refresh(now: Date, calendar: Calendar) async -> LocalUsageRefresh {
-        let diagnostics = await UsageDatabase.shared.refreshCustomSources(CustomUsageSourceStore().sources, now: now, calendar: calendar)
+        var sources = CustomUsageSourceStore().sources
+        if let codexSource = await CodexUsageSource.current() {
+            sources.removeAll { $0.id == codexSource.id }
+            sources.append(codexSource)
+        }
+        let diagnostics = await UsageDatabase.shared.refreshCustomSources(sources, now: now, calendar: calendar)
         let snapshot = await UsageDatabase.shared.snapshot(now: now, calendar: calendar)
         let pricing = PricingSettingsStore()
         var observedSources = Set<UsageMetricSource>()
@@ -779,4 +785,22 @@ private struct MenuBarStatusLabel: View {
 
 extension Notification.Name {
     static let historicalUsageDidChange = Notification.Name("LimitBar.historicalUsageDidChange")
+}
+
+
+/// Usage derived from the local Codex session files, shown as its own source on the Usage and History tabs.
+enum CodexUsageSource {
+    static let id = UUID(uuidString: "C0DE0C0D-0000-4000-8000-00000000C0DE")!
+    private static let exporter = CodexUsageEventExporter()
+
+    static func current() async -> CustomUsageSource? {
+        guard let locations = try? LimitBarFileLocations.production() else { return nil }
+        let sessions = LimitBarFileLocations.codexSessionsDirectory(
+            homeDirectory: locations.homeDirectory,
+            environment: ProcessInfo.processInfo.environment
+        )
+        guard FileManager.default.fileExists(atPath: sessions.path),
+              await exporter.export(sessionsDirectory: sessions, to: locations.codexUsageEventsFile) else { return nil }
+        return CustomUsageSource(id: id, name: "Codex", filePath: locations.codexUsageEventsFile.path)
+    }
 }
