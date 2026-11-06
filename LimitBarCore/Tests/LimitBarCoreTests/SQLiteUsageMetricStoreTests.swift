@@ -207,6 +207,21 @@ struct SQLiteUsageMetricStoreTests {
         #expect(try tableColumns(in: database) == canonicalColumns)
     }
 
+    @Test("alert tables created first do not block the usage metrics schema")
+    func alertTablesCreatedFirstDoNotBlockUsageSchema() throws {
+        let path = temporaryDatabasePath()
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        var database: OpaquePointer?
+        try openDatabase(at: path, into: &database)
+        try execute("CREATE TABLE alert_store_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);", in: database)
+        sqlite3_close(database)
+        database = nil
+
+        let store = try SQLiteUsageMetricStore(path: path)
+        #expect(store.health().isOpen)
+        _ = try SQLiteUsageMetricStore(path: path)
+    }
+
     @Test("unknown version zero schema is rejected without mutation")
     func unknownVersionZeroSchemaIsRejectedWithoutMutation() throws {
         let path = temporaryDatabasePath()

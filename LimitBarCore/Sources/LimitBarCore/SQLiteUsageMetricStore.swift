@@ -461,7 +461,12 @@ public final class SQLiteUsageMetricStore {
         }
 
         if version == 0, try !tableExists("usage_metrics") {
-            guard try schemaObjects().isEmpty else {
+            // The alert store shares this file and can create its tables first on a fresh install.
+            let alertObjects: Set<String> = [
+                "table:alert_store_metadata", "table:alert_deliveries",
+                "index:alert_deliveries_boundary", "index:alert_deliveries_lease"
+            ]
+            guard try schemaObjects().isSubset(of: alertObjects) else {
                 throw UsageMetricStoreError.executeFailed("Unsupported usage metric schema fingerprint for version 0")
             }
             try createLatestSchema()
