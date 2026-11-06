@@ -139,12 +139,13 @@ struct LocalUsageEventImporterTests {
             calendar: utcCalendar()
         )
 
-        #expect(result.sixHourAggregates.map(\.window.start) == [
+        let expectedStarts = [
             try date("2026-07-09T18:00:00Z"),
             try date("2026-07-10T00:00:00Z"),
             try date("2026-07-10T06:00:00Z"),
             try date("2026-07-10T12:00:00Z")
-        ])
+        ]
+        #expect(result.sixHourAggregates.map(\.window.start) == expectedStarts)
         #expect(result.sixHourAggregates.map(\.tokenUsage) == [
             TokenUsage(inputTokens: 1, outputTokens: 2),
             TokenUsage(inputTokens: 3, outputTokens: 4),

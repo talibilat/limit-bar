@@ -382,12 +382,12 @@ struct HistoricalUsageTrendStoreTests {
             provider: .custom,
             source: .custom(customID)
         )
-        try store.recordSixHourAggregates([old, custom], sourceRevision: "scan")
+        try store.recordSixHourAggregates([old, custom], sourceRevision: "scan", now: date("2026-07-15T12:00:00Z"))
 
         #expect(try store.setRetention(.days30, now: date("2026-07-15T12:00:00Z")) == 1)
         #expect(try store.deleteCustomSources(excluding: []) == 1)
         #expect(try store.sixHourAggregates(from: .distantPast, through: .distantFuture).isEmpty)
-        try store.recordSixHourAggregates([custom], sourceRevision: "scan")
+        try store.recordSixHourAggregates([custom], sourceRevision: "scan", now: date("2026-07-15T12:00:00Z"))
         #expect(try store.deleteAll() == 1)
         #expect(try store.sixHourAggregates(from: .distantPast, through: .distantFuture).isEmpty)
     }

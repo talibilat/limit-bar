@@ -242,7 +242,8 @@ public protocol OrganizationTeamAliasing: Sendable {
     func alias(for teamIdentity: UUID) throws -> String
 }
 
-public struct OrganizationTeamAliasKey: OrganizationTeamAliasing, Sendable {
+// The key is immutable; older CryptoKit SDKs do not mark SymmetricKey as Sendable.
+public struct OrganizationTeamAliasKey: OrganizationTeamAliasing, @unchecked Sendable {
     private let key: SymmetricKey
 
     public init(keyData: Data) throws {

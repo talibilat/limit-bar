@@ -131,10 +131,11 @@ struct CustomUsageSourceTests {
             calendar: gregorianGMTCalendar()
         )
 
-        #expect(result.sixHourAggregates.map(\.window.start) == [
+        let expectedStarts = [
             try date("2026-07-09T00:00:00Z"),
             try date("2026-07-09T06:00:00Z")
-        ])
+        ]
+        #expect(result.sixHourAggregates.map(\.window.start) == expectedStarts)
         #expect(result.sixHourAggregates.allSatisfy { $0.source == .custom(source.id) && $0.provider == .custom })
     }
 

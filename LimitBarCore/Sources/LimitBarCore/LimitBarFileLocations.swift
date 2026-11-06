@@ -13,8 +13,35 @@ public struct LimitBarFileLocations: Equatable, Sendable {
         Self.codexSessionsDirectory(homeDirectory: homeDirectory)
     }
 
-    public static func codexSessionsDirectory(homeDirectory: URL) -> URL {
-        homeDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
+    /// Codex keeps its data in `$CODEX_HOME` when that variable is set, otherwise in `~/.codex`.
+    /// Pass the process environment from the app; tests use the empty default so results stay fixed.
+    public static func codexSessionsDirectory(homeDirectory: URL, environment: [String: String] = [:]) -> URL {
+        if let custom = environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+            let expanded = custom == "~" || custom.hasPrefix("~/")
+                ? homeDirectory.path + custom.dropFirst()
+                : custom
+            return URL(fileURLWithPath: expanded, isDirectory: true).appendingPathComponent("sessions", isDirectory: true)
+        }
+        return homeDirectory.appendingPathComponent(".codex/sessions", isDirectory: true)
+    }
+
+    /// Claude Code keeps transcripts in `$CLAUDE_CONFIG_DIR/projects` when that variable is set, otherwise `~/.claude/projects`.
+    public static func claudeProjectsDirectory(homeDirectory: URL, environment: [String: String] = [:]) -> URL {
+        if let custom = environment["CLAUDE_CONFIG_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+            let expanded = custom == "~" || custom.hasPrefix("~/")
+                ? homeDirectory.path + custom.dropFirst()
+                : custom
+            return URL(fileURLWithPath: expanded, isDirectory: true).appendingPathComponent("projects", isDirectory: true)
+        }
+        return homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true)
+    }
+
+    public var claudeCodeUsageEventsFile: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("claude-code-usage-events.jsonl")
+    }
+
+    public var codexUsageEventsFile: URL {
+        limitBarApplicationSupportDirectory.appendingPathComponent("codex-usage-events.jsonl")
     }
 
     public var limitBarApplicationSupportDirectory: URL {

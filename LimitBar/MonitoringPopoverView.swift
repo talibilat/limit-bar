@@ -78,6 +78,12 @@ struct MonitoringPopoverView: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openSettings()
                 }
+
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
+                .keyboardShortcut("q")
+                .accessibilityIdentifier("quit-action")
                 .accessibilityIdentifier("settings-action")
             }
         }

@@ -25,6 +25,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Select Xcode for subprocesses
+        run: sudo xcode-select --switch "$DEVELOPER_DIR"
+
       - name: Verify toolchain
         run: scripts/check-toolchain.sh
 

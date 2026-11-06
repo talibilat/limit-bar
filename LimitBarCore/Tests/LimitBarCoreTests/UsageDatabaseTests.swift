@@ -64,6 +64,38 @@ struct UsageDatabaseTests {
         #expect(history.dailyBuckets.dropLast().allSatisfy { $0.value == HistoricalUsageTrendBucket.Value.gap })
     }
 
+    @Test("backfill puts past days in their own history buckets and leaves today alone")
+    func backfillsPastDays() async throws {
+        let currentPath = temporaryDatabasePath()
+        let historyPath = temporaryDatabasePath()
+        defer {
+            try? FileManager.default.removeItem(atPath: currentPath)
+            try? FileManager.default.removeItem(atPath: historyPath)
+        }
+        let now = Date(timeIntervalSince1970: 1_783_716_000)
+        let calendar = utcCalendar()
+        let database = UsageDatabase(
+            pathFactory: { currentPath },
+            localEventsURL: missingEventsURL(),
+            historicalPathFactory: { historyPath }
+        )
+        let today = calendar.startOfDay(for: now)
+        let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: today)!
+        let days = [
+            LocalDailyUsage(dayStart: twoDaysAgo, model: "m", inputTokens: 100, outputTokens: 20),
+            LocalDailyUsage(dayStart: today, model: "m", inputTokens: 999, outputTokens: 999)
+        ]
+        #expect(await database.recordHistoricalBackfill(days, customSourceID: UUID(), now: now, calendar: calendar))
+
+        let history = await database.historicalUsage(metrics: [], now: now, calendar: calendar)
+        let observed = history.dailyBuckets.compactMap { bucket -> (Date, Int)? in
+            guard case let .observed(observations) = bucket.value else { return nil }
+            return (bucket.period.window.start, observations.map(\.sample.tokenUsage.totalTokens).max() ?? 0)
+        }
+        #expect(observed.contains { $0.0 == twoDaysAgo && $0.1 == 120 })
+        #expect(!observed.contains { $0.0 == today && $0.1 == 1_998 })
+    }
+
     @Test("history deletion preserves current metrics")
     func deletesOnlyHistoricalUsage() async throws {
         let currentPath = temporaryDatabasePath()
