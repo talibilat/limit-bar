@@ -1,21 +1,79 @@
 import Foundation
 
-// Turns local Codex session files into normalized usage events (timestamp, model, tokens)
-// so the Usage and History tabs have data. It reads only token counters and the model
-// label. Prompts, code, responses and paths never leave the session files.
+// Turns local coding-agent session files (Codex, Claude Code) into normalized usage events
+// (timestamp, model, tokens) so the Usage and History tabs have data. It reads only token
+// counters and the model label. Prompts, code, responses and paths never leave the files.
 
-public struct CodexDailyUsage: Equatable, Sendable {
+public struct LocalDailyUsage: Equatable, Sendable {
     public let dayStart: Date
     public let model: String
     public let inputTokens: Int
     public let outputTokens: Int
 }
 
-public struct CodexUsageEvent: Equatable, Sendable {
+public struct DerivedUsageEvent: Equatable, Sendable {
     public let timestamp: Date
     public let model: String
     public let inputTokens: Int
     public let outputTokens: Int
+    /// Events with the same key count once across all files. Nil means never deduplicated.
+    public let dedupeKey: String?
+
+    public init(timestamp: Date, model: String, inputTokens: Int, outputTokens: Int, dedupeKey: String? = nil) {
+        self.timestamp = timestamp
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.dedupeKey = dedupeKey
+    }
+}
+
+/// Mirrors T3 Code's Claude Code reader. Claude Code writes one line per content block and each
+/// repeats the message's full `usage`, so the first line per `messageId:requestId` is the only one
+/// kept. Advisor calls on another model are their own events.
+public enum ClaudeUsageEventParser {
+    private static let syntheticModel = "<synthetic>"
+
+    public static func events(from data: Data) -> [DerivedUsageEvent] {
+        var events: [DerivedUsageEvent] = []
+        let marker = Data("\"usage\"".utf8)
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            guard line.range(of: marker) != nil,
+                  let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+                  object["type"] as? String == "assistant",
+                  let message = object["message"] as? [String: Any],
+                  let usage = message["usage"] as? [String: Any],
+                  let stamp = (object["timestamp"] as? String).flatMap(parseUsageTimestamp),
+                  let model = message["model"] as? String, !model.isEmpty, model != syntheticModel else { continue }
+            let messageID = message["id"] as? String
+            let requestID = object["requestId"] as? String
+            let key = messageID == nil && requestID == nil ? nil : "\(messageID ?? ""):\(requestID ?? "")"
+            if let event = event(stamp, String(model.prefix(200)), usage, key) { events.append(event) }
+            let iterations = usage["iterations"] as? [[String: Any]] ?? []
+            for (index, iteration) in iterations.enumerated() where iteration["type"] as? String == "advisor_message" {
+                guard let advisor = iteration["model"] as? String, !advisor.isEmpty, advisor != syntheticModel,
+                      let event = event(stamp, String(advisor.prefix(200)), iteration, key.map { "\($0):advisor:\(index)" }) else { continue }
+                events.append(event)
+            }
+        }
+        return events
+    }
+
+    private static func event(_ stamp: Date, _ model: String, _ usage: [String: Any], _ key: String?) -> DerivedUsageEvent? {
+        func count(_ name: String) -> Int { max(0, (usage[name] as? NSNumber)?.intValue ?? 0) }
+        // Input includes cached reads and cache writes so it compares with Codex's inclusive input.
+        let input = count("input_tokens") + count("cache_read_input_tokens") + count("cache_creation_input_tokens")
+        let output = count("output_tokens")
+        guard input + output > 0 else { return nil }
+        return DerivedUsageEvent(timestamp: stamp, model: model, inputTokens: input, outputTokens: output, dedupeKey: key)
+    }
+}
+
+func parseUsageTimestamp(_ text: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: text) { return date }
+    return ISO8601DateFormatter().date(from: text)
 }
 
 /// Mirrors T3 Code's Codex reader. Each `token_count` event's `last_token_usage` is one request.
@@ -76,9 +134,9 @@ public enum CodexUsageEventParser {
 
     private static let forkCopyMaxGap: TimeInterval = 1
 
-    public static func events(from data: Data) -> [CodexUsageEvent] {
+    public static func events(from data: Data) -> [DerivedUsageEvent] {
         var state = State()
-        var events: [CodexUsageEvent] = []
+        var events: [DerivedUsageEvent] = []
         let markers = ["session_meta", "turn_context", "token_usage_record", "token_count"].map { Data($0.utf8) }
         for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
             guard markers.contains(where: { line.range(of: $0) != nil }),
@@ -89,7 +147,7 @@ public enum CodexUsageEventParser {
         return events
     }
 
-    private static func process(_ object: [String: Any], _ payload: [String: Any], _ state: inout State) -> [CodexUsageEvent] {
+    private static func process(_ object: [String: Any], _ payload: [String: Any], _ state: inout State) -> [DerivedUsageEvent] {
         let type = object["type"] as? String
         let stamp = (object["timestamp"] as? String).flatMap(parseTimestamp)
 
@@ -175,8 +233,8 @@ public enum CodexUsageEventParser {
         }
         state.lastSignature = last.fields
 
-        var result = unreported.map { CodexUsageEvent(timestamp: $0.timestamp, model: $0.model, inputTokens: $0.usage.input, outputTokens: $0.usage.output) }
-        result.append(CodexUsageEvent(timestamp: stamp, model: state.model, inputTokens: last.input, outputTokens: last.output))
+        var result = unreported.map { DerivedUsageEvent(timestamp: $0.timestamp, model: $0.model, inputTokens: $0.usage.input, outputTokens: $0.usage.output) }
+        result.append(DerivedUsageEvent(timestamp: stamp, model: state.model, inputTokens: last.input, outputTokens: last.output))
         return result
     }
 
@@ -218,14 +276,9 @@ public enum CodexUsageEventParser {
         return spawn?["parent_thread_id"] is String
     }
 
-    private static func parseTimestamp(_ text: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: text) { return date }
-        return ISO8601DateFormatter().date(from: text)
-    }
+    private static func parseTimestamp(_ text: String) -> Date? { parseUsageTimestamp(text) }
 
-    public static func jsonLine(for event: CodexUsageEvent) -> String {
+    public static func jsonLine(for event: DerivedUsageEvent) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let object: [String: Any] = [
@@ -241,22 +294,41 @@ public enum CodexUsageEventParser {
 
 /// Scans the Codex sessions folder and writes `codex-usage-events.jsonl`. It reparses only
 /// files whose size or modification date changed since the last scan.
-public actor CodexUsageEventExporter {
+public actor LocalUsageEventExporter {
     private struct Entry {
         let size: Int
         let modified: Date
-        let events: [CodexUsageEvent]
+        let events: [DerivedUsageEvent]
     }
 
+    private let parse: @Sendable (Data) -> [DerivedUsageEvent]
     private var cache: [String: Entry] = [:]
     private var lastOutputSignature: String?
 
-    public init() {}
+    public init(parse: @escaping @Sendable (Data) -> [DerivedUsageEvent]) {
+        self.parse = parse
+    }
+
+    public static func codex() -> LocalUsageEventExporter { LocalUsageEventExporter(parse: CodexUsageEventParser.events(from:)) }
+    public static func claudeCode() -> LocalUsageEventExporter { LocalUsageEventExporter(parse: ClaudeUsageEventParser.events(from:)) }
+
+    /// Events from all cached files in path order, keeping the first of each dedupe key.
+    private func uniqueEvents() -> [DerivedUsageEvent] {
+        var seenKeys = Set<String>()
+        var result: [DerivedUsageEvent] = []
+        for path in cache.keys.sorted() {
+            for event in cache[path]!.events {
+                if let key = event.dedupeKey, !seenKeys.insert(key).inserted { continue }
+                result.append(event)
+            }
+        }
+        return result
+    }
 
     /// Per-day, per-model totals from the last export, grouped by the calendar's local days.
-    public func dailyUsage(calendar: Calendar = .current) -> [CodexDailyUsage] {
+    public func dailyUsage(calendar: Calendar = .current) -> [LocalDailyUsage] {
         var totals: [String: (day: Date, model: String, input: Int, output: Int)] = [:]
-        for event in cache.values.flatMap(\.events) {
+        for event in uniqueEvents() {
             let day = calendar.startOfDay(for: event.timestamp)
             let key = "\(day.timeIntervalSince1970)|\(event.model)"
             var entry = totals[key] ?? (day, event.model, 0, 0)
@@ -265,7 +337,7 @@ public actor CodexUsageEventExporter {
             totals[key] = entry
         }
         return totals.values
-            .map { CodexDailyUsage(dayStart: $0.day, model: $0.model, inputTokens: $0.input, outputTokens: $0.output) }
+            .map { LocalDailyUsage(dayStart: $0.day, model: $0.model, inputTokens: $0.input, outputTokens: $0.output) }
             .sorted { ($0.dayStart, $0.model) < ($1.dayStart, $1.model) }
     }
 
@@ -295,17 +367,18 @@ public actor CodexUsageEventExporter {
                 seen.insert(url.path)
                 if let entry = cache[url.path], entry.size == size, entry.modified == modified { continue }
                 guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { continue }
-                cache[url.path] = Entry(size: size, modified: modified, events: CodexUsageEventParser.events(from: data))
+                cache[url.path] = Entry(size: size, modified: modified, events: parse(data))
             }
         }
         cache = cache.filter { seen.contains($0.key) }
 
-        let events = cache.values.flatMap(\.events)
-            .filter { $0.timestamp >= cutoff && $0.timestamp <= now.addingTimeInterval(300) }
-            .sorted { $0.timestamp < $1.timestamp }
+        let upperBound = now.addingTimeInterval(300)
+        let inRange = uniqueEvents().filter { event in event.timestamp >= cutoff && event.timestamp <= upperBound }
+        let events = inRange.sorted { first, second in first.timestamp < second.timestamp }
         let body = events.map(CodexUsageEventParser.jsonLine(for:)).joined(separator: "\n")
         let contents = body.isEmpty ? "" : body + "\n"
-        let signature = "\(events.count):\(contents.utf8.count):\(events.last?.timestamp.timeIntervalSince1970 ?? 0)"
+        let lastStamp = events.last?.timestamp.timeIntervalSince1970 ?? 0
+        let signature = "\(events.count):\(contents.utf8.count):\(lastStamp)"
         if signature == lastOutputSignature, fileManager.fileExists(atPath: outputURL.path) { return true }
         do {
             try fileManager.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)

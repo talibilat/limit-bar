@@ -72,11 +72,57 @@ struct CodexUsageEventsTests {
         let stamp = ISO8601DateFormatter().string(from: now.addingTimeInterval(-60))
         try [context, line(stamp, total: (10, 2), last: (10, 2))].joined(separator: "\n").write(to: sessions.appendingPathComponent("rollout-a.jsonl"), atomically: true, encoding: .utf8)
         let output = root.appendingPathComponent("out/codex-usage-events.jsonl")
-        let exporter = CodexUsageEventExporter()
+        let exporter = LocalUsageEventExporter.codex()
         let wrote = await exporter.export(sessionsDirectory: root.appendingPathComponent("sessions"), to: output, now: now)
         #expect(wrote)
         let text = try String(contentsOf: output, encoding: .utf8)
         #expect(text.contains("\"inputTokens\":10"))
         #expect(text.contains("\"outputTokens\":2"))
+    }
+}
+
+@Suite("Claude Code usage events")
+struct ClaudeUsageEventsTests {
+    private func assistant(_ id: String, _ request: String, model: String = "claude-test", input: Int, output: Int, cacheRead: Int = 0) -> String {
+        """
+        {"type":"assistant","timestamp":"2026-11-02T09:00:00.000Z","requestId":"\(request)","message":{"id":"\(id)","model":"\(model)","usage":{"input_tokens":\(input),"output_tokens":\(output),"cache_read_input_tokens":\(cacheRead),"cache_creation_input_tokens":0}}}
+        """
+    }
+
+    @Test("input includes cached reads and synthetic or empty messages are skipped")
+    func inputIncludesCache() {
+        let text = [
+            assistant("m1", "r1", input: 10, output: 5, cacheRead: 90),
+            assistant("m2", "r2", model: "<synthetic>", input: 1, output: 1),
+            #"{"type":"user","message":{"usage":{"input_tokens":5}}}"#
+        ].joined(separator: "\n")
+        let events = ClaudeUsageEventParser.events(from: Data(text.utf8))
+        #expect(events.map(\.inputTokens) == [100])
+        #expect(events.map(\.outputTokens) == [5])
+    }
+
+    @Test("the same message in several content-block lines or files counts once")
+    func duplicatesCountOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("claude-export-\(UUID().uuidString)")
+        let projects = root.appendingPathComponent("projects/p")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stamp = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60))
+        let line = assistant("m1", "r1", input: 10, output: 5).replacingOccurrences(of: "2026-11-02T09:00:00.000Z", with: stamp)
+        try [line, line].joined(separator: "\n").write(to: projects.appendingPathComponent("a.jsonl"), atomically: true, encoding: .utf8)
+        try line.write(to: projects.appendingPathComponent("b.jsonl"), atomically: true, encoding: .utf8)
+        let exporter = LocalUsageEventExporter.claudeCode()
+        let output = root.appendingPathComponent("out.jsonl")
+        #expect(await exporter.export(sessionsDirectory: root.appendingPathComponent("projects"), to: output))
+        let lines = try String(contentsOf: output, encoding: .utf8).split(separator: "\n")
+        #expect(lines.count == 1)
+    }
+
+    @Test("CLAUDE_CONFIG_DIR overrides the default projects folder")
+    func claudeConfigDir() {
+        let home = URL(fileURLWithPath: "/Users/someone")
+        #expect(LimitBarFileLocations.claudeProjectsDirectory(homeDirectory: home).path == "/Users/someone/.claude/projects")
+        #expect(LimitBarFileLocations.claudeProjectsDirectory(homeDirectory: home, environment: ["CLAUDE_CONFIG_DIR": "/data/c"]).path == "/data/c/projects")
+        #expect(LimitBarFileLocations.claudeProjectsDirectory(homeDirectory: home, environment: ["CLAUDE_CONFIG_DIR": "~/alt"]).path == "/Users/someone/alt/projects")
     }
 }

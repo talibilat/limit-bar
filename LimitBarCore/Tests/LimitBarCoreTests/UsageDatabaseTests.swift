@@ -82,8 +82,8 @@ struct UsageDatabaseTests {
         let today = calendar.startOfDay(for: now)
         let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: today)!
         let days = [
-            CodexDailyUsage(dayStart: twoDaysAgo, model: "m", inputTokens: 100, outputTokens: 20),
-            CodexDailyUsage(dayStart: today, model: "m", inputTokens: 999, outputTokens: 999)
+            LocalDailyUsage(dayStart: twoDaysAgo, model: "m", inputTokens: 100, outputTokens: 20),
+            LocalDailyUsage(dayStart: today, model: "m", inputTokens: 999, outputTokens: 999)
         ]
         #expect(await database.recordHistoricalBackfill(days, customSourceID: UUID(), now: now, calendar: calendar))
 

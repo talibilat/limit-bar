@@ -273,7 +273,7 @@ public actor UsageDatabase {
     /// Today is left to the regular window metrics so each period has a single writer.
     @discardableResult
     public func recordHistoricalBackfill(
-        _ days: [CodexDailyUsage],
+        _ days: [LocalDailyUsage],
         customSourceID: UUID,
         now: Date = Date(),
         calendar: Calendar = .current

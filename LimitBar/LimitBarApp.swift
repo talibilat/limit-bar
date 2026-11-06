@@ -713,9 +713,9 @@ final class LimitBarState {
 private struct ApplicationLocalUsageRefresher: LocalUsageRefreshing {
     func refresh(now: Date, calendar: Calendar) async -> LocalUsageRefresh {
         var sources = CustomUsageSourceStore().sources
-        if let codexSource = await CodexUsageSource.current() {
-            sources.removeAll { $0.id == codexSource.id }
-            sources.append(codexSource)
+        for derived in await LocalAgentUsageSource.currentSources() {
+            sources.removeAll { $0.id == derived.id }
+            sources.append(derived)
         }
         let diagnostics = await UsageDatabase.shared.refreshCustomSources(sources, now: now, calendar: calendar)
         let snapshot = await UsageDatabase.shared.snapshot(now: now, calendar: calendar)
@@ -727,7 +727,7 @@ private struct ApplicationLocalUsageRefresher: LocalUsageRefreshing {
         for diagnostic in diagnostics where diagnostic.failureMessage == nil {
             observedSources.insert(.custom(diagnostic.sourceID))
         }
-        await CodexUsageSource.backfillHistory(now: now, calendar: calendar)
+        await LocalAgentUsageSource.backfillAll(now: now, calendar: calendar)
         let history = await UsageDatabase.shared.historicalUsage(
             metrics: snapshot.metrics,
             now: now,
@@ -789,25 +789,74 @@ extension Notification.Name {
 }
 
 
-/// Usage derived from the local Codex session files, shown as its own source on the Usage and History tabs.
-enum CodexUsageSource {
-    static let id = UUID(uuidString: "C0DE0C0D-0000-4000-8000-00000000C0DE")!
-    private static let exporter = CodexUsageEventExporter()
+/// Usage derived from local coding-agent session files, each shown as its own source on the
+/// Usage and History tabs.
+enum LocalAgentUsageSource: CaseIterable {
+    case codex, claudeCode
 
-    static func current() async -> CustomUsageSource? {
-        guard let locations = try? LimitBarFileLocations.production() else { return nil }
-        let sessions = LimitBarFileLocations.codexSessionsDirectory(
-            homeDirectory: locations.homeDirectory,
-            environment: ProcessInfo.processInfo.environment
-        )
-        guard FileManager.default.fileExists(atPath: sessions.path),
-              await exporter.export(sessionsDirectory: sessions, to: locations.codexUsageEventsFile) else { return nil }
-        return CustomUsageSource(id: id, name: "Codex", filePath: locations.codexUsageEventsFile.path)
+    private static let codexExporter = LocalUsageEventExporter.codex()
+    private static let claudeExporter = LocalUsageEventExporter.claudeCode()
+
+    var id: UUID {
+        switch self {
+        case .codex: UUID(uuidString: "C0DE0C0D-0000-4000-8000-00000000C0DE")!
+        case .claudeCode: UUID(uuidString: "C1A0DE00-0000-4000-8000-00000000C1A0")!
+        }
     }
 
-    /// Fills History with finished past days taken from the Codex session timestamps.
-    static func backfillHistory(now: Date, calendar: Calendar) async {
+    var displayName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claudeCode: "Claude Code"
+        }
+    }
+
+    private var exporter: LocalUsageEventExporter {
+        switch self {
+        case .codex: Self.codexExporter
+        case .claudeCode: Self.claudeExporter
+        }
+    }
+
+    private func sessionsDirectory(_ locations: LimitBarFileLocations) -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        switch self {
+        case .codex: return LimitBarFileLocations.codexSessionsDirectory(homeDirectory: locations.homeDirectory, environment: environment)
+        case .claudeCode: return LimitBarFileLocations.claudeProjectsDirectory(homeDirectory: locations.homeDirectory, environment: environment)
+        }
+    }
+
+    private func eventsFile(_ locations: LimitBarFileLocations) -> URL {
+        switch self {
+        case .codex: locations.codexUsageEventsFile
+        case .claudeCode: locations.claudeCodeUsageEventsFile
+        }
+    }
+
+    /// Writes the derived events and returns the source, or nil when this agent has no local data.
+    func current() async -> CustomUsageSource? {
+        guard let locations = try? LimitBarFileLocations.production() else { return nil }
+        let sessions = sessionsDirectory(locations)
+        guard FileManager.default.fileExists(atPath: sessions.path),
+              await exporter.export(sessionsDirectory: sessions, to: eventsFile(locations)) else { return nil }
+        return CustomUsageSource(id: id, name: displayName, filePath: eventsFile(locations).path)
+    }
+
+    /// Fills History with finished past days taken from the session timestamps.
+    func backfillHistory(now: Date, calendar: Calendar) async {
         let days = await exporter.dailyUsage(calendar: calendar)
         await UsageDatabase.shared.recordHistoricalBackfill(days, customSourceID: id, now: now, calendar: calendar)
+    }
+
+    static func currentSources() async -> [CustomUsageSource] {
+        var result: [CustomUsageSource] = []
+        for agent in allCases {
+            if let source = await agent.current() { result.append(source) }
+        }
+        return result
+    }
+
+    static func backfillAll(now: Date, calendar: Calendar) async {
+        for agent in allCases { await agent.backfillHistory(now: now, calendar: calendar) }
     }
 }
